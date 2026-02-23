@@ -1,0 +1,76 @@
+{
+  "width": 80,
+  "height": 24,
+  "frame_count": 15,
+  "objects": [
+    {
+      "type": "label",
+      "text": "ASCII Presenter",
+      "position": {
+        "x": { "fixed": 32 },
+        "y": { "fixed": 2 }
+      },
+      "style": { "bold": true },
+      "frames": { "start": 0, "end": 15 },
+      "z_order": 1
+    },
+    {
+      "type": "h_line",
+      "y": 4,
+      "x_start": 20,
+      "x_end": 60,
+      "ch": "─",
+      "style": { "fg": "cyan" },
+      "frames": { "start": 1, "end": 15 }
+    },
+    {
+      "type": "label",
+      "text": "[*]",
+      "position": {
+        "x": {
+          "animated": {
+            "from": 20,
+            "to": 57,
+            "start_frame": 3,
+            "end_frame": 12
+          }
+        },
+        "y": { "fixed": 4 }
+      },
+      "style": { "fg": "green", "bold": true },
+      "frames": { "start": 3, "end": 12 },
+      "z_order": 10
+    },
+    {
+      "type": "rect",
+      "position": {
+        "x": { "fixed": 25 },
+        "y": { "fixed": 7 }
+      },
+      "width": 30,
+      "height": 5,
+      "style": { "fg": "yellow" },
+      "frames": { "start": 5, "end": 15 },
+      "title": "Status"
+    },
+    {
+      "type": "label",
+      "text": "Packet delivered!",
+      "position": {
+        "x": { "fixed": 31 },
+        "y": { "fixed": 9 }
+      },
+      "frames": { "start": 8, "end": 15 }
+    },
+    {
+      "type": "label",
+      "text": "A minimal boilerplate example",
+      "position": {
+        "x": { "fixed": 25 },
+        "y": { "fixed": 20 }
+      },
+      "style": { "dim": true },
+      "frames": { "start": 0, "end": 15 }
+    }
+  ]
+}
