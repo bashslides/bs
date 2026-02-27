@@ -90,6 +90,24 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[Enter] create group",
             "[Esc] cancel",
         ],
+        Mode::TableAddColumn { after, .. } => vec![
+            if *after { "[col#] add after" } else { "[col#] add before" },
+            "[Enter] confirm",
+            "[Esc] cancel",
+        ],
+        Mode::TableRemoveColumn { .. } => vec![
+            "[col#] remove col",
+            "[Enter] confirm",
+            "[Esc] cancel",
+        ],
+        Mode::TableEditCellProps { .. } => vec![
+            "[←→↑↓] navigate",
+            "[Space] select/deselect",
+            "[l] add list",
+            "[s] cell style",
+            "[Enter] edit content",
+            "[Esc] back",
+        ],
     }
 }
 

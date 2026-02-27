@@ -16,6 +16,36 @@ pub enum ConfirmAction {
         return_selected_property: usize,
         return_panel_scroll: usize,
     },
+    /// Remove a column from a table.
+    RemoveTableColumn {
+        object_index: usize,
+        col_index: usize,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Table cell-properties sub-state
+// ---------------------------------------------------------------------------
+
+/// Sub-state used inside `Mode::TableEditCellProps`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TableCellSubState {
+    /// Navigating cells; Space toggles selection.
+    Selecting,
+    /// Editing the style of selected (or cursor) cells.
+    EditingStyle {
+        selected_prop: usize,
+        editing_value: Option<String>,
+        cursor: usize,
+        dropdown: Option<usize>,
+    },
+    /// Editing the text content of a single cell.
+    EditingContent {
+        row: usize,
+        col: usize,
+        buf: String,
+        cursor: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,6 +103,33 @@ pub enum Mode {
         selected: usize,
         /// Objects toggled into the group so far.
         members: Vec<usize>,
+    },
+    /// Adding a column to a table (before or after a reference column).
+    TableAddColumn {
+        object_index: usize,
+        /// true = add after `col_num`, false = add before.
+        after: bool,
+        /// 1-indexed reference column number currently being entered.
+        col_num: usize,
+        buf: String,
+        cursor: usize,
+    },
+    /// Removing a column from a table: ask which column, then confirm.
+    TableRemoveColumn {
+        object_index: usize,
+        /// 1-indexed column number currently selected.
+        col_num: usize,
+        buf: String,
+        cursor: usize,
+    },
+    /// Navigating / selecting cells in a table to edit their properties.
+    TableEditCellProps {
+        object_index: usize,
+        cursor_row: usize,
+        cursor_col: usize,
+        /// Set of (row, col) cells toggled as selected.
+        selected_cells: Vec<(usize, usize)>,
+        sub_state: TableCellSubState,
     },
 }
 
@@ -147,6 +204,7 @@ pub fn scene_object_frame_range(obj: &SceneObject) -> &FrameRange {
         SceneObject::Header(h) => &h.frames,
         SceneObject::Group(g) => &g.frames,
         SceneObject::Arrow(a) => &a.frames,
+        SceneObject::Table(t) => &t.frames,
     }
 }
 
@@ -158,6 +216,7 @@ pub fn scene_object_frame_range_mut(obj: &mut SceneObject) -> &mut FrameRange {
         SceneObject::Header(h) => &mut h.frames,
         SceneObject::Group(g) => &mut g.frames,
         SceneObject::Arrow(a) => &mut a.frames,
+        SceneObject::Table(t) => &mut t.frames,
     }
 }
 
@@ -169,6 +228,7 @@ pub fn scene_object_type_name(obj: &SceneObject) -> &'static str {
         SceneObject::Header(_) => "Header",
         SceneObject::Group(_) => "Group",
         SceneObject::Arrow(_) => "Arrow",
+        SceneObject::Table(_) => "Table",
     }
 }
 
@@ -191,6 +251,12 @@ fn scene_object_coordinates_mut(obj: &mut SceneObject) -> Vec<&mut Coordinate> {
         SceneObject::Header(h) => vec![&mut h.position.x, &mut h.position.y],
         SceneObject::Arrow(a) => vec![&mut a.x1, &mut a.y1, &mut a.x2, &mut a.y2],
         SceneObject::Group(_) => vec![],
+        SceneObject::Table(t) => vec![
+            &mut t.position.x,
+            &mut t.position.y,
+            &mut t.width,
+            &mut t.height,
+        ],
     }
 }
 
@@ -288,5 +354,6 @@ pub fn scene_object_summary(obj: &SceneObject) -> String {
         }
         SceneObject::Group(g) => format!("Group: {} members", g.members.len()),
         SceneObject::Arrow(a) => format!("Arrow: ({},{})→({},{})", a.x1.evaluate(0), a.y1.evaluate(0), a.x2.evaluate(0), a.y2.evaluate(0)),
+        SceneObject::Table(t) => format!("Table: {}r×{}c", t.rows, t.col_widths.len()),
     }
 }

@@ -1,12 +1,17 @@
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal;
 
+use crate::engine::objects::table::{table_add_column, table_remove_column};
 use crate::engine::objects::Group;
 use crate::engine::source::{Coordinate, FrameRange, SceneObject};
+use crate::types::Style;
 use super::config::matches_binding;
 use super::object_defaults;
 use super::properties;
-use super::state::{adjust_frames_after_delete, adjust_frames_after_insert, adjust_group_members_after_delete, ConfirmAction, EditorState, Mode};
+use super::state::{
+    adjust_frames_after_delete, adjust_frames_after_insert, adjust_group_members_after_delete,
+    ConfirmAction, EditorState, Mode, TableCellSubState,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -50,6 +55,25 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
         Mode::AnimateProperty { .. } => handle_animate_property(state, key),
         Mode::Confirm { .. } => handle_confirm(state, key),
         Mode::SelectGroupMembers { .. } => handle_select_group_members(state, key),
+        Mode::TableAddColumn { .. } => handle_table_add_column(state, key),
+        Mode::TableRemoveColumn { .. } => handle_table_remove_column(state, key),
+        Mode::TableEditCellProps { sub_state, .. } => {
+            match sub_state {
+                TableCellSubState::Selecting => handle_table_cell_selecting(state, key),
+                TableCellSubState::EditingContent { .. } => handle_table_cell_edit_content(state, key),
+                TableCellSubState::EditingStyle { editing_value, dropdown, .. } => {
+                    let has_dd = dropdown.is_some();
+                    let is_ed = editing_value.is_some();
+                    if has_dd {
+                        handle_table_cell_style_dropdown(state, key)
+                    } else if is_ed {
+                        handle_table_cell_style_edit_value(state, key)
+                    } else {
+                        handle_table_cell_style_props(state, key)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -486,6 +510,24 @@ fn handle_confirm(state: &mut EditorState, key: KeyEvent) -> Action {
                             dropdown: None,
                         }
                     }
+                    ConfirmAction::RemoveTableColumn { object_index, col_index } => {
+                        if let SceneObject::Table(t) = &mut state.source.objects[object_index] {
+                            table_remove_column(t, col_index);
+                            state.dirty = true;
+                            state.status_message = Some(format!("Removed column {}", col_index + 1));
+                        }
+                        let new_count =
+                            properties::get_properties(&state.source.objects, object_index).len();
+                        Mode::EditProperties {
+                            object_index,
+                            selected_property: 0_usize.min(new_count.saturating_sub(1)),
+                            editing_value: None,
+                            cursor: 0,
+                            scroll: 0,
+                            panel_scroll: 0,
+                            dropdown: None,
+                        }
+                    }
                 };
                 state.mode = next_mode;
             } else {
@@ -685,6 +727,62 @@ fn handle_edit_properties(state: &mut EditorState, key: KeyEvent) -> Action {
             };
         }
         return Action::Redraw;
+    }
+
+    // Table-specific key bindings (only active when editing a Table object)
+    if matches!(state.source.objects.get(object_index), Some(SceneObject::Table(_))) {
+        if matches_binding(&bindings.table_add_col_after, &key) {
+            if let SceneObject::Table(t) = &state.source.objects[object_index] {
+                let ncols = t.col_widths.len();
+                state.mode = Mode::TableAddColumn {
+                    object_index,
+                    after: true,
+                    col_num: ncols,
+                    buf: ncols.to_string(),
+                    cursor: ncols.to_string().len(),
+                };
+            }
+            return Action::Redraw;
+        }
+        if matches_binding(&bindings.table_add_col_before, &key) {
+            if let SceneObject::Table(t) = &state.source.objects[object_index] {
+                let ncols = t.col_widths.len();
+                state.mode = Mode::TableAddColumn {
+                    object_index,
+                    after: false,
+                    col_num: 1,
+                    buf: "1".to_string(),
+                    cursor: 1,
+                };
+                let _ = ncols; // suppress unused warning
+            }
+            return Action::Redraw;
+        }
+        if matches_binding(&bindings.table_remove_col, &key) {
+            if let SceneObject::Table(t) = &state.source.objects[object_index] {
+                if t.col_widths.len() > 1 {
+                    state.mode = Mode::TableRemoveColumn {
+                        object_index,
+                        col_num: 1,
+                        buf: "1".to_string(),
+                        cursor: 1,
+                    };
+                } else {
+                    state.status_message = Some("Cannot remove the only column".into());
+                }
+            }
+            return Action::Redraw;
+        }
+        if matches_binding(&bindings.table_edit_cells, &key) {
+            state.mode = Mode::TableEditCellProps {
+                object_index,
+                cursor_row: 0,
+                cursor_col: 0,
+                selected_cells: Vec::new(),
+                sub_state: TableCellSubState::Selecting,
+            };
+            return Action::Redraw;
+        }
     }
 
     // [a]nimate: open AnimateProperty panel for Coordinate properties
@@ -1241,4 +1339,708 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
 /// Convert a char index into a byte index for string operations.
 fn char_to_byte_idx(s: &str, char_idx: usize) -> usize {
     s.char_indices().nth(char_idx).map(|(i, _)| i).unwrap_or(s.len())
+}
+
+// ---------------------------------------------------------------------------
+// Table: add column
+// ---------------------------------------------------------------------------
+
+fn handle_table_add_column(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+
+    let (object_index, after, mut col_num, mut buf, mut cursor) = match &state.mode {
+        Mode::TableAddColumn { object_index, after, col_num, buf, cursor } => {
+            (*object_index, *after, *col_num, buf.clone(), *cursor)
+        }
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::EditProperties {
+            object_index, selected_property: 0, editing_value: None,
+            cursor: 0, scroll: 0, panel_scroll: 0, dropdown: None,
+        };
+        return Action::Redraw;
+    }
+
+    if matches_binding(&bindings.confirm, &key) {
+        let ncols = match &state.source.objects[object_index] {
+            SceneObject::Table(t) => t.col_widths.len(),
+            _ => return Action::Redraw,
+        };
+        let clamped = col_num.max(1).min(ncols);
+        let insert_idx = if after { clamped } else { clamped.saturating_sub(1) };
+        if let SceneObject::Table(t) = &mut state.source.objects[object_index] {
+            table_add_column(t, insert_idx);
+            state.dirty = true;
+            state.status_message = Some(format!(
+                "Added column {} {}", if after { "after" } else { "before" }, clamped
+            ));
+        }
+        state.mode = Mode::EditProperties {
+            object_index, selected_property: 0, editing_value: None,
+            cursor: 0, scroll: 0, panel_scroll: 0, dropdown: None,
+        };
+        return Action::Redraw;
+    }
+
+    // Digit input
+    match key.code {
+        KeyCode::Char(c) if c.is_ascii_digit() && key.modifiers == KeyModifiers::NONE => {
+            let byte_idx = char_to_byte_idx(&buf, cursor);
+            buf.insert(byte_idx, c);
+            cursor += 1;
+            if let Ok(n) = buf.parse::<usize>() {
+                col_num = n;
+            }
+            state.mode = Mode::TableAddColumn { object_index, after, col_num, buf, cursor };
+            return Action::Redraw;
+        }
+        KeyCode::Backspace if key.modifiers == KeyModifiers::NONE => {
+            if cursor > 0 {
+                let byte_idx = char_to_byte_idx(&buf, cursor - 1);
+                buf.remove(byte_idx);
+                cursor -= 1;
+                col_num = buf.parse().unwrap_or(1);
+            }
+            state.mode = Mode::TableAddColumn { object_index, after, col_num, buf, cursor };
+            return Action::Redraw;
+        }
+        KeyCode::Left if key.modifiers == KeyModifiers::NONE => {
+            cursor = cursor.saturating_sub(1);
+            state.mode = Mode::TableAddColumn { object_index, after, col_num, buf, cursor };
+            return Action::Redraw;
+        }
+        KeyCode::Right if key.modifiers == KeyModifiers::NONE => {
+            cursor = (cursor + 1).min(buf.chars().count());
+            state.mode = Mode::TableAddColumn { object_index, after, col_num, buf, cursor };
+            return Action::Redraw;
+        }
+        _ => {}
+    }
+
+    Action::Continue
+}
+
+// ---------------------------------------------------------------------------
+// Table: remove column
+// ---------------------------------------------------------------------------
+
+fn handle_table_remove_column(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+
+    let (object_index, mut col_num, mut buf, mut cursor) = match &state.mode {
+        Mode::TableRemoveColumn { object_index, col_num, buf, cursor } => {
+            (*object_index, *col_num, buf.clone(), *cursor)
+        }
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::EditProperties {
+            object_index, selected_property: 0, editing_value: None,
+            cursor: 0, scroll: 0, panel_scroll: 0, dropdown: None,
+        };
+        return Action::Redraw;
+    }
+
+    if matches_binding(&bindings.confirm, &key) {
+        let ncols = match &state.source.objects[object_index] {
+            SceneObject::Table(t) => t.col_widths.len(),
+            _ => return Action::Redraw,
+        };
+        let clamped = col_num.max(1).min(ncols);
+        let col_idx = clamped.saturating_sub(1);
+        // Transition to confirmation
+        state.mode = Mode::Confirm {
+            message: format!("Remove column {}?", clamped),
+            selected: 0,
+            action: ConfirmAction::RemoveTableColumn { object_index, col_index: col_idx },
+            return_mode: Box::new(Mode::TableRemoveColumn {
+                object_index, col_num: clamped, buf: clamped.to_string(),
+                cursor: clamped.to_string().len(),
+            }),
+        };
+        return Action::Redraw;
+    }
+
+    match key.code {
+        KeyCode::Char(c) if c.is_ascii_digit() && key.modifiers == KeyModifiers::NONE => {
+            let byte_idx = char_to_byte_idx(&buf, cursor);
+            buf.insert(byte_idx, c);
+            cursor += 1;
+            if let Ok(n) = buf.parse::<usize>() {
+                col_num = n;
+            }
+            state.mode = Mode::TableRemoveColumn { object_index, col_num, buf, cursor };
+            return Action::Redraw;
+        }
+        KeyCode::Backspace if key.modifiers == KeyModifiers::NONE => {
+            if cursor > 0 {
+                let byte_idx = char_to_byte_idx(&buf, cursor - 1);
+                buf.remove(byte_idx);
+                cursor -= 1;
+                col_num = buf.parse().unwrap_or(1);
+            }
+            state.mode = Mode::TableRemoveColumn { object_index, col_num, buf, cursor };
+            return Action::Redraw;
+        }
+        KeyCode::Up | KeyCode::Down => {
+            let ncols = match &state.source.objects[object_index] {
+                SceneObject::Table(t) => t.col_widths.len(),
+                _ => 1,
+            };
+            if key.code == KeyCode::Up {
+                col_num = if col_num <= 1 { ncols } else { col_num - 1 };
+            } else {
+                col_num = if col_num >= ncols { 1 } else { col_num + 1 };
+            }
+            buf = col_num.to_string();
+            cursor = buf.len();
+            state.mode = Mode::TableRemoveColumn { object_index, col_num, buf, cursor };
+            return Action::Redraw;
+        }
+        _ => {}
+    }
+
+    Action::Continue
+}
+
+// ---------------------------------------------------------------------------
+// Table: cell props — selecting sub-state
+// ---------------------------------------------------------------------------
+
+fn handle_table_cell_selecting(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+
+    let (object_index, mut cursor_row, mut cursor_col, mut selected_cells) = match &state.mode {
+        Mode::TableEditCellProps { object_index, cursor_row, cursor_col, selected_cells, .. } => {
+            (*object_index, *cursor_row, *cursor_col, selected_cells.clone())
+        }
+        _ => return Action::Continue,
+    };
+
+    let (nrows, ncols) = match &state.source.objects[object_index] {
+        SceneObject::Table(t) => (t.rows, t.col_widths.len()),
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::EditProperties {
+            object_index, selected_property: 0, editing_value: None,
+            cursor: 0, scroll: 0, panel_scroll: 0, dropdown: None,
+        };
+        return Action::Redraw;
+    }
+
+    // Arrow navigation
+    match key.code {
+        KeyCode::Up if key.modifiers == KeyModifiers::NONE => {
+            cursor_row = if cursor_row == 0 { nrows.saturating_sub(1) } else { cursor_row - 1 };
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::Selecting,
+            };
+            return Action::BlinkSelection;
+        }
+        KeyCode::Down if key.modifiers == KeyModifiers::NONE => {
+            cursor_row = (cursor_row + 1) % nrows.max(1);
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::Selecting,
+            };
+            return Action::BlinkSelection;
+        }
+        KeyCode::Left if key.modifiers == KeyModifiers::NONE => {
+            cursor_col = if cursor_col == 0 { ncols.saturating_sub(1) } else { cursor_col - 1 };
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::Selecting,
+            };
+            return Action::BlinkSelection;
+        }
+        KeyCode::Right if key.modifiers == KeyModifiers::NONE => {
+            cursor_col = (cursor_col + 1) % ncols.max(1);
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::Selecting,
+            };
+            return Action::BlinkSelection;
+        }
+        KeyCode::Char(' ') if key.modifiers == KeyModifiers::NONE => {
+            // Toggle selection of cursor cell
+            let cell = (cursor_row, cursor_col);
+            if let Some(pos) = selected_cells.iter().position(|&c| c == cell) {
+                selected_cells.remove(pos);
+            } else {
+                selected_cells.push(cell);
+            }
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::Selecting,
+            };
+            return Action::Redraw;
+        }
+        _ => {}
+    }
+
+    // Table-specific: add list ("l") → edit content with "- " prefix
+    if matches_binding(&bindings.table_add_list, &key) {
+        let existing = table_cell_content(state, object_index, cursor_row, cursor_col);
+        let buf = if existing.is_empty() {
+            "- ".to_string()
+        } else {
+            format!("{}\n- ", existing)
+        };
+        let cursor = buf.chars().count();
+        state.mode = Mode::TableEditCellProps {
+            object_index, cursor_row, cursor_col, selected_cells,
+            sub_state: TableCellSubState::EditingContent { row: cursor_row, col: cursor_col, buf, cursor },
+        };
+        return Action::Redraw;
+    }
+
+    // Table-specific: edit cell style ("s")
+    if matches_binding(&bindings.table_edit_cell_style, &key) {
+        state.mode = Mode::TableEditCellProps {
+            object_index, cursor_row, cursor_col, selected_cells,
+            sub_state: TableCellSubState::EditingStyle {
+                selected_prop: 0,
+                editing_value: None,
+                cursor: 0,
+                dropdown: None,
+            },
+        };
+        return Action::Redraw;
+    }
+
+    // Enter → edit content of cursor cell
+    if matches_binding(&bindings.confirm, &key) {
+        let existing = table_cell_content(state, object_index, cursor_row, cursor_col);
+        let cursor_pos = existing.chars().count();
+        state.mode = Mode::TableEditCellProps {
+            object_index, cursor_row, cursor_col, selected_cells,
+            sub_state: TableCellSubState::EditingContent {
+                row: cursor_row, col: cursor_col,
+                buf: existing, cursor: cursor_pos,
+            },
+        };
+        return Action::Redraw;
+    }
+
+    Action::Continue
+}
+
+fn table_cell_content(state: &EditorState, object_index: usize, row: usize, col: usize) -> String {
+    match &state.source.objects[object_index] {
+        SceneObject::Table(t) => t.cells.get(row)
+            .and_then(|r| r.get(col))
+            .map(|c| c.content.clone())
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Table: cell props — content editing sub-state
+// ---------------------------------------------------------------------------
+
+fn handle_table_cell_edit_content(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+
+    let (object_index, cursor_row, cursor_col, selected_cells, edit_row, edit_col, mut buf, mut cursor) =
+        match &state.mode {
+            Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::EditingContent { row, col, buf, cursor },
+            } => (*object_index, *cursor_row, *cursor_col, selected_cells.clone(), *row, *col, buf.clone(), *cursor),
+            _ => return Action::Continue,
+        };
+
+    // Alt-Enter: insert newline
+    if matches_binding(&bindings.insert_newline, &key) {
+        let bi = char_to_byte_idx(&buf, cursor);
+        buf.insert(bi, '\n');
+        cursor += 1;
+        state.mode = Mode::TableEditCellProps {
+            object_index, cursor_row, cursor_col, selected_cells,
+            sub_state: TableCellSubState::EditingContent { row: edit_row, col: edit_col, buf, cursor },
+        };
+        return Action::Redraw;
+    }
+
+    match key.code {
+        KeyCode::Enter => {
+            // Save content
+            if let SceneObject::Table(t) = &mut state.source.objects[object_index] {
+                t.normalize_cells();
+                if let Some(row_vec) = t.cells.get_mut(edit_row) {
+                    if let Some(cell) = row_vec.get_mut(edit_col) {
+                        cell.content = buf;
+                    }
+                }
+                state.dirty = true;
+            }
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::Selecting,
+            };
+            return Action::Redraw;
+        }
+        KeyCode::Esc => {
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::Selecting,
+            };
+            return Action::Redraw;
+        }
+        KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT => {
+            let bi = char_to_byte_idx(&buf, cursor);
+            buf.insert(bi, c);
+            cursor += 1;
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::EditingContent { row: edit_row, col: edit_col, buf, cursor },
+            };
+            return Action::Redraw;
+        }
+        KeyCode::Backspace if key.modifiers == KeyModifiers::NONE => {
+            if cursor > 0 {
+                let bi = char_to_byte_idx(&buf, cursor - 1);
+                buf.remove(bi);
+                cursor -= 1;
+            }
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::EditingContent { row: edit_row, col: edit_col, buf, cursor },
+            };
+            return Action::Redraw;
+        }
+        KeyCode::Left if key.modifiers == KeyModifiers::NONE => {
+            cursor = cursor.saturating_sub(1);
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::EditingContent { row: edit_row, col: edit_col, buf, cursor },
+            };
+            return Action::Redraw;
+        }
+        KeyCode::Right if key.modifiers == KeyModifiers::NONE => {
+            cursor = (cursor + 1).min(buf.chars().count());
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::EditingContent { row: edit_row, col: edit_col, buf, cursor },
+            };
+            return Action::Redraw;
+        }
+        _ => {}
+    }
+    Action::Continue
+}
+
+// ---------------------------------------------------------------------------
+// Table: cell style editing (3 sub-handlers mirroring EditProperties logic)
+// ---------------------------------------------------------------------------
+
+/// Get the current style of the cell(s) being edited.
+/// If multiple cells are selected, returns a merged style (first selected cell's style).
+fn cell_style_for_editing(
+    state: &EditorState,
+    object_index: usize,
+    selected_cells: &[(usize, usize)],
+    cursor_row: usize,
+    cursor_col: usize,
+) -> Style {
+    let target = if selected_cells.is_empty() {
+        (cursor_row, cursor_col)
+    } else {
+        selected_cells[0]
+    };
+    match &state.source.objects[object_index] {
+        SceneObject::Table(t) => t.cells.get(target.0)
+            .and_then(|r| r.get(target.1))
+            .and_then(|c| c.style.as_ref())
+            .cloned()
+            .unwrap_or_default(),
+        _ => Style::default(),
+    }
+}
+
+fn cell_style_prop_value(style: &Style, prop: &str) -> String {
+    use crate::editor::properties::format_opt_color_pub;
+    match prop {
+        "fg_color" => format_opt_color_pub(&style.fg),
+        "bg_color" => format_opt_color_pub(&style.bg),
+        "bold"     => style.bold.to_string(),
+        "dimmed"   => style.dim.to_string(),
+        _ => String::new(),
+    }
+}
+
+fn handle_table_cell_style_props(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+
+    let (object_index, cursor_row, cursor_col, selected_cells, mut selected_prop) = match &state.mode {
+        Mode::TableEditCellProps {
+            object_index, cursor_row, cursor_col, selected_cells,
+            sub_state: TableCellSubState::EditingStyle { selected_prop, .. },
+        } => (*object_index, *cursor_row, *cursor_col, selected_cells.clone(), *selected_prop),
+        _ => return Action::Continue,
+    };
+
+    let prop_count = properties::CELL_STYLE_PROPS.len();
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::TableEditCellProps {
+            object_index, cursor_row, cursor_col, selected_cells,
+            sub_state: TableCellSubState::Selecting,
+        };
+        return Action::Redraw;
+    }
+
+    if matches_binding(&bindings.move_up, &key) {
+        selected_prop = if selected_prop == 0 { prop_count - 1 } else { selected_prop - 1 };
+        state.mode = Mode::TableEditCellProps {
+            object_index, cursor_row, cursor_col, selected_cells,
+            sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: None },
+        };
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.move_down, &key) || (key.code == KeyCode::Tab && key.modifiers == KeyModifiers::NONE) {
+        selected_prop = (selected_prop + 1) % prop_count;
+        state.mode = Mode::TableEditCellProps {
+            object_index, cursor_row, cursor_col, selected_cells,
+            sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: None },
+        };
+        return Action::Redraw;
+    }
+
+    // Space: toggle bool props
+    if key.code == KeyCode::Char(' ') && key.modifiers == KeyModifiers::NONE {
+        let prop_name = properties::CELL_STYLE_PROPS[selected_prop];
+        if prop_name == "bold" || prop_name == "dimmed" {
+            apply_cell_style(state, object_index, selected_cells.clone(), cursor_row, cursor_col, prop_name, None);
+        }
+        state.mode = Mode::TableEditCellProps {
+            object_index, cursor_row, cursor_col, selected_cells,
+            sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: None },
+        };
+        return Action::Redraw;
+    }
+
+    if matches_binding(&bindings.confirm, &key) {
+        let prop_name = properties::CELL_STYLE_PROPS[selected_prop];
+        let style = cell_style_for_editing(state, object_index, &selected_cells, cursor_row, cursor_col);
+        let current_val = cell_style_prop_value(&style, prop_name);
+
+        // Color props: open dropdown
+        if prop_name == "fg_color" || prop_name == "bg_color" {
+            let dd_sel = properties::COLOR_OPTIONS.iter()
+                .position(|&o| o == current_val).unwrap_or(0);
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::EditingStyle {
+                    selected_prop, editing_value: None, cursor: 0, dropdown: Some(dd_sel),
+                },
+            };
+        } else {
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::EditingStyle {
+                    selected_prop, editing_value: Some(current_val), cursor: 0, dropdown: None,
+                },
+            };
+        }
+        return Action::Redraw;
+    }
+
+    Action::Continue
+}
+
+fn handle_table_cell_style_dropdown(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+
+    let (object_index, cursor_row, cursor_col, selected_cells, selected_prop, mut dd_sel) = match &state.mode {
+        Mode::TableEditCellProps {
+            object_index, cursor_row, cursor_col, selected_cells,
+            sub_state: TableCellSubState::EditingStyle { selected_prop, dropdown: Some(dd), .. },
+        } => (*object_index, *cursor_row, *cursor_col, selected_cells.clone(), *selected_prop, *dd),
+        _ => return Action::Continue,
+    };
+
+    let opts = properties::COLOR_OPTIONS;
+    let n = opts.len();
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::TableEditCellProps {
+            object_index, cursor_row, cursor_col, selected_cells,
+            sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: None },
+        };
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.move_up, &key) {
+        dd_sel = if dd_sel == 0 { n - 1 } else { dd_sel - 1 };
+        state.mode = Mode::TableEditCellProps {
+            object_index, cursor_row, cursor_col, selected_cells,
+            sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: Some(dd_sel) },
+        };
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.move_down, &key) {
+        dd_sel = (dd_sel + 1) % n;
+        state.mode = Mode::TableEditCellProps {
+            object_index, cursor_row, cursor_col, selected_cells,
+            sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: Some(dd_sel) },
+        };
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.confirm, &key) {
+        let chosen = opts[dd_sel];
+        let prop_name = properties::CELL_STYLE_PROPS[selected_prop];
+        if chosen == "RGB" {
+            // Open text input for RGB hex
+            let style = cell_style_for_editing(state, object_index, &selected_cells, cursor_row, cursor_col);
+            let cur_val = cell_style_prop_value(&style, prop_name);
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::EditingStyle {
+                    selected_prop, editing_value: Some(cur_val), cursor: 0, dropdown: None,
+                },
+            };
+        } else {
+            apply_cell_style(state, object_index, selected_cells.clone(), cursor_row, cursor_col, prop_name, Some(chosen));
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: None },
+            };
+        }
+        return Action::Redraw;
+    }
+
+    Action::Continue
+}
+
+fn handle_table_cell_style_edit_value(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+
+    let (object_index, cursor_row, cursor_col, selected_cells, selected_prop, mut buf, mut cursor) = match &state.mode {
+        Mode::TableEditCellProps {
+            object_index, cursor_row, cursor_col, selected_cells,
+            sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: Some(ev), cursor, .. },
+        } => (*object_index, *cursor_row, *cursor_col, selected_cells.clone(), *selected_prop, ev.clone(), *cursor),
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::TableEditCellProps {
+            object_index, cursor_row, cursor_col, selected_cells,
+            sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: None },
+        };
+        return Action::Redraw;
+    }
+
+    match key.code {
+        KeyCode::Enter => {
+            let prop_name = properties::CELL_STYLE_PROPS[selected_prop];
+            apply_cell_style(state, object_index, selected_cells.clone(), cursor_row, cursor_col, prop_name, Some(&buf));
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: None },
+            };
+            return Action::Redraw;
+        }
+        KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT => {
+            let bi = char_to_byte_idx(&buf, cursor);
+            buf.insert(bi, c);
+            cursor += 1;
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: Some(buf), cursor, dropdown: None },
+            };
+            return Action::Redraw;
+        }
+        KeyCode::Backspace if key.modifiers == KeyModifiers::NONE => {
+            if cursor > 0 {
+                let bi = char_to_byte_idx(&buf, cursor - 1);
+                buf.remove(bi);
+                cursor -= 1;
+            }
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: Some(buf), cursor, dropdown: None },
+            };
+            return Action::Redraw;
+        }
+        KeyCode::Left if key.modifiers == KeyModifiers::NONE => {
+            cursor = cursor.saturating_sub(1);
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: Some(buf), cursor, dropdown: None },
+            };
+            return Action::Redraw;
+        }
+        KeyCode::Right if key.modifiers == KeyModifiers::NONE => {
+            cursor = (cursor + 1).min(buf.chars().count());
+            state.mode = Mode::TableEditCellProps {
+                object_index, cursor_row, cursor_col, selected_cells,
+                sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: Some(buf), cursor, dropdown: None },
+            };
+            return Action::Redraw;
+        }
+        _ => {}
+    }
+    Action::Continue
+}
+
+/// Apply a style property to all selected cells (or the cursor cell if none selected).
+fn apply_cell_style(
+    state: &mut EditorState,
+    object_index: usize,
+    selected_cells: Vec<(usize, usize)>,
+    cursor_row: usize,
+    cursor_col: usize,
+    prop: &str,
+    value: Option<&str>,
+) {
+    let targets: Vec<(usize, usize)> = if selected_cells.is_empty() {
+        vec![(cursor_row, cursor_col)]
+    } else {
+        selected_cells
+    };
+
+    if let SceneObject::Table(t) = &mut state.source.objects[object_index] {
+        t.normalize_cells();
+        for (row, col) in targets {
+            if let Some(cell_row) = t.cells.get_mut(row) {
+                if let Some(cell) = cell_row.get_mut(col) {
+                    let st = cell.style.get_or_insert_with(Style::default);
+                    match prop {
+                        "fg_color" => {
+                            use crate::editor::properties::parse_opt_color_pub;
+                            if let Ok(c) = parse_opt_color_pub(value.unwrap_or("none")) {
+                                st.fg = c;
+                            }
+                        }
+                        "bg_color" => {
+                            use crate::editor::properties::parse_opt_color_pub;
+                            if let Ok(c) = parse_opt_color_pub(value.unwrap_or("none")) {
+                                st.bg = c;
+                            }
+                        }
+                        "bold" => {
+                            st.bold = !st.bold;
+                        }
+                        "dimmed" => {
+                            st.dim = !st.dim;
+                        }
+                        _ => {}
+                    }
+                    // If style is now default, remove it
+                    if st.fg.is_none() && st.bg.is_none() && !st.bold && !st.dim {
+                        cell.style = None;
+                    }
+                }
+            }
+        }
+        state.dirty = true;
+    }
 }

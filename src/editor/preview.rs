@@ -4,11 +4,12 @@ use crossterm::{cursor, queue, style};
 
 use crate::engine::objects::Resolve;
 use crate::engine::Engine;
+use crate::engine::source::SceneObject;
 use crate::player::to_content_style;
 use crate::renderer::Renderer;
 use crate::types::{Color, Frame, NamedColor, ResolvedScene, Style, TerminalContract};
 
-use super::state::{EditorState, Mode};
+use super::state::{EditorState, Mode, TableCellSubState};
 use super::ui::Layout;
 
 /// Returns the set of "focused" object indices for the current mode.
@@ -19,7 +20,7 @@ fn focus_indices(state: &EditorState) -> Option<Vec<usize>> {
         Mode::SelectedObject { object_index } | Mode::EditProperties { object_index, .. } => {
             // When a Group is selected, highlight its members instead.
             match state.source.objects.get(*object_index) {
-                Some(crate::engine::source::SceneObject::Group(g)) if !g.members.is_empty() => {
+                Some(SceneObject::Group(g)) if !g.members.is_empty() => {
                     Some(g.members.clone())
                 }
                 Some(_) => Some(vec![*object_index]),
@@ -30,10 +31,8 @@ fn focus_indices(state: &EditorState) -> Option<Vec<usize>> {
         Mode::SelectObject { selected } => {
             let visible = state.objects_on_current_frame();
             visible.get(*selected).copied().and_then(|i| {
-                // When the selected object is a Group, highlight its members instead
-                // (the Group itself has no visual representation).
                 match state.source.objects.get(i) {
-                    Some(crate::engine::source::SceneObject::Group(g)) if !g.members.is_empty() => {
+                    Some(SceneObject::Group(g)) if !g.members.is_empty() => {
                         Some(g.members.clone())
                     }
                     Some(_) => Some(vec![i]),
@@ -42,14 +41,16 @@ fn focus_indices(state: &EditorState) -> Option<Vec<usize>> {
             })
         }
         Mode::SelectGroupMembers { selected, .. } => {
-            // Only the currently navigated object is highlighted; toggled members
-            // are dimmed the same as everything else (the panel shows [+]/[ ] markers).
             if *selected < state.source.objects.len() {
                 Some(vec![*selected])
             } else {
                 None
             }
         }
+        // Table modes: focus the table object (rendering is overridden separately)
+        Mode::TableEditCellProps { object_index, .. }
+        | Mode::TableAddColumn { object_index, .. }
+        | Mode::TableRemoveColumn { object_index, .. } => Some(vec![*object_index]),
         _ => None,
     }
 }
@@ -144,6 +145,23 @@ pub fn render_canvas_production(
         queue!(stdout, style::SetAttribute(style::Attribute::Reset))?;
     }
 
+    // Determine table-specific overlay parameters.
+    let table_cell_overlay = match &state.mode {
+        Mode::TableEditCellProps { object_index, cursor_row, cursor_col, selected_cells, sub_state } => {
+            let cursor = if matches!(sub_state, TableCellSubState::Selecting) && !state.blink_hidden {
+                Some((*cursor_row, *cursor_col))
+            } else {
+                None
+            };
+            Some((*object_index, None::<usize>, selected_cells.clone(), cursor))
+        }
+        Mode::TableRemoveColumn { object_index, col_num, .. } => {
+            let col_idx = col_num.saturating_sub(1);
+            Some((*object_index, Some(col_idx), vec![], None))
+        }
+        _ => None,
+    };
+
     // Compile and rasterize — dim non-focused objects when a focus set is active.
     let is_select_mode = matches!(state.mode, Mode::SelectObject { .. } | Mode::SelectGroupMembers { .. });
     let scenes = if let Some(focused) = focus_indices(state) {
@@ -157,7 +175,28 @@ pub fn render_canvas_production(
                 let mut single_end = 0;
                 for (i, obj) in state.source.objects.iter().enumerate() {
                     let before = ops.len();
-                    obj.resolve(frame, &mut ops);
+                    // For table objects with editor overlay, use the specialized resolve.
+                    if let Some((tbl_idx, highlighted_col, ref sel_cells, cursor_cell)) = table_cell_overlay {
+                        if i == tbl_idx {
+                            if let SceneObject::Table(t) = obj {
+                                t.resolve_with_editor_overlay(
+                                    frame,
+                                    highlighted_col,
+                                    sel_cells,
+                                    cursor_cell,
+                                    state.blink_hidden,
+                                    &mut ops,
+                                );
+                            } else {
+                                obj.resolve(frame, &mut ops);
+                            }
+                        } else {
+                            obj.resolve(frame, &mut ops);
+                        }
+                    } else {
+                        obj.resolve(frame, &mut ops);
+                    }
+
                     if focused.contains(&i) {
                         if Some(i) == single_focus {
                             single_start = before;
@@ -169,6 +208,7 @@ pub fn render_canvas_production(
                                 op.style = s.clone();
                             }
                         }
+                        // For table overlay modes: do NOT override styles (already set by resolve_with_editor_overlay)
                         // else: keep original style for focused objects
                     } else {
                         let ds = dim_style();

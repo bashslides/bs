@@ -16,7 +16,30 @@ pub enum PropertyKind {
     HeadChar,
     /// Dropdown for arrow body character selection.
     BodyChar,
+    /// Table column width (stored as percentage 0..100).
+    TableColWidth,
 }
+
+// ---------------------------------------------------------------------------
+// Table column-width property name helpers
+// ---------------------------------------------------------------------------
+
+/// Static property names for up to 16 table columns.
+pub const TABLE_COL_WIDTH_NAMES: &[&str] = &[
+    "col_0_width",  "col_1_width",  "col_2_width",  "col_3_width",
+    "col_4_width",  "col_5_width",  "col_6_width",  "col_7_width",
+    "col_8_width",  "col_9_width",  "col_10_width", "col_11_width",
+    "col_12_width", "col_13_width", "col_14_width", "col_15_width",
+];
+
+/// Parse a "col_N_width" name and return the column index N.
+pub fn parse_col_width_name(name: &str) -> Option<usize> {
+    let n = name.strip_prefix("col_")?.strip_suffix("_width")?;
+    n.parse().ok()
+}
+
+/// Style property names used when editing cell styles in TableEditCellProps.
+pub const CELL_STYLE_PROPS: &[&str] = &["fg_color", "bg_color", "bold", "dimmed"];
 
 pub struct Property {
     pub name: &'static str,
@@ -163,6 +186,36 @@ pub fn get_properties(objects: &[SceneObject], object_index: usize) -> Vec<Prope
             }
             props
         }
+        SceneObject::Table(t) => {
+            let mut props = vec![
+                Property { name: "x",           value: format_coordinate(&t.position.x), kind: PropertyKind::Coordinate },
+                Property { name: "y",           value: format_coordinate(&t.position.y), kind: PropertyKind::Coordinate },
+                Property { name: "width",       value: format_coordinate(&t.width),      kind: PropertyKind::Coordinate },
+                Property { name: "height",      value: format_coordinate(&t.height),     kind: PropertyKind::Coordinate },
+                Property { name: "rows",        value: t.rows.to_string(),               kind: PropertyKind::Text },
+                Property { name: "cols",        value: t.col_widths.len().to_string(),   kind: PropertyKind::ReadOnly },
+                Property { name: "header_bold", value: t.header_bold.to_string(),        kind: PropertyKind::Text },
+                Property { name: "borders",     value: t.borders.to_string(),            kind: PropertyKind::Text },
+                Property { name: "fg_color",    value: format_opt_color(&t.style.fg),    kind: PropertyKind::Color },
+                Property { name: "bg_color",    value: format_opt_color(&t.style.bg),    kind: PropertyKind::Color },
+                Property { name: "bold",        value: t.style.bold.to_string(),         kind: PropertyKind::Text },
+                Property { name: "dimmed",      value: t.style.dim.to_string(),          kind: PropertyKind::Text },
+                Property { name: "first_frame", value: t.frames.start.to_string(),       kind: PropertyKind::Text },
+                Property { name: "last_frame",  value: t.frames.end.to_string(),         kind: PropertyKind::Text },
+                Property { name: "z_order",     value: t.z_order.to_string(),            kind: PropertyKind::Text },
+            ];
+            // Per-column width properties
+            for (col_idx, &frac) in t.col_widths.iter().enumerate() {
+                if col_idx < TABLE_COL_WIDTH_NAMES.len() {
+                    props.push(Property {
+                        name: TABLE_COL_WIDTH_NAMES[col_idx],
+                        value: format!("{:.1}", frac * 100.0),
+                        kind: PropertyKind::TableColWidth,
+                    });
+                }
+            }
+            props
+        }
     }
 }
 
@@ -272,6 +325,38 @@ pub fn set_property(obj: &mut SceneObject, name: &str, value: &str) -> Result<()
             "z_order"     => g.z_order      = value.parse()?,
             _ => bail!("Unknown property: {name}"),
         },
+        SceneObject::Table(t) => {
+            // Column-width properties: "col_N_width"
+            if let Some(col_idx) = parse_col_width_name(name) {
+                let pct: f64 = value.trim().trim_end_matches('%').parse()
+                    .map_err(|_| anyhow::anyhow!("Invalid percentage: {value}"))?;
+                if col_idx < t.col_widths.len() {
+                    t.col_widths[col_idx] = (pct / 100.0).max(0.01).min(1.0);
+                }
+                return Ok(());
+            }
+            match name {
+                "x"           => t.position.x = parse_coordinate(value)?,
+                "y"           => t.position.y = parse_coordinate(value)?,
+                "width"       => t.width  = parse_coordinate(value)?,
+                "height"      => t.height = parse_coordinate(value)?,
+                "rows"        => {
+                    let new_rows: usize = value.parse()?;
+                    t.rows = new_rows.max(1);
+                    t.normalize_cells();
+                }
+                "header_bold" => t.header_bold = parse_bool(value)?,
+                "borders"     => t.borders     = parse_bool(value)?,
+                "fg_color"    => t.style.fg     = parse_opt_color(value)?,
+                "bg_color"    => t.style.bg     = parse_opt_color(value)?,
+                "bold"        => t.style.bold   = parse_bool(value)?,
+                "dimmed"      => t.style.dim    = parse_bool(value)?,
+                "first_frame" => t.frames.start = value.parse()?,
+                "last_frame"  => t.frames.end   = value.parse()?,
+                "z_order"     => t.z_order      = value.parse()?,
+                _ => bail!("Unknown property: {name}"),
+            }
+        }
     }
     Ok(())
 }
@@ -312,6 +397,13 @@ pub fn get_coord(obj: &SceneObject, name: &str) -> Option<Coordinate> {
             _ => None,
         },
         SceneObject::Group(_) => None,
+        SceneObject::Table(t) => match name {
+            "x"      => Some(t.position.x.clone()),
+            "y"      => Some(t.position.y.clone()),
+            "width"  => Some(t.width.clone()),
+            "height" => Some(t.height.clone()),
+            _ => None,
+        },
     }
 }
 
@@ -351,6 +443,13 @@ pub fn set_coordinate(obj: &mut SceneObject, name: &str, coord: Coordinate) -> R
             _ => bail!("Unknown coordinate property: {name}"),
         },
         SceneObject::Group(_) => bail!("Groups have no coordinate properties"),
+        SceneObject::Table(t) => match name {
+            "x"      => t.position.x = coord,
+            "y"      => t.position.y = coord,
+            "width"  => t.width  = coord,
+            "height" => t.height = coord,
+            _ => bail!("Unknown coordinate property: {name}"),
+        },
     }
     Ok(())
 }
@@ -368,6 +467,16 @@ fn parse_coordinate(s: &str) -> Result<Coordinate> {
         return Ok(Coordinate::Fixed(v.max(0.0)));
     }
     bail!("Invalid coordinate: {s} (use a number for fixed position)")
+}
+
+/// Public wrapper for use in editor modules that need to format/parse colors.
+pub fn format_opt_color_pub(color: &Option<Color>) -> String {
+    format_opt_color(color)
+}
+
+/// Public wrapper for use in editor modules that need to parse colors.
+pub fn parse_opt_color_pub(s: &str) -> Result<Option<Color>> {
+    parse_opt_color(s)
 }
 
 fn format_opt_color(color: &Option<Color>) -> String {
@@ -500,6 +609,7 @@ fn object_origin_x_f(obj: &SceneObject) -> f64 {
         SceneObject::Header(h) => coord_val_f(&h.position.x),
         SceneObject::Arrow(a)  => coord_val_f(&a.x1).min(coord_val_f(&a.x2)),
         SceneObject::Group(_)  => 0.0,
+        SceneObject::Table(t)  => coord_val_f(&t.position.x),
     }
 }
 
@@ -511,6 +621,7 @@ fn object_origin_y_f(obj: &SceneObject) -> f64 {
         SceneObject::Header(h) => coord_val_f(&h.position.y),
         SceneObject::Arrow(a)  => coord_val_f(&a.y1).min(coord_val_f(&a.y2)),
         SceneObject::Group(_)  => 0.0,
+        SceneObject::Table(t)  => coord_val_f(&t.position.y),
     }
 }
 
@@ -523,6 +634,7 @@ fn object_dim_x_f(obj: &SceneObject) -> f64 {
         SceneObject::Header(_) => 0.0,
         SceneObject::Arrow(a)  => (coord_val_f(&a.x2) - coord_val_f(&a.x1)).abs(),
         SceneObject::Group(_)  => 0.0,
+        SceneObject::Table(t)  => coord_val_f(&t.width),
     }
 }
 
@@ -535,6 +647,7 @@ fn object_dim_y_f(obj: &SceneObject) -> f64 {
         SceneObject::Header(_) => 1.0,
         SceneObject::Arrow(a)  => (coord_val_f(&a.y2) - coord_val_f(&a.y1)).abs().max(1.0),
         SceneObject::Group(_)  => 0.0,
+        SceneObject::Table(t)  => coord_val_f(&t.height).max(1.0),
     }
 }
 
@@ -555,6 +668,7 @@ fn set_object_origin_x_f(obj: &mut SceneObject, v: f64) {
             set_fixed(&mut a.x2, v + dx);
         }
         SceneObject::Group(_)  => {}
+        SceneObject::Table(t)  => set_fixed(&mut t.position.x, v),
     }
 }
 
@@ -570,6 +684,7 @@ fn set_object_origin_y_f(obj: &mut SceneObject, v: f64) {
             set_fixed(&mut a.y2, v + dy);
         }
         SceneObject::Group(_)  => {}
+        SceneObject::Table(t)  => set_fixed(&mut t.position.y, v),
     }
 }
 
@@ -588,6 +703,7 @@ fn set_object_dim_x_f(obj: &mut SceneObject, v: f64) {
             set_fixed(&mut a.x2, x1 + sign * v.max(0.0));
         }
         SceneObject::Group(_)  => {}
+        SceneObject::Table(t)  => set_fixed(&mut t.width, v),
     }
 }
 
@@ -603,6 +719,7 @@ fn set_object_dim_y_f(obj: &mut SceneObject, v: f64) {
             set_fixed(&mut a.y2, y1 + sign * v.max(0.0));
         }
         SceneObject::Group(_)  => {}
+        SceneObject::Table(t)  => set_fixed(&mut t.height, v),
     }
 }
 
@@ -638,6 +755,10 @@ pub fn move_object(obj: &mut SceneObject, dx: i32, dy: i32) {
             adjust_coordinate(&mut a.y2, dy);
         }
         SceneObject::Group(_) => {} // groups have no position of their own
+        SceneObject::Table(t) => {
+            adjust_coordinate(&mut t.position.x, dx);
+            adjust_coordinate(&mut t.position.y, dy);
+        }
     }
 }
 
@@ -686,6 +807,22 @@ pub fn resize_object(obj: &mut SceneObject, dw: i32, dh: i32) {
         SceneObject::Arrow(a) => {
             adjust_coordinate(&mut a.x2, dw);
             adjust_coordinate(&mut a.y2, dh);
+        }
+        SceneObject::Table(t) => {
+            if dw > 0 {
+                adjust_coordinate_add(&mut t.width, dw as f64);
+            } else if dw < 0 {
+                let delta = (-dw) as f64;
+                adjust_coordinate_add(&mut t.width, delta);
+                adjust_coordinate(&mut t.position.x, dw);
+            }
+            if dh > 0 {
+                adjust_coordinate_add(&mut t.height, dh as f64);
+            } else if dh < 0 {
+                let delta = (-dh) as f64;
+                adjust_coordinate_add(&mut t.height, delta);
+                adjust_coordinate(&mut t.position.y, dh);
+            }
         }
         _ => {}
     }
@@ -771,6 +908,34 @@ pub fn shrink_object(obj: &mut SceneObject, dw: i32, dh: i32) {
         SceneObject::Arrow(a) => {
             adjust_coordinate(&mut a.x2, -dw);
             adjust_coordinate(&mut a.y2, -dh);
+        }
+        SceneObject::Table(t) => {
+            if dw > 0 {
+                if let Coordinate::Fixed(v) = &mut t.width {
+                    *v = (*v - dw as f64).max(3.0);
+                }
+            } else if dw < 0 {
+                let delta = (-dw) as f64;
+                if coordinate_val(&t.width) > 3 {
+                    if let Coordinate::Fixed(v) = &mut t.width {
+                        *v = (*v - delta).max(3.0);
+                    }
+                    adjust_coordinate(&mut t.position.x, -dw);
+                }
+            }
+            if dh > 0 {
+                if let Coordinate::Fixed(v) = &mut t.height {
+                    *v = (*v - dh as f64).max(0.0);
+                }
+            } else if dh < 0 {
+                let delta = (-dh) as f64;
+                if coordinate_val(&t.height) > 0 {
+                    if let Coordinate::Fixed(v) = &mut t.height {
+                        *v = (*v - delta).max(0.0);
+                    }
+                    adjust_coordinate(&mut t.position.y, -dh);
+                }
+            }
         }
         _ => {}
     }

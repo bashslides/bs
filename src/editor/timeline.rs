@@ -44,6 +44,9 @@ pub fn render_timeline(
         Mode::AnimateProperty { .. } => "ANIMATE",
         Mode::Confirm { .. } => "CONFIRM",
         Mode::SelectGroupMembers { .. } => "ADD GROUP",
+        Mode::TableAddColumn { .. } => "ADD COL",
+        Mode::TableRemoveColumn { .. } => "REMOVE COL",
+        Mode::TableEditCellProps { .. } => "EDIT CELLS",
     };
     let dirty_str = if state.dirty { " [modified]" } else { "" };
     // Replace newlines so a multi-line label value doesn't scroll the terminal.

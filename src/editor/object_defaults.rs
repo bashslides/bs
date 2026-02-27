@@ -1,7 +1,7 @@
 use crate::engine::source::*;
 use crate::types::Style;
 
-pub const OBJECT_TYPES: &[&str] = &["Label", "HLine", "Rect", "Header", "Group", "Arrow"];
+pub const OBJECT_TYPES: &[&str] = &["Label", "HLine", "Rect", "Header", "Group", "Arrow", "Table"];
 
 pub fn create_default(type_index: usize, current_frame: usize, frame_count: usize) -> SceneObject {
     let frames = FrameRange {
@@ -73,6 +73,30 @@ pub fn create_default(type_index: usize, current_frame: usize, frame_count: usiz
             frames,
             z_order: 0,
         }),
+        6 => {
+            use crate::engine::objects::table::TableCell;
+            let default_cells = vec![
+                vec![TableCell::default(); 3],
+                vec![TableCell::default(); 3],
+                vec![TableCell::default(); 3],
+            ];
+            SceneObject::Table(Table {
+                position: Position {
+                    x: Coordinate::Fixed(0.0),
+                    y: Coordinate::Fixed(0.0),
+                },
+                width: Coordinate::Fixed(36.0),
+                height: Coordinate::Fixed(0.0),
+                col_widths: vec![1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0],
+                rows: 3,
+                cells: default_cells,
+                header_bold: true,
+                borders: true,
+                style: Style::default(),
+                frames,
+                z_order: 0,
+            })
+        }
         _ => unreachable!(),
     }
 }

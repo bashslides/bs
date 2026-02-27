@@ -10,6 +10,7 @@ mod header;
 mod hline;
 mod label;
 mod rect;
+pub mod table;
 
 pub use arrow::Arrow;
 pub use group::Group;
@@ -17,6 +18,7 @@ pub use header::Header;
 pub use hline::HLine;
 pub use label::Label;
 pub use rect::Rect;
+pub use table::Table;
 
 use crate::types::DrawOp;
 
@@ -36,6 +38,7 @@ impl Resolve for SceneObject {
             SceneObject::Header(o) => o.resolve(frame, ops),
             SceneObject::Group(o) => o.resolve(frame, ops),
             SceneObject::Arrow(o) => o.resolve(frame, ops),
+            SceneObject::Table(o) => o.resolve(frame, ops),
         }
     }
 }

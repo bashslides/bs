@@ -25,7 +25,28 @@ pub struct KeyBindings {
     pub fullscreen: String,
     pub animate: String,
     pub insert_newline: String,
+    // Table-specific bindings (active only when editing a Table object or in table modes)
+    #[serde(default = "default_table_add_col_after")]
+    pub table_add_col_after: String,
+    #[serde(default = "default_table_add_col_before")]
+    pub table_add_col_before: String,
+    #[serde(default = "default_table_remove_col")]
+    pub table_remove_col: String,
+    #[serde(default = "default_table_edit_cells")]
+    pub table_edit_cells: String,
+    // Active inside TableEditCellProps mode
+    #[serde(default = "default_table_add_list")]
+    pub table_add_list: String,
+    #[serde(default = "default_table_edit_cell_style")]
+    pub table_edit_cell_style: String,
 }
+
+fn default_table_add_col_after() -> String { "Alt-a".into() }
+fn default_table_add_col_before() -> String { "Alt-b".into() }
+fn default_table_remove_col() -> String { "Alt-r".into() }
+fn default_table_edit_cells() -> String { "Alt-c".into() }
+fn default_table_add_list() -> String { "l".into() }
+fn default_table_edit_cell_style() -> String { "s".into() }
 
 impl Default for EditorConfig {
     fn default() -> Self {
@@ -48,6 +69,12 @@ impl Default for EditorConfig {
                 fullscreen: "F11".into(),
                 animate: "a".into(),
                 insert_newline: "Alt-Enter".into(),
+                table_add_col_after: default_table_add_col_after(),
+                table_add_col_before: default_table_add_col_before(),
+                table_remove_col: default_table_remove_col(),
+                table_edit_cells: default_table_edit_cells(),
+                table_add_list: default_table_add_list(),
+                table_edit_cell_style: default_table_edit_cell_style(),
             },
         }
     }
@@ -115,8 +142,11 @@ pub fn matches_binding(binding: &str, event: &KeyEvent) -> bool {
         };
     }
 
-    // For non-Ctrl bindings, reject if Ctrl is held
-    if event.modifiers.contains(KeyModifiers::CONTROL) {
+    // For non-Ctrl, non-Alt bindings, reject if Ctrl or Alt is held.
+    // This prevents plain bindings like "a" from accidentally firing on Alt-a.
+    if event.modifiers.contains(KeyModifiers::CONTROL)
+        || event.modifiers.contains(KeyModifiers::ALT)
+    {
         return false;
     }
 
