@@ -2,6 +2,7 @@ use std::io;
 
 use crossterm::{cursor, queue, style, terminal};
 
+use crate::engine::source::SceneObject;
 use crate::menubar::print_menu_item;
 
 use super::properties::{self, PropertyKind};
@@ -47,11 +48,21 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             let prop = &props[*selected_property];
             let is_bool = prop.value == "true" || prop.value == "false";
             let is_coord = prop.kind == PropertyKind::Coordinate;
+            let is_table = matches!(
+                state.source.objects.get(*object_index),
+                Some(SceneObject::Table(_))
+            );
             let mut items = vec!["[↑][↓] prop", "[Enter] edit"];
             if is_bool {
                 items.push("[Space] toggle");
             } else if is_coord {
                 items.push("[a]nimate");
+            }
+            if is_table {
+                items.push("[Alt-c] edit cells");
+                items.push("[Alt-a] +col after");
+                items.push("[Alt-b] +col before");
+                items.push("[Alt-r] -col");
             }
             items.push("[Esc] back");
             items.push("[F11] full");
