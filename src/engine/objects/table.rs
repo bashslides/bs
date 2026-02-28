@@ -246,7 +246,9 @@ impl Table {
         blink_hidden: bool,
         ops: &mut Vec<DrawOp>,
     ) {
-        let cell_mode = cursor_cell.is_some() || !selected_cells.is_empty();
+        // Only dim the table when cells are explicitly selected (Space-toggled).
+        // Don't dim just because the navigation cursor is present.
+        let cell_mode = !selected_cells.is_empty();
         self.resolve_internal(
             frame,
             highlighted_col,
@@ -264,48 +266,85 @@ impl Table {
     }
 
     fn draw_cursor_cell(&self, frame: usize, row: usize, col: usize, ops: &mut Vec<DrawOp>) {
+        if !self.borders {
+            return;
+        }
         let total_w = self.width.evaluate(frame) as usize;
         let (cws, starts) = self.layout(total_w);
         let base_x = self.position.x.evaluate(frame);
         let base_y = self.position.y.evaluate(frame);
+        let ncols = self.col_widths.len();
 
         if col >= cws.len() || row >= self.rows {
             return;
         }
         let cw = cws[col];
+        if cw == 0 {
+            return;
+        }
         let cx = base_x + starts[col] as u16;
 
-        let mut y = if self.borders { base_y + 1 } else { base_y };
+        // Walk down to find the y offset and height of this row.
+        let mut y = base_y + 1; // first content row (after top border)
+        let mut rh = 0usize;
         for r in 0..self.rows {
-            let rh = self.row_height(r, &cws);
+            rh = self.row_height(r, &cws);
             if r == row {
-                // Draw a bright white underline beneath every cell content line.
-                let cursor_style = Style {
-                    fg: Some(Color::Named(NamedColor::White)),
-                    bg: None,
-                    bold: true,
-                    dim: false,
-                };
-                for line in 0..rh as u16 {
-                    let ly = y + line;
-                    for col_x in 0..cw as u16 {
-                        // Only emit if this Op's position would overwrite the content.
-                        // Use a very high z_order to sit on top.
-                        ops.push(DrawOp {
-                            x: cx + col_x,
-                            y: ly,
-                            ch: ' ', // space means "show bg only"
-                            style: cursor_style.clone(),
-                            z_order: self.z_order + 100,
-                        });
-                    }
-                }
                 break;
             }
-            y += rh as u16;
-            if self.borders {
-                y += 1;
+            y += rh as u16 + 1; // +1 for the separator border row
+        }
+
+        let cursor_style = Style {
+            fg: Some(Color::Named(NamedColor::Yellow)),
+            bg: None,
+            bold: true,
+            dim: false,
+        };
+        let z = self.z_order + 100;
+
+        // Border positions surrounding this cell's content area.
+        let top_y    = y - 1;
+        let bot_y    = y + rh as u16;
+        let left_x   = cx - 1; // safe: starts[col] >= 1 when borders=true
+        let right_x  = cx + cw as u16;
+
+        // Helper: pick the correct box-drawing corner character.
+        // border_row / border_col are indices into the "corner grid" (0..=nrows, 0..=ncols).
+        let corner = |br: usize, bc: usize| -> char {
+            match (br == 0, br == self.rows, bc == 0, bc == ncols) {
+                (true,  _,     true,  _    ) => '┌',
+                (true,  _,     _,     true ) => '┐',
+                (_,     true,  true,  _    ) => '└',
+                (_,     true,  _,     true ) => '┘',
+                (true,  _,     _,     _    ) => '┬',
+                (_,     true,  _,     _    ) => '┴',
+                (_,     _,     true,  _    ) => '├',
+                (_,     _,     _,     true ) => '┤',
+                _                            => '┼',
             }
+        };
+
+        // Top border row
+        for bx in left_x..=right_x {
+            let ch = if bx == left_x  { corner(row,     col    ) }
+                     else if bx == right_x { corner(row,     col + 1) }
+                     else                  { '─' };
+            ops.push(DrawOp { x: bx, y: top_y, ch, style: cursor_style.clone(), z_order: z });
+        }
+
+        // Bottom border row
+        for bx in left_x..=right_x {
+            let ch = if bx == left_x  { corner(row + 1, col    ) }
+                     else if bx == right_x { corner(row + 1, col + 1) }
+                     else                  { '─' };
+            ops.push(DrawOp { x: bx, y: bot_y, ch, style: cursor_style.clone(), z_order: z });
+        }
+
+        // Left and right vertical bars
+        for by in y..y + rh as u16 {
+            ops.push(DrawOp { x: left_x,  y: by, ch: '│', style: cursor_style.clone(), z_order: z });
+            ops.push(DrawOp { x: right_x, y: by, ch: '│', style: cursor_style.clone(), z_order: z });
         }
     }
 

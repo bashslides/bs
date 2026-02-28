@@ -367,6 +367,7 @@ fn handle_selected_object(state: &mut EditorState, key: KeyEvent) -> Action {
     }
 
     let is_group = matches!(state.source.objects[object_index], SceneObject::Group(_));
+    let is_table = matches!(state.source.objects[object_index], SceneObject::Table(_));
 
     // Ctrl+Shift+Arrow: shrink from that edge
     if key.modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) {
@@ -412,6 +413,16 @@ fn handle_selected_object(state: &mut EditorState, key: KeyEvent) -> Action {
                 let anchor_left = key.code != KeyCode::Left;
                 let anchor_top  = key.code != KeyCode::Up;
                 properties::resize_group(&mut state.source.objects, object_index, dw.abs(), dh.abs(), anchor_left, anchor_top);
+            } else if is_table {
+                // For tables: Right/Down grows from the right/bottom edge,
+                // Left/Up shrinks from the right/bottom edge (opposite of grow).
+                match key.code {
+                    KeyCode::Right => properties::resize_object(&mut state.source.objects[object_index], 1, 0),
+                    KeyCode::Left  => properties::shrink_object(&mut state.source.objects[object_index], 1, 0),
+                    KeyCode::Down  => properties::resize_object(&mut state.source.objects[object_index], 0, 1),
+                    KeyCode::Up    => properties::shrink_object(&mut state.source.objects[object_index], 0, 1),
+                    _ => {}
+                }
             } else {
                 properties::resize_object(&mut state.source.objects[object_index], dw, dh);
             }

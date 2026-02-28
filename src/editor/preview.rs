@@ -148,10 +148,12 @@ pub fn render_canvas_production(
     // Determine table-specific overlay parameters.
     let table_cell_overlay = match &state.mode {
         Mode::TableEditCellProps { object_index, cursor_row, cursor_col, selected_cells, sub_state } => {
-            let cursor = if matches!(sub_state, TableCellSubState::Selecting) && !state.blink_hidden {
-                Some((*cursor_row, *cursor_col))
-            } else {
+            // During navigation (Selecting) the cursor borders blink; in all other
+            // sub-states (editing content, editing style) they are shown steadily.
+            let cursor = if state.blink_hidden && matches!(sub_state, TableCellSubState::Selecting) {
                 None
+            } else {
+                Some((*cursor_row, *cursor_col))
             };
             Some((*object_index, None::<usize>, selected_cells.clone(), cursor))
         }
@@ -179,14 +181,41 @@ pub fn render_canvas_production(
                     if let Some((tbl_idx, highlighted_col, ref sel_cells, cursor_cell)) = table_cell_overlay {
                         if i == tbl_idx {
                             if let SceneObject::Table(t) = obj {
-                                t.resolve_with_editor_overlay(
-                                    frame,
-                                    highlighted_col,
-                                    sel_cells,
-                                    cursor_cell,
-                                    state.blink_hidden,
-                                    &mut ops,
-                                );
+                                // When actively editing a cell, apply the current edit buffer
+                                // so the typed text is visible live in the canvas (WYSIWYG).
+                                let editing_buf = match &state.mode {
+                                    Mode::TableEditCellProps {
+                                        sub_state: TableCellSubState::EditingContent { row, col, buf, .. },
+                                        ..
+                                    } => Some((*row, *col, buf.clone())),
+                                    _ => None,
+                                };
+                                if let Some((er, ec, ref buf)) = editing_buf {
+                                    let mut t_clone = t.clone();
+                                    t_clone.normalize_cells();
+                                    if let Some(row_vec) = t_clone.cells.get_mut(er) {
+                                        if let Some(cell) = row_vec.get_mut(ec) {
+                                            cell.content = buf.clone();
+                                        }
+                                    }
+                                    t_clone.resolve_with_editor_overlay(
+                                        frame,
+                                        highlighted_col,
+                                        sel_cells,
+                                        cursor_cell,
+                                        state.blink_hidden,
+                                        &mut ops,
+                                    );
+                                } else {
+                                    t.resolve_with_editor_overlay(
+                                        frame,
+                                        highlighted_col,
+                                        sel_cells,
+                                        cursor_cell,
+                                        state.blink_hidden,
+                                        &mut ops,
+                                    );
+                                }
                             } else {
                                 obj.resolve(frame, &mut ops);
                             }
