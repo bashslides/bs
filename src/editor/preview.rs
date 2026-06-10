@@ -185,9 +185,21 @@ pub fn render_canvas_production(
                                 // so the typed text is visible live in the canvas (WYSIWYG).
                                 let editing_buf = match &state.mode {
                                     Mode::TableEditCellProps {
-                                        sub_state: TableCellSubState::EditingContent { row, col, buf, .. },
+                                        sub_state: TableCellSubState::EditingContent { row, col, buf, cursor },
                                         ..
-                                    } => Some((*row, *col, buf.clone())),
+                                    } => {
+                                        // Insert a block glyph at the caret so the edit
+                                        // position is visible in the cell. Affects the
+                                        // preview only; the stored buffer is unchanged.
+                                        let bi = buf
+                                            .char_indices()
+                                            .nth(*cursor)
+                                            .map(|(i, _)| i)
+                                            .unwrap_or(buf.len());
+                                        let mut display = buf.clone();
+                                        display.insert(bi, '\u{2588}');
+                                        Some((*row, *col, display))
+                                    }
                                     _ => None,
                                 };
                                 if let Some((er, ec, ref buf)) = editing_buf {

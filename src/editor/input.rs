@@ -1818,6 +1818,19 @@ fn handle_table_cell_edit_content(state: &mut EditorState, key: KeyEvent) -> Act
         return Action::Redraw;
     }
 
+    // Shift-Enter: insert a newline instead of saving (where the terminal
+    // reports the modifier; Alt-Enter above always works).
+    if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) {
+        let bi = char_to_byte_idx(&buf, cursor);
+        buf.insert(bi, '\n');
+        cursor += 1;
+        state.mode = Mode::TableEditCellProps {
+            object_index, cursor_row, cursor_col, selected_cells,
+            sub_state: TableCellSubState::EditingContent { row: edit_row, col: edit_col, buf, cursor },
+        };
+        return Action::Redraw;
+    }
+
     match key.code {
         KeyCode::Enter => {
             // Save content
