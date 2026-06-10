@@ -146,9 +146,9 @@ pub struct CommandRegion {
     /// Working directory for the child (defaults to the player's cwd).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
-    /// Kill the child after this many milliseconds (defaults to 10_000).
+    /// Kill the child after this many seconds. Omitted ⇒ run with no timeout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout_ms: Option<u64>,
+    pub timeout_secs: Option<u64>,
     /// Style applied to the painted output cells.
     #[serde(default, skip_serializing_if = "Style::is_default")]
     pub style: Style,

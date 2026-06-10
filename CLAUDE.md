@@ -53,7 +53,8 @@ editing or compiling); its spec is emitted as a `CommandRegion` sidecar on
 `PlayablePresentation`. The `Player` executes the binary with **piped** stdio
 (it can't touch the real terminal), reads it on background threads (so arrow
 keys always interrupt and navigate — a slow/hung command can never trap the
-deck), enforces a timeout, paints stdout/stderr into the box interior, and marks
+deck), enforces an optional timeout (`timeout_secs`; omitted ⇒ no timeout),
+paints stdout/stderr into the box interior, and marks
 the result with a green `✓` (exit 0) or red `✗` (non-zero / timeout / spawn
 failure) on the top edge. Navigation does not branch on exit status — you always
 stay on the slide and move on with the arrow keys.

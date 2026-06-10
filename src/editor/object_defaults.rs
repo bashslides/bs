@@ -131,7 +131,7 @@ pub fn create_default(type_index: usize, current_frame: usize, frame_count: usiz
             command: "echo".into(),
             args: vec!["hello".into()],
             cwd: None,
-            timeout_ms: None,
+            timeout_secs: None,
             border: true,
             style: Style::default(),
             frames,

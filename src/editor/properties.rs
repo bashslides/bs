@@ -173,7 +173,7 @@ impl Editable for Command {
             Property { name: "height", value: format_coordinate(&self.height), kind: PropertyKind::Coordinate },
             Property { name: "border", value: self.border.to_string(), kind: PropertyKind::Text },
             Property { name: "cwd", value: self.cwd.clone().unwrap_or_default(), kind: PropertyKind::Text },
-            Property { name: "timeout_ms", value: self.timeout_ms.map(|t| t.to_string()).unwrap_or_default(), kind: PropertyKind::Text },
+            Property { name: "timeout_secs", value: self.timeout_secs.map(|t| t.to_string()).unwrap_or_default(), kind: PropertyKind::Text },
             Property { name: "fg_color", value: format_opt_color(&self.style.fg), kind: PropertyKind::Color },
             Property { name: "bg_color", value: format_opt_color(&self.style.bg), kind: PropertyKind::Color },
             Property { name: "bold", value: self.style.bold.to_string(), kind: PropertyKind::Text },
@@ -198,8 +198,8 @@ impl Editable for Command {
             "cwd" => {
                 self.cwd = if value.is_empty() { None } else { Some(value.to_string()) };
             }
-            "timeout_ms" => {
-                self.timeout_ms = if value.is_empty() { None } else { Some(value.parse()?) };
+            "timeout_secs" => {
+                self.timeout_secs = if value.trim().is_empty() { None } else { Some(value.trim().parse()?) };
             }
             "fg_color" => self.style.fg = parse_opt_color(value)?,
             "bg_color" => self.style.bg = parse_opt_color(value)?,

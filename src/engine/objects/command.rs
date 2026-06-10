@@ -31,8 +31,9 @@ pub struct Command {
     pub args: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// Kill the binary after this many seconds. Omitted ⇒ no timeout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout_ms: Option<u64>,
+    pub timeout_secs: Option<u64>,
     /// Draw a clean border around the output region (no label). On by default.
     #[serde(default = "default_true")]
     pub border: bool,
@@ -81,7 +82,7 @@ impl Command {
             command: self.command.clone(),
             args: self.args.clone(),
             cwd: self.cwd.clone(),
-            timeout_ms: self.timeout_ms,
+            timeout_secs: self.timeout_secs,
             style: self.style.clone(),
         }
     }

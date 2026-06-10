@@ -19,9 +19,6 @@ use crate::types::{Cell, Color, CommandRegion, Frame, NamedColor, PlayablePresen
 /// Rows reserved above the canvas for the menu bar.
 const CANVAS_OFFSET: u16 = 1;
 
-/// Default kill-after time for a command that does not set its own timeout.
-const DEFAULT_TIMEOUT_MS: u64 = 10_000;
-
 /// A binary currently executing for the active frame. The child runs with piped
 /// stdio (it can never touch the real terminal) and is read on background
 /// threads, so the event loop stays responsive — arrow keys kill it and move on.
@@ -29,7 +26,8 @@ struct RunningCommand {
     region: CommandRegion,
     child: Child,
     start: Instant,
-    timeout: Duration,
+    /// Kill-after duration, or `None` to run with no timeout.
+    timeout: Option<Duration>,
     rx: Receiver<Vec<u8>>,
     /// Accumulated stdout+stderr bytes.
     out: Vec<u8>,
@@ -357,7 +355,7 @@ impl Player {
     /// Spawn the binary with piped stdio and background readers. A spawn failure
     /// is rendered as an error in the box rather than crashing the player.
     fn start_command(&mut self, region: CommandRegion, stdout: &mut io::Stdout) -> Result<()> {
-        let timeout = Duration::from_millis(region.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
+        let timeout = region.timeout_secs.map(Duration::from_secs);
 
         let mut cmd = ProcCommand::new(&region.command);
         cmd.args(&region.args)
@@ -417,7 +415,7 @@ impl Player {
             while let Ok(chunk) = rc.rx.try_recv() {
                 rc.out.extend_from_slice(&chunk);
             }
-            let timed_out = rc.start.elapsed() > rc.timeout;
+            let timed_out = rc.timeout.is_some_and(|t| rc.start.elapsed() > t);
             if timed_out {
                 let _ = rc.child.kill();
             }
