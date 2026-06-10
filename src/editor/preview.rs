@@ -17,7 +17,9 @@ use super::ui::Layout;
 /// Returns None when all objects render normally.
 fn focus_indices(state: &EditorState) -> Option<Vec<usize>> {
     match &state.mode {
-        Mode::SelectedObject { object_index } | Mode::EditProperties { object_index, .. } => {
+        Mode::SelectedObject { object_index }
+        | Mode::ResizeObject { object_index }
+        | Mode::EditProperties { object_index, .. } => {
             // When a Group is selected, highlight its members instead.
             match state.source.objects.get(*object_index) {
                 Some(SceneObject::Group(g)) if !g.members.is_empty() => {

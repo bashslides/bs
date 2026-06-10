@@ -43,11 +43,17 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
         ],
         Mode::SelectedObject { .. } => vec![
             "[←→↑↓] move",
+            "[r]esize",
             "[Shift+←→↑↓] grow",
-            "[Ctrl+Shift+←→↑↓] shrink",
             "[e]dit props",
             "[d]el",
             "[Esc] back",
+            "[F11] full",
+        ],
+        Mode::ResizeObject { .. } => vec![
+            "[←→] width",
+            "[↑↓] height",
+            "[Enter][Esc] done",
             "[F11] full",
         ],
         // Browsing properties — action hint depends on the selected property type

@@ -32,7 +32,7 @@ impl Layout {
         let timeline_h: u16 = 2;
         // SelectedObject has more key hints, so reserve 2 lines.
         let menu_h: u16 = match mode {
-            Mode::SelectedObject { .. } => 2,
+            Mode::SelectedObject { .. } | Mode::ResizeObject { .. } => 2,
             _ => 1,
         };
         Layout {

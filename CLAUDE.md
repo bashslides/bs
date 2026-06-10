@@ -93,6 +93,8 @@ Normal ──a──→ AddObject ──Enter──→ Normal (object added)
 - **Settings**: edit the output frame size (width × height in cells); ↑↓/Tab switch field, Enter apply, Esc cancel
 - **AddObject**: choose object type from list
 - **SelectObject**: pick object visible on current frame
+- **SelectedObject**: move (arrows), `r` → resize mode, `e` → edit props, `d` delete; Shift+arrows also grow
+- **ResizeObject**: arrow-key resize (←→ width, ↑↓ height) — a terminal-robust path since many terminals capture Shift+↑/↓ for scrollback; Enter/Esc exit
 - **EditProperties**: edit typed properties; color fields show dropdown; text fields support multi-line (Alt-Enter = newline); property list scrolls vertically
 - **AnimateProperty**: set from/to/start_frame/end_frame for coordinate animation
 

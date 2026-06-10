@@ -40,6 +40,7 @@ pub fn render_timeline(
         Mode::AddObject { .. } => "ADD OBJECT",
         Mode::SelectObject { .. } => "SELECT OBJECT",
         Mode::SelectedObject { .. } => "SELECTED",
+        Mode::ResizeObject { .. } => "RESIZE",
         Mode::EditProperties { .. } => "EDIT PROPERTIES",
         Mode::AnimateProperty { .. } => "ANIMATE",
         Mode::Confirm { .. } => "CONFIRM",

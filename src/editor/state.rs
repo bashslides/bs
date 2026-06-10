@@ -61,6 +61,12 @@ pub enum Mode {
     SelectedObject {
         object_index: usize,
     },
+    /// Resizing the selected object with plain arrow keys (Left/Right = width,
+    /// Up/Down = height). A terminal-robust alternative to Shift+arrows, which
+    /// many terminals capture for scrollback.
+    ResizeObject {
+        object_index: usize,
+    },
     EditProperties {
         object_index: usize,
         selected_property: usize,

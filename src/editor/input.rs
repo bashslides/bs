@@ -44,6 +44,7 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
         Mode::AddObject { .. } => handle_add_object(state, key),
         Mode::SelectObject { .. } => handle_select_object(state, key),
         Mode::SelectedObject { .. } => handle_selected_object(state, key),
+        Mode::ResizeObject { .. } => handle_resize_object(state, key),
         Mode::EditProperties { editing_value, dropdown, .. } => {
             let has_dropdown = dropdown.is_some();
             let is_editing = editing_value.is_some();
@@ -597,6 +598,14 @@ fn handle_selected_object(state: &mut EditorState, key: KeyEvent) -> Action {
         return Action::Redraw;
     }
 
+    // [r]esize: enter arrow-key resize mode (works on every terminal, unlike
+    // Shift+arrows which some terminals capture for scrollback).
+    if matches_binding(&bindings.resize_object, &key) {
+        state.mode = Mode::ResizeObject { object_index };
+        state.status_message = None;
+        return Action::Redraw;
+    }
+
     let is_group = matches!(state.source.objects[object_index], SceneObject::Group(_));
     let is_table = matches!(state.source.objects[object_index], SceneObject::Table(_));
 
@@ -687,6 +696,66 @@ fn handle_selected_object(state: &mut EditorState, key: KeyEvent) -> Action {
     }
 
     Action::Continue
+}
+
+/// Resize mode: plain arrow keys adjust the selected object's far edge —
+/// Left/Right change width, Up/Down change height (Down/Right grow, Up/Left
+/// shrink). Plain arrows are delivered by every terminal, so this works where
+/// Shift+Up/Down (captured for scrollback by many terminals) does not.
+fn handle_resize_object(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+
+    let object_index = match &state.mode {
+        Mode::ResizeObject { object_index } => *object_index,
+        _ => return Action::Continue,
+    };
+
+    // Esc or Enter return to the selected-object menu.
+    if matches_binding(&bindings.cancel, &key) || matches_binding(&bindings.confirm, &key) {
+        state.mode = Mode::SelectedObject { object_index };
+        return Action::Redraw;
+    }
+
+    if key.modifiers != KeyModifiers::NONE
+        || !matches!(key.code, KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down)
+    {
+        return Action::Continue;
+    }
+
+    let is_group = matches!(state.source.objects[object_index], SceneObject::Group(_));
+    let is_table = matches!(state.source.objects[object_index], SceneObject::Table(_));
+    let frame = state.current_frame;
+    let objects = &mut state.source.objects;
+
+    if is_group {
+        // Grow/shrink the group's bounding box, anchored at its top-left.
+        match key.code {
+            KeyCode::Right => properties::resize_group(objects, object_index, 1, 0, true, true),
+            KeyCode::Left  => properties::resize_group(objects, object_index, -1, 0, true, true),
+            KeyCode::Down  => properties::resize_group(objects, object_index, 0, 1, true, true),
+            KeyCode::Up    => properties::resize_group(objects, object_index, 0, -1, true, true),
+            _ => {}
+        }
+    } else if is_table {
+        // Table height auto-fits content, so seed vertical resizes from natural.
+        match key.code {
+            KeyCode::Right => properties::resize_object(&mut objects[object_index], 1, 0),
+            KeyCode::Left  => properties::shrink_object(&mut objects[object_index], 1, 0),
+            KeyCode::Down  => grow_table_height(&mut objects[object_index], frame, 1),
+            KeyCode::Up    => grow_table_height(&mut objects[object_index], frame, -1),
+            _ => {}
+        }
+    } else {
+        match key.code {
+            KeyCode::Right => properties::resize_object(&mut objects[object_index], 1, 0),
+            KeyCode::Left  => properties::shrink_object(&mut objects[object_index], 1, 0),
+            KeyCode::Down  => properties::resize_object(&mut objects[object_index], 0, 1),
+            KeyCode::Up    => properties::shrink_object(&mut objects[object_index], 0, 1),
+            _ => {}
+        }
+    }
+    state.dirty = true;
+    Action::Redraw
 }
 
 /// Grow (`delta > 0`) or shrink (`delta < 0`) a table's height by one row,
