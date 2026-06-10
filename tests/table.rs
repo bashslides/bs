@@ -8,8 +8,8 @@
 
 mod common;
 
-use ascii_presenter::engine::objects::table::{table_add_column, table_remove_column, Table};
-use ascii_presenter::types::Frame;
+use bs::engine::objects::table::{table_add_column, table_remove_column, Table};
+use bs::types::Frame;
 use common::{char_at, frame_lines, render_json};
 
 // ---------------------------------------------------------------------------

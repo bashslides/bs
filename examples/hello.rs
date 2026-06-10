@@ -3,7 +3,7 @@
 //!
 //! Run with: cargo run --example hello
 
-use ascii_presenter::{
+use bs::{
     engine::{
         source::{
             Coordinate, FrameRange, HLine, Header, Label, Position, Rect, SceneObject,
@@ -39,7 +39,7 @@ fn main() -> anyhow::Result<()> {
                 ch: '█',
             }),
             SceneObject::Label(Label {
-                text: "Welcome to ASCII Presenter".to_string(),
+                text: "Welcome to bs".to_string(),
                 position: Position {
                     x: Coordinate::Fixed(27.0),
                     y: Coordinate::Fixed(16.0),
@@ -92,7 +92,7 @@ fn main() -> anyhow::Result<()> {
 
             // Title (visible from the start of this section)
             SceneObject::Label(Label {
-                text: "ASCII Presenter".to_string(),
+                text: "bs".to_string(),
                 position: Position {
                     x: Coordinate::Fixed(32.0),
                     y: Coordinate::Fixed(2.0),

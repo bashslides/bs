@@ -1,43 +1,31 @@
-# ascii-presenter
+# bs
 
 A terminal-native presentation engine written in Rust. Presentations are
 JSON-described ASCII-art animations that render in the terminal.
 
 ## Install the toolchain
 
-You need a Rust toolchain and a C linker (Rust uses the system `cc` to link).
-
-**Standard machine:**
+`bs` needs a Rust toolchain and a C linker. The bundled script sets up both —
+it installs Rust if missing, and provides a C linker (system `build-essential`
+when you have root, otherwise a self-contained gcc unpacked into `~/toolchain`
+with no root required):
 
 ```bash
-# Rust (installs rustc + cargo via rustup)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-
-# C linker
-sudo apt-get install -y build-essential     # Debian/Ubuntu
-# macOS: xcode-select --install
+./scripts/install-toolchain.sh
 ```
 
-**Restricted environment (no root, no system linker):** install Rust with
-`rustup` as above, then fetch a C toolchain into a local prefix without root:
+If it set up the local (no-root) toolchain, load it into your shell before
+building:
 
 ```bash
-mkdir -p /tmp/tc && cd /tmp/tc
-apt-get download gcc-13 cpp-13 gcc-13-x86-64-linux-gnu cpp-13-x86-64-linux-gnu \
-  binutils binutils-x86-64-linux-gnu binutils-common libbinutils \
-  libc6-dev libc-dev-bin linux-libc-dev libgcc-13-dev libcrypt-dev \
-  libisl23 libmpc3 libmpfr6 libgmp10 zlib1g libsframe1 libctf0
-for d in *.deb; do dpkg-deb -x "$d" "$HOME/toolchain"; done
+source ~/toolchain/env.sh
 ```
 
-Then create `~/toolchain/bin/cc` wrapping `x86_64-linux-gnu-gcc-13` with `-B`
-paths into the extracted prefix and `LD_LIBRARY_PATH` set to
-`~/toolchain/usr/lib/x86_64-linux-gnu`, and point cargo at it:
+On a normal machine you can also just do it by hand:
 
 ```bash
-export PATH="$HOME/toolchain/bin:$PATH"
-export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$HOME/toolchain/bin/cc"
+curl https://sh.rustup.rs -sSf | sh        # Rust (rustc + cargo)
+sudo apt-get install -y build-essential    # C linker — macOS: xcode-select --install
 ```
 
 ## Build, run, test

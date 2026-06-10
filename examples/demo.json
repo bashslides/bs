@@ -5,7 +5,7 @@
   "objects": [
     {
       "type": "label",
-      "text": "ASCII Presenter",
+      "text": "bs",
       "position": {
         "x": { "fixed": 32 },
         "y": { "fixed": 2 }

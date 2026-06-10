@@ -2,7 +2,7 @@ use std::{fs, process};
 
 use anyhow::{bail, Context, Result};
 
-use ascii_presenter::{
+use bs::{
     editor::Editor,
     engine::{source::SourcePresentation, Engine},
     player::Player,
@@ -17,9 +17,9 @@ fn main() {
     }
 }
 
-const COMPILE_USAGE: &str = "ascii-presenter compile <source.json> <output.json>";
-const PLAY_USAGE: &str = "ascii-presenter play <presentation.json>";
-const EDIT_USAGE: &str = "ascii-presenter edit <source.json>";
+const COMPILE_USAGE: &str = "bs compile <source.json> <output.json>";
+const PLAY_USAGE: &str = "bs play <presentation.json>";
+const EDIT_USAGE: &str = "bs edit <source.json>";
 
 fn run() -> Result<()> {
     let mut args = std::env::args().skip(1);
@@ -39,7 +39,7 @@ fn run() -> Result<()> {
             edit(&path)
         }
         _ => bail!(
-            "ASCII Presenter — terminal-native presentation engine\n\nUsage:\n  {COMPILE_USAGE}\n  {PLAY_USAGE}\n  {EDIT_USAGE}"
+            "bs — terminal-native presentation engine\n\nUsage:\n  {COMPILE_USAGE}\n  {PLAY_USAGE}\n  {EDIT_USAGE}"
         ),
     }
 }

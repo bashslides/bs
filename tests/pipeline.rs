@@ -6,7 +6,7 @@
 
 mod common;
 
-use ascii_presenter::types::Frame;
+use bs::types::Frame;
 use common::{char_at, frame_lines, render_json};
 
 #[test]

@@ -99,7 +99,7 @@ impl EditorConfig {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
         let mut path = std::path::PathBuf::from(home);
         path.push(".config");
-        path.push("ascii-presenter");
+        path.push("bs");
         path.push("editor.json");
         path
     }

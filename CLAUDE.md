@@ -1,4 +1,4 @@
-# ascii-presenter
+# bs
 
 A terminal-native presentation engine written in Rust. Presentations are ASCII art animations that render in the terminal.
 
@@ -57,7 +57,7 @@ The editor runs the full Engine+Renderer pipeline live for WYSIWYG preview.
 | `src/player/mod.rs` | Playback loop, keyboard nav (arrows, space, q, F11) |
 | `src/editor/mod.rs` | Editor lifecycle, raw mode setup, main loop |
 | `src/editor/state.rs` | `EditorState`, `Mode` enum (~16 variants, incl. table sub-modes) |
-| `src/editor/config.rs` | `KeyBindings` — all bindings configurable via `~/.config/ascii-presenter/editor.json` |
+| `src/editor/config.rs` | `KeyBindings` — all bindings configurable via `~/.config/bs/editor.json` |
 | `src/editor/input.rs` | All key event handling (~2,057 lines — monolithic; ~34% is table handlers) |
 | `src/editor/panel.rs` | Left panel (Add Object), right panel (Properties), object selection overlay |
 | `src/editor/properties.rs` | Type-aware property getter/setter for all object types |

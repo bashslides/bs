@@ -2,7 +2,7 @@
 //! coordinate evaluation (the animation core), frame ranges, and the
 //! number-or-object coordinate deserializer.
 
-use ascii_presenter::engine::source::{Coordinate, FrameRange, Label};
+use bs::engine::source::{Coordinate, FrameRange, Label};
 
 #[test]
 fn fixed_coordinate_floors_to_a_cell() {

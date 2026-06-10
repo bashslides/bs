@@ -5,9 +5,9 @@
 //! reconstruct a plain-character grid so assertions read like the terminal
 //! output a viewer would see.
 
-use ascii_presenter::engine::{source::SourcePresentation, Engine};
-use ascii_presenter::renderer::Renderer;
-use ascii_presenter::types::{Frame, PlayablePresentation, TerminalContract};
+use bs::engine::{source::SourcePresentation, Engine};
+use bs::renderer::Renderer;
+use bs::types::{Frame, PlayablePresentation, TerminalContract};
 
 /// Parse a source presentation from JSON and run it through the real pipeline.
 ///
