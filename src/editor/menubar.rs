@@ -19,7 +19,7 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[s]elect",
             "[+] dup",
             "[-] del",
-            "[g] settings",
+            "settin[g]s",
             "[Ctrl-s]ave",
             "[q]uit",
             "[F11] full",
