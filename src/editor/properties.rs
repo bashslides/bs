@@ -171,7 +171,7 @@ impl Editable for Command {
             Property { name: "y", value: format_coordinate(&self.position.y), kind: PropertyKind::Coordinate },
             Property { name: "width", value: format_coordinate(&self.width), kind: PropertyKind::Coordinate },
             Property { name: "height", value: format_coordinate(&self.height), kind: PropertyKind::Coordinate },
-            Property { name: "title", value: self.title.clone().unwrap_or_default(), kind: PropertyKind::Text },
+            Property { name: "border", value: self.border.to_string(), kind: PropertyKind::Text },
             Property { name: "cwd", value: self.cwd.clone().unwrap_or_default(), kind: PropertyKind::Text },
             Property { name: "timeout_ms", value: self.timeout_ms.map(|t| t.to_string()).unwrap_or_default(), kind: PropertyKind::Text },
             Property { name: "fg_color", value: format_opt_color(&self.style.fg), kind: PropertyKind::Color },
@@ -194,9 +194,7 @@ impl Editable for Command {
             "y" => self.position.y = parse_coordinate(value)?,
             "width" => self.width = parse_coordinate(value)?,
             "height" => self.height = parse_coordinate(value)?,
-            "title" => {
-                self.title = if value.is_empty() { None } else { Some(value.to_string()) };
-            }
+            "border" => self.border = parse_bool(value)?,
             "cwd" => {
                 self.cwd = if value.is_empty() { None } else { Some(value.to_string()) };
             }

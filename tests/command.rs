@@ -50,18 +50,39 @@ fn command_compiles_to_region_spec() {
 }
 
 #[test]
-fn command_draws_a_placeholder_box_into_the_static_frame() {
+fn command_draws_a_clean_placeholder_box_into_the_static_frame() {
     // Compiling/rendering must never run the binary — it just draws the box, so
-    // editing a deck is always safe. Check the corners and the default title.
+    // editing a deck is always safe. The frame is clean: corners only, no label.
     let p = render_json(&source_json());
 
     assert_eq!(char_at(&p, 0, 5, 3), '┌'); // top-left
     assert_eq!(char_at(&p, 0, 44, 3), '┐'); // top-right (x=5+40-1)
     assert_eq!(char_at(&p, 0, 5, 12), '└'); // bottom-left (y=3+10-1)
     assert_eq!(char_at(&p, 0, 44, 12), '┘'); // bottom-right
-    // Default title "$ echo …" begins two cells in on the top edge.
-    assert_eq!(char_at(&p, 0, 7, 3), '$');
-    assert_eq!(char_at(&p, 0, 9, 3), 'e');
+    // The top edge carries no command name / args / "$" — just the border rule.
+    assert_eq!(char_at(&p, 0, 7, 3), '─');
+    assert_eq!(char_at(&p, 0, 9, 3), '─');
+}
+
+#[test]
+fn border_can_be_disabled_for_a_frameless_region() {
+    let json = source_json().replace(
+        r#""command": "echo","#,
+        r#""border": false, "command": "echo","#,
+    );
+    let p = render_json(&json);
+    // No border drawn anywhere the box corners would have been.
+    assert_eq!(char_at(&p, 0, 5, 3), ' ');
+    assert_eq!(char_at(&p, 0, 44, 3), ' ');
+    assert_eq!(char_at(&p, 0, 5, 12), ' ');
+
+    // The output region now spans the full box (no inset), with the status cell
+    // in the top-right corner.
+    let source: SourcePresentation = serde_json::from_str(&json).unwrap();
+    let r = &source.command_regions()[0];
+    assert_eq!((r.x, r.y), (5, 3));
+    assert_eq!((r.w, r.h), (40, 10));
+    assert_eq!((r.status_x, r.status_y), (5 + 40 - 1, 3));
 }
 
 #[test]

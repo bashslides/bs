@@ -5,15 +5,19 @@ use crate::types::{CommandRegion, DrawOp, Style};
 use super::super::source::{deserialize_coord_compat, Coordinate, FrameRange, Position};
 use super::Resolve;
 
+fn default_true() -> bool {
+    true
+}
+
 /// A "run a binary and show its output" object.
 ///
-/// At compile time this draws only a bordered box (a placeholder you can frame
-/// and decorate with other objects) — its interior is left blank because the
-/// binary's output is unknown until play time. The command spec itself is
-/// emitted as a [`CommandRegion`] sidecar (see [`Command::region`]); the player
-/// runs the binary, paints stdout/stderr into the interior, and marks success
-/// with a ✓ or failure with a ✗ on the top edge. The editor and compiler never
-/// execute the binary, so editing a deck is always safe.
+/// At compile time this draws only an optional clean border (a placeholder you
+/// can frame and decorate with other objects) — its interior is left blank
+/// because the binary's output is unknown until play time. The command spec
+/// itself is emitted as a [`CommandRegion`] sidecar (see [`Command::region`]);
+/// the player runs the binary, paints stdout/stderr into the interior, and marks
+/// success with a ✓ or failure with a ✗ near the top-right. The editor and
+/// compiler never execute the binary, so editing a deck is always safe.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Command {
     pub position: Position,
@@ -29,9 +33,9 @@ pub struct Command {
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
-    /// Title drawn on the top edge; defaults to `$ command args…`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
+    /// Draw a clean border around the output region (no label). On by default.
+    #[serde(default = "default_true")]
+    pub border: bool,
     #[serde(default)]
     pub style: Style,
     pub frames: FrameRange,
@@ -40,37 +44,40 @@ pub struct Command {
 }
 
 impl Command {
-    /// The title shown on the box's top edge.
-    pub fn display_title(&self) -> String {
-        if let Some(t) = &self.title {
-            return t.clone();
-        }
-        if self.args.is_empty() {
-            format!("$ {}", self.command)
-        } else {
-            format!("$ {} {}", self.command, self.args.join(" "))
-        }
-    }
-
     /// Resolve this command into its runtime sidecar spec for the given frame.
     ///
-    /// The interior region is the inside of the box (one cell of border on each
-    /// side); the status indicator sits on the top edge near the right corner.
+    /// With a border, the output region is the inside of the box (one cell of
+    /// border on each side) and the status indicator sits on the top edge near
+    /// the right corner. Without a border, the region spans the full box and the
+    /// status indicator sits in its top-right cell.
     pub fn region(&self, frame: usize) -> CommandRegion {
         let bx = self.position.x.evaluate(frame);
         let by = self.position.y.evaluate(frame);
         let bw = self.width.evaluate(frame);
         let bh = self.height.evaluate(frame);
 
+        let (x, y, w, h, status_x, status_y) = if self.border {
+            (
+                bx + 1,
+                by + 1,
+                bw.saturating_sub(2),
+                bh.saturating_sub(2),
+                bx + bw.saturating_sub(2),
+                by,
+            )
+        } else {
+            (bx, by, bw, bh, bx + bw.saturating_sub(1), by)
+        };
+
         CommandRegion {
             start_frame: self.frames.start,
             end_frame: self.frames.end,
-            x: bx + 1,
-            y: by + 1,
-            w: bw.saturating_sub(2),
-            h: bh.saturating_sub(2),
-            status_x: bx + bw.saturating_sub(2),
-            status_y: by,
+            x,
+            y,
+            w,
+            h,
+            status_x,
+            status_y,
             command: self.command.clone(),
             args: self.args.clone(),
             cwd: self.cwd.clone(),
@@ -82,7 +89,7 @@ impl Command {
 
 impl Resolve for Command {
     fn resolve(&self, frame: usize, ops: &mut Vec<DrawOp>) {
-        if !self.frames.contains(frame) {
+        if !self.frames.contains(frame) || !self.border {
             return;
         }
 
@@ -122,15 +129,6 @@ impl Resolve for Command {
             }
             if w > 1 {
                 push(x + w - 1, y + h - 1, '┘', z);
-            }
-        }
-
-        // Title on the top edge (one z-level above the box).
-        let title = self.display_title();
-        for (i, ch) in title.chars().enumerate() {
-            let tx = x + 2 + i as u16;
-            if tx < x + w.saturating_sub(1) {
-                ops.push(DrawOp { x: tx, y, ch, style: s.clone(), z_order: z + 1 });
             }
         }
     }
