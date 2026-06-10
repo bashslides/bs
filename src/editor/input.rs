@@ -86,12 +86,7 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
 
 /// Build an Art object from `item`, append it, and jump to editing it.
 fn add_art_item(state: &mut EditorState, art: String, name: String) {
-    let obj = object_defaults::create_art(
-        art,
-        name.clone(),
-        state.current_frame,
-        state.source.frame_count,
-    );
+    let obj = object_defaults::create_art(art, name.clone(), state.current_frame);
     state.source.objects.push(obj);
     state.dirty = true;
     let new_index = state.source.objects.len() - 1;
@@ -409,11 +404,7 @@ fn handle_add_object(state: &mut EditorState, key: KeyEvent) -> Action {
                 items: crate::art_library::all_items(),
             };
         } else {
-            let obj = object_defaults::create_default(
-                selected,
-                state.current_frame,
-                state.source.frame_count,
-            );
+            let obj = object_defaults::create_default(selected, state.current_frame);
             let type_name = object_defaults::OBJECT_TYPES[selected];
             state.source.objects.push(obj);
             state.dirty = true;

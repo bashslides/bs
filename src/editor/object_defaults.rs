@@ -7,7 +7,7 @@ pub const OBJECT_TYPES: &[&str] =
 /// Build an `Art` object embedding the given art text. Used by the editor's
 /// art-library picker (the index-based `create_default` path is never hit for
 /// Art, since adding one requires choosing a library piece first).
-pub fn create_art(art: String, name: String, current_frame: usize, frame_count: usize) -> SceneObject {
+pub fn create_art(art: String, name: String, current_frame: usize) -> SceneObject {
     SceneObject::Art(Art {
         position: Position {
             x: Coordinate::Fixed(0.0),
@@ -16,15 +16,17 @@ pub fn create_art(art: String, name: String, current_frame: usize, frame_count: 
         art,
         name,
         style: Style::default(),
-        frames: FrameRange { start: current_frame, end: frame_count },
+        // New objects live on the current slide only (end is exclusive).
+        frames: FrameRange { start: current_frame, end: current_frame + 1 },
         z_order: 0,
     })
 }
 
-pub fn create_default(type_index: usize, current_frame: usize, frame_count: usize) -> SceneObject {
+pub fn create_default(type_index: usize, current_frame: usize) -> SceneObject {
+    // New objects live on the current slide only (end is exclusive).
     let frames = FrameRange {
         start: current_frame,
-        end: frame_count,
+        end: current_frame + 1,
     };
 
     match type_index {
@@ -119,7 +121,7 @@ pub fn create_default(type_index: usize, current_frame: usize, frame_count: usiz
             // Fallback only — the editor adds Art via the library picker, which
             // calls `create_art`. Default to the first built-in piece.
             let item = crate::art_library::builtins().swap_remove(0);
-            create_art(item.art, item.name, current_frame, frame_count)
+            create_art(item.art, item.name, current_frame)
         }
         8 => SceneObject::Command(Command {
             position: Position {
