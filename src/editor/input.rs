@@ -1,4 +1,4 @@
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal;
 
 use crate::engine::objects::table::{table_add_column, table_remove_column};
@@ -24,6 +24,9 @@ pub enum Action {
 
 pub fn handle_event(state: &mut EditorState, event: Event) -> Action {
     match event {
+        // Ignore key release/repeat events (only delivered when the terminal's
+        // keyboard-enhancement protocol is active) so each press fires once.
+        Event::Key(key) if key.kind != KeyEventKind::Press => Action::Continue,
         Event::Key(key) => handle_key(state, key),
         Event::Resize(_, _) => Action::Redraw,
         _ => Action::Continue,
@@ -1806,24 +1809,24 @@ fn handle_table_cell_edit_content(state: &mut EditorState, key: KeyEvent) -> Act
             _ => return Action::Continue,
         };
 
-    // Alt-Enter: insert newline
-    if matches_binding(&bindings.insert_newline, &key) {
-        let bi = char_to_byte_idx(&buf, cursor);
-        buf.insert(bi, '\n');
-        cursor += 1;
-        state.mode = Mode::TableEditCellProps {
-            object_index, cursor_row, cursor_col, selected_cells,
-            sub_state: TableCellSubState::EditingContent { row: edit_row, col: edit_col, buf, cursor },
-        };
-        return Action::Redraw;
-    }
+    // The cursor highlights a character (block cursor); inserting puts the new
+    // character *after* the highlighted one and moves the highlight onto it.
+    // `cursor` ranges over `0..=len` (== len is the trailing "append" slot).
+    let insert_after = |buf: &mut String, cursor: &mut usize, ch: char| {
+        let len = buf.chars().count();
+        let at = if *cursor >= len { *cursor } else { *cursor + 1 };
+        let bi = char_to_byte_idx(buf, at);
+        buf.insert(bi, ch);
+        *cursor = at;
+    };
 
-    // Shift-Enter: insert a newline instead of saving (where the terminal
-    // reports the modifier; Alt-Enter above always works).
-    if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT) {
-        let bi = char_to_byte_idx(&buf, cursor);
-        buf.insert(bi, '\n');
-        cursor += 1;
+    // Shift-Enter (or Alt-Enter, where Shift isn't reported): insert a newline
+    // instead of saving. The cursor lands on the newline, rendered as a caret at
+    // the start of the new line, so typing continues there.
+    if matches_binding(&bindings.insert_newline, &key)
+        || (key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT))
+    {
+        insert_after(&mut buf, &mut cursor, '\n');
         state.mode = Mode::TableEditCellProps {
             object_index, cursor_row, cursor_col, selected_cells,
             sub_state: TableCellSubState::EditingContent { row: edit_row, col: edit_col, buf, cursor },
@@ -1857,9 +1860,7 @@ fn handle_table_cell_edit_content(state: &mut EditorState, key: KeyEvent) -> Act
             return Action::Redraw;
         }
         KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT => {
-            let bi = char_to_byte_idx(&buf, cursor);
-            buf.insert(bi, c);
-            cursor += 1;
+            insert_after(&mut buf, &mut cursor, c);
             state.mode = Mode::TableEditCellProps {
                 object_index, cursor_row, cursor_col, selected_cells,
                 sub_state: TableCellSubState::EditingContent { row: edit_row, col: edit_col, buf, cursor },
@@ -1867,10 +1868,14 @@ fn handle_table_cell_edit_content(state: &mut EditorState, key: KeyEvent) -> Act
             return Action::Redraw;
         }
         KeyCode::Backspace if key.modifiers == KeyModifiers::NONE => {
-            if cursor > 0 {
-                let bi = char_to_byte_idx(&buf, cursor - 1);
+            // Delete the highlighted character (the inverse of insert-after) and
+            // move the highlight to the preceding one.
+            let len = buf.chars().count();
+            if len > 0 {
+                let del = if cursor >= len { len - 1 } else { cursor };
+                let bi = char_to_byte_idx(&buf, del);
                 buf.remove(bi);
-                cursor -= 1;
+                cursor = del.saturating_sub(1);
             }
             state.mode = Mode::TableEditCellProps {
                 object_index, cursor_row, cursor_col, selected_cells,

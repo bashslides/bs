@@ -182,27 +182,16 @@ pub fn render_canvas_production(
                         if i == tbl_idx {
                             if let SceneObject::Table(t) = obj {
                                 // When actively editing a cell, apply the current edit buffer
-                                // so the typed text is visible live in the canvas (WYSIWYG).
+                                // so the typed text is visible live in the canvas (WYSIWYG),
+                                // and pass the caret so the cell renders a block cursor.
                                 let editing_buf = match &state.mode {
                                     Mode::TableEditCellProps {
                                         sub_state: TableCellSubState::EditingContent { row, col, buf, cursor },
                                         ..
-                                    } => {
-                                        // Insert a block glyph at the caret so the edit
-                                        // position is visible in the cell. Affects the
-                                        // preview only; the stored buffer is unchanged.
-                                        let bi = buf
-                                            .char_indices()
-                                            .nth(*cursor)
-                                            .map(|(i, _)| i)
-                                            .unwrap_or(buf.len());
-                                        let mut display = buf.clone();
-                                        display.insert(bi, '\u{2588}');
-                                        Some((*row, *col, display))
-                                    }
+                                    } => Some((*row, *col, buf.clone(), *cursor)),
                                     _ => None,
                                 };
-                                if let Some((er, ec, ref buf)) = editing_buf {
+                                if let Some((er, ec, ref buf, caret)) = editing_buf {
                                     let mut t_clone = t.clone();
                                     t_clone.normalize_cells();
                                     if let Some(row_vec) = t_clone.cells.get_mut(er) {
@@ -216,6 +205,7 @@ pub fn render_canvas_production(
                                         sel_cells,
                                         cursor_cell,
                                         state.blink_hidden,
+                                        Some((er, ec, caret)),
                                         &mut ops,
                                     );
                                 } else {
@@ -225,6 +215,7 @@ pub fn render_canvas_production(
                                         sel_cells,
                                         cursor_cell,
                                         state.blink_hidden,
+                                        None,
                                         &mut ops,
                                     );
                                 }

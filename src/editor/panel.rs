@@ -458,34 +458,44 @@ pub fn render_right_panel(
                 let title = format!("Cell ({},{})", row + 1, col + 1);
                 draw_header(stdout, &title)?;
                 if cy + 2 < cy + layout.canvas_height {
+                    let hint: String = "Shift+Enter=newline, Enter=save"
+                        .chars().take(max_width).collect();
                     queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 2),
                         style::SetAttribute(style::Attribute::Dim),
-                        style::Print("Content (Enter=save):"),
+                        style::Print(hint),
                         style::SetAttribute(style::Attribute::Reset))?;
                 }
-                // Show content with cursor
+                // Show content with a block cursor: the character at `cursor` is
+                // drawn inverted; a caret with no glyph (end of a line, or the
+                // trailing append slot) is shown as an inverted blank.
+                let cursor_pos = (*cursor).min(buf.chars().count());
+                let mut base = 0usize;
                 let mut screen_y = cy + 3u16;
-                let mut cur_char = 0usize;
-                let cursor_pos = *cursor;
                 for line in buf.split('\n') {
                     if screen_y >= cy + layout.canvas_height { break; }
                     let line_len = line.chars().count();
-                    let cursor_on_this = cur_char <= cursor_pos && cursor_pos <= cur_char + line_len;
-                    let col_in_line = if cursor_on_this { cursor_pos - cur_char } else { 0 };
-                    let display: String = if cursor_on_this {
-                        let before: String = line.chars().take(col_in_line).collect();
-                        let after: String = line.chars().skip(col_in_line).collect();
-                        format!("{}\u{2588}{}", before, after)
-                    } else {
-                        line.to_string()
-                    };
-                    let display: String = display.chars().take(max_width).collect();
-                    queue!(stdout, cursor::MoveTo(panel_x + 2, screen_y),
-                        style::SetAttribute(style::Attribute::Reverse),
-                        style::Print(format!("{:<width$}", display, width = max_width)),
-                        style::SetAttribute(style::Attribute::Reset))?;
+                    for (ci, ch) in line.chars().enumerate() {
+                        if ci >= max_width { break; }
+                        let gx = panel_x + 2 + ci as u16;
+                        queue!(stdout, cursor::MoveTo(gx, screen_y))?;
+                        if base + ci == cursor_pos {
+                            queue!(stdout, style::SetAttribute(style::Attribute::Reverse),
+                                style::Print(ch), style::SetAttribute(style::Attribute::Reset))?;
+                        } else {
+                            queue!(stdout, style::Print(ch))?;
+                        }
+                    }
+                    // Caret at the slot just past this line's last char (a newline
+                    // boundary, or the final end of the buffer).
+                    if cursor_pos == base + line_len && line_len < max_width {
+                        let gx = panel_x + 2 + line_len as u16;
+                        queue!(stdout, cursor::MoveTo(gx, screen_y),
+                            style::SetAttribute(style::Attribute::Reverse),
+                            style::Print(' '),
+                            style::SetAttribute(style::Attribute::Reset))?;
+                    }
+                    base += line_len + 1; // +1 for the newline
                     screen_y += 1;
-                    cur_char += line_len + 1; // +1 for newline
                 }
             }
             TableCellSubState::EditingStyle { selected_prop, editing_value, cursor, dropdown } => {

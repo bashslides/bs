@@ -6,7 +6,7 @@ use crate::engine::source::SceneObject;
 use crate::menubar::print_menu_item;
 
 use super::properties::{self, PropertyKind};
-use super::state::{EditorState, Mode};
+use super::state::{EditorState, Mode, TableCellSubState};
 use super::ui::Layout;
 
 /// Items are listed in a consistent order:
@@ -121,14 +121,29 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[Enter] confirm",
             "[Esc] cancel",
         ],
-        Mode::TableEditCellProps { .. } => vec![
-            "[←→↑↓] navigate",
-            "[Space] select/deselect",
-            "[l] add list",
-            "[s] cell style",
-            "[Enter] edit content",
-            "[Esc] back",
-        ],
+        Mode::TableEditCellProps { sub_state, .. } => match sub_state {
+            TableCellSubState::Selecting => vec![
+                "[←→↑↓] navigate",
+                "[Space] select/deselect",
+                "[l] add list",
+                "[s] cell style",
+                "[Enter] edit content",
+                "[Esc] back",
+            ],
+            TableCellSubState::EditingContent { .. } => vec![
+                "[←→] move cursor",
+                "[type] insert after",
+                "[Shift+Enter] newline",
+                "[Backspace] delete",
+                "[Enter] save",
+                "[Esc] cancel",
+            ],
+            TableCellSubState::EditingStyle { .. } => vec![
+                "[←→↑↓] navigate",
+                "[Enter] edit value",
+                "[Esc] back",
+            ],
+        },
     }
 }
 

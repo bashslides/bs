@@ -9,19 +9,23 @@ use super::Resolve;
 // Word-wrap helper (mirrors Label's logic, without list-continuation indent)
 // ---------------------------------------------------------------------------
 
-fn wrap_text_line(line: &str, w: usize) -> Vec<Vec<char>> {
+/// Word-wrap a single line into rows of `w` cells, where each cell carries the
+/// source character index (offset by `base`) it displays, or `None` for the
+/// padding that fills a short row. `wrap_text_line` is defined in terms of this
+/// so the visible glyphs and their source indices never drift apart.
+fn wrap_line_indexed(base: usize, line: &str, w: usize) -> Vec<Vec<Option<usize>>> {
     let chars: Vec<char> = line.chars().collect();
     if chars.is_empty() || w == 0 {
         return vec![Vec::new()];
     }
-    let mut rows: Vec<Vec<char>> = Vec::new();
+    let mut rows: Vec<Vec<Option<usize>>> = Vec::new();
     let mut pos = 0usize;
     while pos < chars.len() {
         let remaining = &chars[pos..];
         if remaining.len() <= w {
-            let mut row = vec![' '; w];
-            for (i, &ch) in remaining.iter().enumerate() {
-                row[i] = ch;
+            let mut row = vec![None; w];
+            for i in 0..remaining.len() {
+                row[i] = Some(base + pos + i);
             }
             rows.push(row);
             break;
@@ -31,9 +35,9 @@ fn wrap_text_line(line: &str, w: usize) -> Vec<Vec<char>> {
             Some(sp) => (sp, sp + 1),
             None => (w, w),
         };
-        let mut row = vec![' '; w];
-        for (i, &ch) in remaining[..row_len].iter().enumerate() {
-            row[i] = ch;
+        let mut row = vec![None; w];
+        for i in 0..row_len {
+            row[i] = Some(base + pos + i);
         }
         rows.push(row);
         pos += advance;
@@ -45,6 +49,18 @@ fn wrap_text_line(line: &str, w: usize) -> Vec<Vec<char>> {
         rows.push(Vec::new());
     }
     rows
+}
+
+fn wrap_text_line(line: &str, w: usize) -> Vec<Vec<char>> {
+    let chars: Vec<char> = line.chars().collect();
+    wrap_line_indexed(0, line, w)
+        .into_iter()
+        .map(|row| {
+            row.into_iter()
+                .map(|idx| idx.map(|i| chars[i]).unwrap_or(' '))
+                .collect()
+        })
+        .collect()
 }
 
 fn wrap_cell_content(content: &str, w: usize) -> Vec<Vec<char>> {
@@ -59,6 +75,54 @@ fn wrap_cell_content(content: &str, w: usize) -> Vec<Vec<char>> {
         result.push(Vec::new());
     }
     result
+}
+
+/// Like [`wrap_cell_content`], but each cell carries the source char index (into
+/// `content`, counting newlines) it displays, or `None` for padding. Used to map
+/// the edit caret onto the exact wrapped cell so it can be drawn inverted.
+fn wrap_cell_content_indexed(content: &str, w: usize) -> Vec<Vec<Option<usize>>> {
+    if w == 0 {
+        return vec![Vec::new()];
+    }
+    let mut result = Vec::new();
+    let mut base = 0usize;
+    for line in content.split('\n') {
+        result.extend(wrap_line_indexed(base, line, w));
+        base += line.chars().count() + 1; // +1 for the consumed '\n'
+    }
+    if result.is_empty() {
+        result.push(Vec::new());
+    }
+    result
+}
+
+/// Style for the block cursor: the highlighted character's colors inverted.
+fn caret_block_style(st: &Style) -> Style {
+    Style {
+        fg: st.bg.clone().or(Some(Color::Named(NamedColor::Black))),
+        bg: st.fg.clone().or(Some(Color::Named(NamedColor::White))),
+        bold: st.bold,
+        dim: false,
+    }
+}
+
+/// Position (wrapped line, column) for a caret that has no glyph to invert —
+/// an empty cell, a caret on a newline, or the trailing append slot. Falls to
+/// just past the last character of the last wrapped row (or column 0 of a
+/// trailing empty row, i.e. a freshly opened line).
+fn caret_blank_pos(grid: &[Vec<Option<usize>>], _caret: usize, _len: usize) -> (usize, usize) {
+    if grid.is_empty() {
+        return (0, 0);
+    }
+    let last = grid.len() - 1;
+    let row = &grid[last];
+    let filled = row.iter().filter(|c| c.is_some()).count();
+    let col = if row.is_empty() {
+        0
+    } else {
+        filled.min(row.len() - 1)
+    };
+    (last, col)
 }
 
 // ---------------------------------------------------------------------------
@@ -275,7 +339,7 @@ impl Table {
 
 impl Resolve for Table {
     fn resolve(&self, frame: usize, ops: &mut Vec<DrawOp>) {
-        self.resolve_internal(frame, None, &[], false, false, ops);
+        self.resolve_internal(frame, None, &[], false, false, None, ops);
     }
 }
 
@@ -285,6 +349,8 @@ impl Table {
     /// - `selected_cells`:   for cell-props mode (those cells in red, others dim).
     /// - `cursor_cell`:      current navigation cursor in cell-props mode.
     /// - `blink_hidden`:     suppress cursor highlight during blink frame.
+    /// - `editing_caret`:    `(row, col, char_index)` of the cell being text-edited;
+    ///                       that character is drawn inverted (the block cursor).
     pub fn resolve_with_editor_overlay(
         &self,
         frame: usize,
@@ -292,6 +358,7 @@ impl Table {
         selected_cells: &[(usize, usize)],
         cursor_cell: Option<(usize, usize)>,
         blink_hidden: bool,
+        editing_caret: Option<(usize, usize, usize)>,
         ops: &mut Vec<DrawOp>,
     ) {
         // Only dim the table when cells are explicitly selected (Space-toggled).
@@ -303,6 +370,7 @@ impl Table {
             selected_cells,
             cell_mode,
             blink_hidden,
+            editing_caret,
             ops,
         );
         // Draw cursor outline on top if in cell-selection mode and not blink-hidden.
@@ -400,6 +468,7 @@ impl Table {
         selected_cells: &[(usize, usize)],
         cell_mode: bool,
         _blink_hidden: bool,
+        editing_caret: Option<(usize, usize, usize)>,
         ops: &mut Vec<DrawOp>,
     ) {
         if !self.frames.contains(frame) {
@@ -577,6 +646,63 @@ impl Table {
                     .unwrap_or("");
 
                 let st = cell_style(row_idx, col_idx);
+
+                // The cell being text-edited draws a block cursor: the caret
+                // character is rendered with inverted colors (and an empty/append
+                // caret as an inverted blank), so it reads like a normal cursor.
+                let caret = editing_caret.and_then(|(r, c, pos)| {
+                    if r == row_idx && c == col_idx {
+                        Some(pos)
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(caret) = caret {
+                    let len = content.chars().count();
+                    let chars: Vec<char> = content.chars().collect();
+                    let idx_grid = wrap_cell_content_indexed(content, cw);
+                    let mut drawn = false;
+                    for (line_idx, row_src) in idx_grid.iter().enumerate() {
+                        let ly = ry + line_idx as u16;
+                        for (xi, src) in row_src.iter().enumerate() {
+                            let is_caret = *src == Some(caret);
+                            let ch = src.map(|i| chars[i]).unwrap_or(' ');
+                            if is_caret {
+                                ops.push(DrawOp {
+                                    x: cx + xi as u16,
+                                    y: ly,
+                                    ch,
+                                    style: caret_block_style(&st),
+                                    z_order: z,
+                                });
+                                drawn = true;
+                            } else if ch != ' ' || st.bg.is_some() {
+                                ops.push(DrawOp {
+                                    x: cx + xi as u16,
+                                    y: ly,
+                                    ch,
+                                    style: st.clone(),
+                                    z_order: z,
+                                });
+                            }
+                        }
+                    }
+                    // No glyph at the caret (empty cell, a newline, or the trailing
+                    // append slot): draw an inverted blank where typing continues.
+                    if !drawn {
+                        let (bly, bxi) = caret_blank_pos(&idx_grid, caret, len);
+                        ops.push(DrawOp {
+                            x: cx + bxi as u16,
+                            y: ry + bly as u16,
+                            ch: ' ',
+                            style: caret_block_style(&st),
+                            z_order: z,
+                        });
+                    }
+                    continue;
+                }
+
                 let wrapped = wrap_cell_content(content, cw);
                 for (line_idx, row_chars) in wrapped.iter().enumerate() {
                     let ly = ry + line_idx as u16;
@@ -649,5 +775,56 @@ pub fn table_remove_column(table: &mut Table, col_idx: usize) {
         if col_idx < row.len() {
             row.remove(col_idx);
         }
+    }
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    use super::*;
+
+    // The indexed wrap must place each glyph at the same cell as the plain wrap,
+    // and report the source char index that produced it (None for padding).
+    #[test]
+    fn indexed_wrap_matches_plain_wrap_and_maps_indices() {
+        let content = "abcd";
+        let plain = wrap_cell_content(content, 3);
+        let indexed = wrap_cell_content_indexed(content, 3);
+        let chars: Vec<char> = content.chars().collect();
+
+        // Same shape.
+        assert_eq!(plain.len(), indexed.len());
+        for (prow, irow) in plain.iter().zip(indexed.iter()) {
+            assert_eq!(prow.len(), irow.len());
+            for (pc, ic) in prow.iter().zip(irow.iter()) {
+                let mapped = ic.map(|i| chars[i]).unwrap_or(' ');
+                assert_eq!(*pc, mapped);
+            }
+        }
+        // "abcd" / width 3 wraps to ["abc","d  "]; index 3 ('d') is row 1 col 0.
+        assert_eq!(indexed[1][0], Some(3));
+        assert_eq!(indexed[1][1], None);
+    }
+
+    // Newlines are consumed by wrapping but still advance the source index, so a
+    // caret on the first char of the second line maps to the right index.
+    #[test]
+    fn indexed_wrap_counts_newlines_in_source_offsets() {
+        let content = "ab\ncd"; // indices: a0 b1 \n2 c3 d4
+        let indexed = wrap_cell_content_indexed(content, 5);
+        assert_eq!(indexed.len(), 2);
+        assert_eq!(indexed[0][0], Some(0)); // 'a'
+        assert_eq!(indexed[0][1], Some(1)); // 'b'
+        assert_eq!(indexed[1][0], Some(3)); // 'c' — newline (2) skipped
+        assert_eq!(indexed[1][1], Some(4)); // 'd'
+    }
+
+    // A trailing newline opens an empty wrapped row; the append caret lands at
+    // its column 0 (a freshly opened line), not after the previous text.
+    #[test]
+    fn caret_blank_pos_opens_a_new_line_after_trailing_newline() {
+        let content = "abc\n";
+        let indexed = wrap_cell_content_indexed(content, 5);
+        let len = content.chars().count();
+        assert_eq!(caret_blank_pos(&indexed, len, len), (1, 0));
     }
 }

@@ -14,6 +14,9 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
+use crossterm::event::{
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::{cursor, event, execute, terminal};
 
 use input::Action;
@@ -42,8 +45,22 @@ impl Editor {
             terminal::Clear(terminal::ClearType::All),
         )?;
 
+        // Ask the terminal to disambiguate key events so modifier+Enter combos
+        // (e.g. Shift-Enter to insert a newline in a cell) are reported distinctly.
+        // Not all terminals support this; fall back silently when unsupported.
+        let enhanced = terminal::supports_keyboard_enhancement().unwrap_or(false);
+        if enhanced {
+            let _ = execute!(
+                stdout,
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            );
+        }
+
         let result = self.main_loop(&mut stdout);
 
+        if enhanced {
+            let _ = execute!(stdout, PopKeyboardEnhancementFlags);
+        }
         let _ = execute!(stdout, cursor::Show, terminal::LeaveAlternateScreen);
         let _ = terminal::disable_raw_mode();
 
