@@ -74,7 +74,7 @@ impl Default for EditorConfig {
                 move_down: "Down".into(),
                 add_frame: "+".into(),
                 remove_frame: "-".into(),
-                fullscreen: "F11".into(),
+                fullscreen: "F2".into(),
                 animate: "a".into(),
                 insert_newline: "Alt-Enter".into(),
                 table_add_col_after: default_table_add_col_after(),
