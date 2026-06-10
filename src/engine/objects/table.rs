@@ -170,14 +170,26 @@ impl Table {
     }
 
     /// Returns the pixel x range (inclusive start, exclusive end) of column `col_idx`
-    /// including its border, evaluated at `frame`.  Used by the editor for highlights.
+    /// including its bounding border columns, evaluated at `frame`.  Used by the
+    /// editor for highlights.
+    ///
+    /// When `borders` is on the range spans from the column's left vertical bar
+    /// through its right vertical bar (so adjacent columns share a border
+    /// column).  When borders are off it is exactly the content range.
     pub fn col_pixel_range(&self, frame: usize, col_idx: usize) -> Option<(u16, u16)> {
         let total_w = self.width.evaluate(frame) as usize;
         let (cws, starts) = self.layout(total_w);
         let base_x = self.position.x.evaluate(frame);
         let cw = *cws.get(col_idx)?;
         let start = *starts.get(col_idx)?;
-        Some((base_x + start as u16, base_x + start as u16 + cw as u16))
+        if self.borders {
+            // `start` >= 1 with borders, so the left bar at `start - 1` is in range.
+            let left = base_x + start as u16 - 1;
+            let right_excl = base_x + start as u16 + cw as u16 + 1;
+            Some((left, right_excl))
+        } else {
+            Some((base_x + start as u16, base_x + start as u16 + cw as u16))
+        }
     }
 
     /// Returns the pixel y range (inclusive start, exclusive end) of row `row_idx`
@@ -185,10 +197,11 @@ impl Table {
     pub fn row_pixel_range(&self, frame: usize, row_idx: usize) -> Option<(u16, u16)> {
         let total_w = self.width.evaluate(frame) as usize;
         let (cws, _) = self.layout(total_w);
+        let heights = self.row_heights(frame, &cws);
         let base_y = self.position.y.evaluate(frame);
         let mut y = if self.borders { base_y + 1 } else { base_y };
         for r in 0..self.rows {
-            let rh = self.row_height(r, &cws);
+            let rh = heights[r];
             if r == row_idx {
                 return Some((y, y + rh as u16));
             }
@@ -218,6 +231,41 @@ impl Table {
             }
         }
         max_lines
+    }
+
+    /// Per-row content heights for `frame`.
+    ///
+    /// Each row is at least tall enough for its wrapped content. When an
+    /// explicit `height` is set (non-zero) and exceeds the natural height, the
+    /// surplus is distributed across rows (top to bottom) so the table fills
+    /// the requested height. Rows whose content is taller than the budget are
+    /// never clipped — an explicit height only pads, it never shrinks.
+    fn row_heights(&self, frame: usize, col_content_widths: &[usize]) -> Vec<usize> {
+        let nrows = self.rows;
+        let mut heights = vec![1usize; nrows];
+        for r in 0..nrows {
+            heights[r] = self.row_height(r, col_content_widths);
+        }
+
+        let total_height = self.height.evaluate(frame) as usize;
+        if total_height > 0 && nrows > 0 {
+            // Border rows consumed by the chrome: top border + one separator/
+            // bottom border after each row.
+            let border_rows = if self.borders { 1 + nrows } else { 0 };
+            let content_target = total_height.saturating_sub(border_rows);
+            let natural: usize = heights.iter().sum();
+            if content_target > natural {
+                let mut extra = content_target - natural;
+                let mut i = 0usize;
+                while extra > 0 {
+                    heights[i % nrows] += 1;
+                    i += 1;
+                    extra -= 1;
+                }
+            }
+        }
+
+        heights
     }
 }
 
@@ -285,15 +333,12 @@ impl Table {
         let cx = base_x + starts[col] as u16;
 
         // Walk down to find the y offset and height of this row.
+        let heights = self.row_heights(frame, &cws);
         let mut y = base_y + 1; // first content row (after top border)
-        let mut rh = 0usize;
-        for r in 0..self.rows {
-            rh = self.row_height(r, &cws);
-            if r == row {
-                break;
-            }
-            y += rh as u16 + 1; // +1 for the separator border row
+        for r in 0..row {
+            y += heights[r] as u16 + 1; // +1 for the separator border row
         }
+        let rh = heights[row];
 
         let cursor_style = Style {
             fg: Some(Color::Named(NamedColor::Yellow)),
@@ -373,10 +418,7 @@ impl Table {
         let (col_widths, col_starts) = self.layout(total_width);
 
         // --- Per-row heights and y offsets ---
-        let mut row_heights = vec![1usize; nrows];
-        for row_idx in 0..nrows {
-            row_heights[row_idx] = self.row_height(row_idx, &col_widths);
-        }
+        let row_heights = self.row_heights(frame, &col_widths);
 
         let mut row_y_offsets = vec![0u16; nrows];
         let mut cur_y = if self.borders { 1u16 } else { 0u16 };

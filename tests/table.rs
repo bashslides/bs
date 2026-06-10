@@ -232,3 +232,88 @@ fn header_bold_makes_only_the_first_row_bold() {
     assert_eq!(cells[3][1].ch, 'B');
     assert!(!cells[3][1].style.bold, "body row should not be bold");
 }
+
+// ---------------------------------------------------------------------------
+// Explicit height: pad short tables, never clip tall content
+// ---------------------------------------------------------------------------
+
+#[test]
+fn explicit_height_pads_a_short_table() {
+    // 1x1 table whose content needs 1 row. Natural bordered height is 3, but
+    // height=5 is requested, so the single row is padded to fill it: the
+    // bottom border moves from y=2 down to y=4.
+    let p = render_json(
+        r#"{
+            "width": 6, "height": 5, "frame_count": 1,
+            "objects": [
+                { "type": "table",
+                  "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+                  "width": 6, "height": 5, "col_widths": [1.0], "rows": 1,
+                  "cells": [[{ "content": "Hi" }]],
+                  "frames": { "start": 0, "end": 1 } }
+            ]
+        }"#,
+    );
+
+    assert_eq!(char_at(&p, 0, 0, 0), '┌', "top border");
+    assert_eq!(char_at(&p, 0, 1, 1), 'H', "content stays on the first row");
+    // Interior rows are blank, padded out to the requested height.
+    assert_eq!(char_at(&p, 0, 1, 2), ' ');
+    assert_eq!(char_at(&p, 0, 1, 3), ' ');
+    assert_eq!(char_at(&p, 0, 0, 4), '└', "bottom border pushed down to honor height");
+    assert_eq!(char_at(&p, 0, 5, 4), '┘');
+}
+
+#[test]
+fn explicit_height_never_clips_taller_content() {
+    // Content wraps to three lines but height=1 is requested. The smaller
+    // height must not clip — all three lines still render.
+    let p = render_json(
+        r#"{
+            "width": 8, "height": 6, "frame_count": 1,
+            "objects": [
+                { "type": "table",
+                  "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+                  "width": 8, "height": 1, "col_widths": [1.0], "rows": 1,
+                  "cells": [[{ "content": "AB\nCD\nEF" }]],
+                  "frames": { "start": 0, "end": 1 } }
+            ]
+        }"#,
+    );
+
+    assert_eq!(char_at(&p, 0, 1, 1), 'A');
+    assert_eq!(char_at(&p, 0, 1, 2), 'C');
+    assert_eq!(char_at(&p, 0, 1, 3), 'E', "third line not clipped by a small height");
+    assert_eq!(char_at(&p, 0, 0, 4), '└', "bottom border sits below all content");
+}
+
+// ---------------------------------------------------------------------------
+// col_pixel_range spans the column's borders (matches its documented contract)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn col_pixel_range_includes_bounding_borders_when_bordered() {
+    // width 13, [0.5, 0.5]: content starts [1, 7], widths [5, 5].
+    // Column 0 spans its left bar (x=0) through its right bar (x=6) -> [0, 7).
+    // Column 1 spans x=6 through x=12 -> [6, 13).
+    let t = table_from_json(
+        r#"{ "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+             "width": 13, "col_widths": [0.5, 0.5], "rows": 1,
+             "frames": { "start": 0, "end": 1 } }"#,
+    );
+
+    assert_eq!(t.col_pixel_range(0, 0), Some((0, 7)));
+    assert_eq!(t.col_pixel_range(0, 1), Some((6, 13)));
+}
+
+#[test]
+fn col_pixel_range_is_content_only_without_borders() {
+    let t = table_from_json(
+        r#"{ "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+             "width": 10, "col_widths": [0.5, 0.5], "rows": 1, "borders": false,
+             "frames": { "start": 0, "end": 1 } }"#,
+    );
+
+    assert_eq!(t.col_pixel_range(0, 0), Some((0, 5)));
+    assert_eq!(t.col_pixel_range(0, 1), Some((5, 10)));
+}
