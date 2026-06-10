@@ -2,7 +2,7 @@ use crate::engine::source::*;
 use crate::types::Style;
 
 pub const OBJECT_TYPES: &[&str] =
-    &["Label", "HLine", "Rect", "Header", "Group", "Arrow", "Table", "Art"];
+    &["Label", "HLine", "Rect", "Header", "Group", "Arrow", "Table", "Art", "Command"];
 
 /// Build an `Art` object embedding the given art text. Used by the editor's
 /// art-library picker (the index-based `create_default` path is never hit for
@@ -121,6 +121,22 @@ pub fn create_default(type_index: usize, current_frame: usize, frame_count: usiz
             let item = crate::art_library::builtins().swap_remove(0);
             create_art(item.art, item.name, current_frame, frame_count)
         }
+        8 => SceneObject::Command(Command {
+            position: Position {
+                x: Coordinate::Fixed(0.0),
+                y: Coordinate::Fixed(0.0),
+            },
+            width: Coordinate::Fixed(40.0),
+            height: Coordinate::Fixed(10.0),
+            command: "echo".into(),
+            args: vec!["hello".into()],
+            cwd: None,
+            timeout_ms: None,
+            title: None,
+            style: Style::default(),
+            frames,
+            z_order: 0,
+        }),
         _ => unreachable!(),
     }
 }

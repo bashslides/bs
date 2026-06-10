@@ -6,7 +6,9 @@
 use serde::{Deserialize, Serialize};
 
 // Re-export object types so they remain accessible via `engine::source::*`.
-pub use super::objects::{Arrow, Art, Group, HLine, Header, Label, Rect, Table};
+pub use super::objects::{Arrow, Art, Command, Group, HLine, Header, Label, Rect, Table};
+
+use crate::types::CommandRegion;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourcePresentation {
@@ -27,6 +29,22 @@ pub enum SceneObject {
     Arrow(Arrow),
     Table(Table),
     Art(Art),
+    Command(Command),
+}
+
+impl SourcePresentation {
+    /// Collect the runtime command specs from all `Command` objects, evaluated
+    /// at each command's first active frame. These travel as a sidecar on the
+    /// `PlayablePresentation` because they cannot be baked into static frames.
+    pub fn command_regions(&self) -> Vec<CommandRegion> {
+        self.objects
+            .iter()
+            .filter_map(|obj| match obj {
+                SceneObject::Command(c) => Some(c.region(c.frames.start)),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 // ---------------------------------------------------------------------------

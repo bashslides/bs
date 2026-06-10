@@ -38,6 +38,7 @@ impl Renderer {
             contract,
             frames,
             markers: Vec::new(),
+            commands: Vec::new(),
         }
     }
 

@@ -118,10 +118,48 @@ pub struct Marker {
     pub label: String,
 }
 
+/// A runtime command region — the sidecar spec for a `Command` object.
+///
+/// Unlike every other object, a `Command` cannot be baked into the static
+/// frames: its output and exit status are only known when the binary runs at
+/// play time. The compiler therefore emits this spec alongside the frames, and
+/// the player executes the binary and paints its output into `[x..x+w, y..y+h]`
+/// (the interior of the box the object draws). Editing/compiling never runs it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandRegion {
+    /// Frames on which this command is active (end exclusive). The player runs
+    /// the binary whenever the current frame enters this range.
+    pub start_frame: usize,
+    pub end_frame: usize,
+    /// Interior region where captured output is painted.
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+    pub h: u16,
+    /// Cell where the ✓ / ✗ status indicator is drawn (on the box's top edge).
+    pub status_x: u16,
+    pub status_y: u16,
+    /// Program to run and its arguments.
+    pub command: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    /// Working directory for the child (defaults to the player's cwd).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// Kill the child after this many milliseconds (defaults to 10_000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+    /// Style applied to the painted output cells.
+    #[serde(default, skip_serializing_if = "Style::is_default")]
+    pub style: Style,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayablePresentation {
     pub contract: TerminalContract,
     pub frames: Vec<Frame>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub markers: Vec<Marker>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<CommandRegion>,
 }

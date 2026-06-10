@@ -45,17 +45,30 @@ SourcePresentation (JSON)
 
 The editor runs the full Engine+Renderer pipeline live for WYSIWYG preview.
 
+**Runtime exception — `Command` objects.** Every object is baked into static
+frames at compile time *except* `Command`, which runs a binary whose output and
+exit status are only known at play time. A `Command` resolves to just a bordered
+box (a safe placeholder shown in the editor — the binary is **never** run while
+editing or compiling); its spec is emitted as a `CommandRegion` sidecar on
+`PlayablePresentation`. The `Player` executes the binary with **piped** stdio
+(it can't touch the real terminal), reads it on background threads (so arrow
+keys always interrupt and navigate — a slow/hung command can never trap the
+deck), enforces a timeout, paints stdout/stderr into the box interior, and marks
+the result with a green `✓` (exit 0) or red `✗` (non-zero / timeout / spawn
+failure) on the top edge. Navigation does not branch on exit status — you always
+stay on the slide and move on with the arrow keys.
+
 ## Module Map
 
 | Path | Role |
 |------|------|
 | `src/main.rs` | CLI entry point |
-| `src/types.rs` | Shared types: `Color`, `Style`, `Cell`, `DrawOp`, `Frame`, `PlayablePresentation` |
-| `src/engine/source.rs` | `SourcePresentation`, `SceneObject`, `Coordinate` (Fixed/Animated), `FrameRange` |
-| `src/engine/objects/` | Eight object types: `Label`, `HLine`, `Rect`, `Header`, `Group`, `Arrow`, `Table`, `Art` — each implements `Resolve` |
+| `src/types.rs` | Shared types: `Color`, `Style`, `Cell`, `DrawOp`, `Frame`, `PlayablePresentation`, `CommandRegion` |
+| `src/engine/source.rs` | `SourcePresentation` (+ `command_regions()`), `SceneObject`, `Coordinate` (Fixed/Animated), `FrameRange` |
+| `src/engine/objects/` | Nine object types: `Label`, `HLine`, `Rect`, `Header`, `Group`, `Arrow`, `Table`, `Art`, `Command` — each implements `Resolve` |
 | `src/art_library.rs` | Built-in + user ASCII-art palette (`~/.config/bs/art/`, one file per piece); pieces are copied into self-contained `Art` objects when added |
 | `src/renderer/mod.rs` | Rasterizes DrawOps into cell grid; diffs frames |
-| `src/player/mod.rs` | Playback loop, keyboard nav (arrows, space, q, F11) |
+| `src/player/mod.rs` | Playback loop, keyboard nav (arrows, space, q, F11); runs `Command` objects (piped, async, timeout) and overlays output |
 | `src/editor/mod.rs` | Editor lifecycle, raw mode setup, main loop |
 | `src/editor/state.rs` | `EditorState`, `Mode` enum (~18 variants, incl. table sub-modes + art picker) |
 | `src/editor/config.rs` | `KeyBindings` — all bindings configurable via `~/.config/bs/editor.json` |
@@ -150,6 +163,7 @@ targets the pure, deterministic core):
 | `tests/pipeline.rs` | End-to-end: label placement, full-vs-diff frames, animation moving + clearing cells, z-order, exclusive frame ranges, off-grid clipping |
 | `tests/table.rs` | Table layout math, `normalize_cells`, add/remove column rescaling, border/borderless/header rendering, height padding, `col_pixel_range` |
 | `tests/art.rs` | `Art` object: per-line placement, positioning, and space-transparency |
+| `tests/command.rs` | `Command` object: compiled `CommandRegion` spec, the placeholder box drawn into the static frame, and `player::layout_output` (ANSI-strip + tail + clip). The spawn/timeout run-loop is TUI and stays manual |
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the

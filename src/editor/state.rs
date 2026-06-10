@@ -218,6 +218,7 @@ pub fn scene_object_frame_range(obj: &SceneObject) -> &FrameRange {
         SceneObject::Arrow(a) => &a.frames,
         SceneObject::Table(t) => &t.frames,
         SceneObject::Art(a) => &a.frames,
+        SceneObject::Command(c) => &c.frames,
     }
 }
 
@@ -231,6 +232,7 @@ pub fn scene_object_frame_range_mut(obj: &mut SceneObject) -> &mut FrameRange {
         SceneObject::Arrow(a) => &mut a.frames,
         SceneObject::Table(t) => &mut t.frames,
         SceneObject::Art(a) => &mut a.frames,
+        SceneObject::Command(c) => &mut c.frames,
     }
 }
 
@@ -244,6 +246,7 @@ pub fn scene_object_type_name(obj: &SceneObject) -> &'static str {
         SceneObject::Arrow(_) => "Arrow",
         SceneObject::Table(_) => "Table",
         SceneObject::Art(_) => "Art",
+        SceneObject::Command(_) => "Command",
     }
 }
 
@@ -273,6 +276,12 @@ fn scene_object_coordinates_mut(obj: &mut SceneObject) -> Vec<&mut Coordinate> {
             &mut t.height,
         ],
         SceneObject::Art(a) => vec![&mut a.position.x, &mut a.position.y],
+        SceneObject::Command(c) => vec![
+            &mut c.position.x,
+            &mut c.position.y,
+            &mut c.width,
+            &mut c.height,
+        ],
     }
 }
 
@@ -375,5 +384,6 @@ pub fn scene_object_summary(obj: &SceneObject) -> String {
             let name = if a.name.is_empty() { "custom" } else { &a.name };
             format!("Art: {name}")
         }
+        SceneObject::Command(c) => format!("Command: {}", c.command),
     }
 }

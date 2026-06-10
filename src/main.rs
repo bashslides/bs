@@ -55,7 +55,8 @@ fn compile(source_path: &str, output_path: &str) -> Result<()> {
         width: source.width,
         height: source.height,
     };
-    let presentation = Renderer::render(&scenes, contract);
+    let mut presentation = Renderer::render(&scenes, contract);
+    presentation.commands = source.command_regions();
 
     let output_json = serde_json::to_string_pretty(&presentation)?;
     fs::write(output_path, &output_json)
