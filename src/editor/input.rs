@@ -74,7 +74,139 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
                 }
             }
         }
+        Mode::AddArt { .. } => handle_add_art(state, key),
+        Mode::LoadArtFile { .. } => handle_load_art_file(state, key),
     }
+}
+
+/// Build an Art object from `item`, append it, and jump to editing it.
+fn add_art_item(state: &mut EditorState, art: String, name: String) {
+    let obj = object_defaults::create_art(
+        art,
+        name.clone(),
+        state.current_frame,
+        state.source.frame_count,
+    );
+    state.source.objects.push(obj);
+    state.dirty = true;
+    let new_index = state.source.objects.len() - 1;
+    state.mode = Mode::EditProperties {
+        object_index: new_index,
+        selected_property: 0,
+        editing_value: None,
+        cursor: 0,
+        scroll: 0,
+        panel_scroll: 0,
+        dropdown: None,
+    };
+    state.status_message = Some(format!("Added art: {name}"));
+}
+
+fn handle_add_art(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+
+    let (selected, items) = match &state.mode {
+        Mode::AddArt { selected, items } => (*selected, items.clone()),
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::AddObject { selected: 0 };
+        return Action::Redraw;
+    }
+
+    // Entries: one per library item, plus a final "Load from file…" action.
+    let entry_count = items.len() + 1;
+
+    if matches_binding(&bindings.move_up, &key) {
+        let new_sel = if selected == 0 { entry_count - 1 } else { selected - 1 };
+        state.mode = Mode::AddArt { selected: new_sel, items };
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.move_down, &key) {
+        let new_sel = (selected + 1) % entry_count;
+        state.mode = Mode::AddArt { selected: new_sel, items };
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.confirm, &key) {
+        if selected < items.len() {
+            let item = items[selected].clone();
+            add_art_item(state, item.art, item.name);
+        } else {
+            // "Load from file…" entry.
+            state.mode = Mode::LoadArtFile { buf: String::new(), cursor: 0 };
+        }
+        return Action::Redraw;
+    }
+
+    Action::Continue
+}
+
+fn handle_load_art_file(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+
+    let (mut buf, mut cursor) = match &state.mode {
+        Mode::LoadArtFile { buf, cursor } => (buf.clone(), *cursor),
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::AddArt { selected: 0, items: crate::art_library::all_items() };
+        return Action::Redraw;
+    }
+
+    if matches_binding(&bindings.confirm, &key) {
+        let path = buf.trim();
+        if path.is_empty() {
+            state.status_message = Some("Enter a file path".into());
+            return Action::Redraw;
+        }
+        match crate::art_library::load_file(std::path::Path::new(path)) {
+            Ok(item) => add_art_item(state, item.art, item.name),
+            Err(e) => {
+                // Stay in the input so the path can be corrected.
+                state.status_message = Some(format!("Load failed: {e}"));
+                state.mode = Mode::LoadArtFile { buf, cursor };
+            }
+        }
+        return Action::Redraw;
+    }
+
+    match key.code {
+        KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT => {
+            let byte_idx = char_to_byte_idx(&buf, cursor);
+            buf.insert(byte_idx, c);
+            cursor += 1;
+            state.mode = Mode::LoadArtFile { buf, cursor };
+            return Action::Redraw;
+        }
+        KeyCode::Backspace if key.modifiers == KeyModifiers::NONE => {
+            if cursor > 0 {
+                let byte_idx = char_to_byte_idx(&buf, cursor - 1);
+                buf.remove(byte_idx);
+                cursor -= 1;
+            }
+            state.mode = Mode::LoadArtFile { buf, cursor };
+            return Action::Redraw;
+        }
+        KeyCode::Left if key.modifiers == KeyModifiers::NONE => {
+            if cursor > 0 {
+                cursor -= 1;
+            }
+            state.mode = Mode::LoadArtFile { buf, cursor };
+            return Action::Redraw;
+        }
+        KeyCode::Right if key.modifiers == KeyModifiers::NONE => {
+            if cursor < buf.chars().count() {
+                cursor += 1;
+            }
+            state.mode = Mode::LoadArtFile { buf, cursor };
+            return Action::Redraw;
+        }
+        _ => {}
+    }
+
+    Action::Continue
 }
 
 fn handle_normal(state: &mut EditorState, key: KeyEvent) -> Action {
@@ -176,6 +308,12 @@ fn handle_add_object(state: &mut EditorState, key: KeyEvent) -> Action {
             } else {
                 state.mode = Mode::SelectGroupMembers { selected: 0, members: Vec::new() };
             }
+        } else if object_defaults::OBJECT_TYPES[selected] == "Art" {
+            // Art needs a library piece chosen first.
+            state.mode = Mode::AddArt {
+                selected: 0,
+                items: crate::art_library::all_items(),
+            };
         } else {
             let obj = object_defaults::create_default(
                 selected,

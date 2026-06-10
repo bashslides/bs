@@ -1,3 +1,4 @@
+pub mod art_library;
 pub mod editor;
 pub mod engine;
 pub mod menubar;

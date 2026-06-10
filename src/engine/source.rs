@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 // Re-export object types so they remain accessible via `engine::source::*`.
-pub use super::objects::{Arrow, Group, HLine, Header, Label, Rect, Table};
+pub use super::objects::{Arrow, Art, Group, HLine, Header, Label, Rect, Table};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourcePresentation {
@@ -26,6 +26,7 @@ pub enum SceneObject {
     Group(Group),
     Arrow(Arrow),
     Table(Table),
+    Art(Art),
 }
 
 // ---------------------------------------------------------------------------

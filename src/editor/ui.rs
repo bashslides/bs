@@ -23,7 +23,9 @@ impl Layout {
             | Mode::AddObject { .. }
             | Mode::SelectObject { .. }
             | Mode::Confirm { .. }
-            | Mode::SelectGroupMembers { .. } => RIGHT_PANEL_WIDTH,
+            | Mode::SelectGroupMembers { .. }
+            | Mode::AddArt { .. }
+            | Mode::LoadArtFile { .. } => RIGHT_PANEL_WIDTH,
             _ => 0,
         };
         let timeline_h: u16 = 2;

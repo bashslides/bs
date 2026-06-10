@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 
+use crate::art_library::ArtItem;
 use crate::engine::source::{Coordinate, FrameRange, SceneObject, SourcePresentation};
 
 use super::config::EditorConfig;
@@ -122,6 +123,17 @@ pub enum Mode {
         buf: String,
         cursor: usize,
     },
+    /// Choosing a piece from the ASCII-art library to add. The entry at index
+    /// `items.len()` is the "Load from file…" action.
+    AddArt {
+        selected: usize,
+        items: Vec<ArtItem>,
+    },
+    /// Typing a path to load a custom art file at runtime.
+    LoadArtFile {
+        buf: String,
+        cursor: usize,
+    },
     /// Navigating / selecting cells in a table to edit their properties.
     TableEditCellProps {
         object_index: usize,
@@ -205,6 +217,7 @@ pub fn scene_object_frame_range(obj: &SceneObject) -> &FrameRange {
         SceneObject::Group(g) => &g.frames,
         SceneObject::Arrow(a) => &a.frames,
         SceneObject::Table(t) => &t.frames,
+        SceneObject::Art(a) => &a.frames,
     }
 }
 
@@ -217,6 +230,7 @@ pub fn scene_object_frame_range_mut(obj: &mut SceneObject) -> &mut FrameRange {
         SceneObject::Group(g) => &mut g.frames,
         SceneObject::Arrow(a) => &mut a.frames,
         SceneObject::Table(t) => &mut t.frames,
+        SceneObject::Art(a) => &mut a.frames,
     }
 }
 
@@ -229,6 +243,7 @@ pub fn scene_object_type_name(obj: &SceneObject) -> &'static str {
         SceneObject::Group(_) => "Group",
         SceneObject::Arrow(_) => "Arrow",
         SceneObject::Table(_) => "Table",
+        SceneObject::Art(_) => "Art",
     }
 }
 
@@ -257,6 +272,7 @@ fn scene_object_coordinates_mut(obj: &mut SceneObject) -> Vec<&mut Coordinate> {
             &mut t.width,
             &mut t.height,
         ],
+        SceneObject::Art(a) => vec![&mut a.position.x, &mut a.position.y],
     }
 }
 
@@ -355,5 +371,9 @@ pub fn scene_object_summary(obj: &SceneObject) -> String {
         SceneObject::Group(g) => format!("Group: {} members", g.members.len()),
         SceneObject::Arrow(a) => format!("Arrow: ({},{})→({},{})", a.x1.evaluate(0), a.y1.evaluate(0), a.x2.evaluate(0), a.y2.evaluate(0)),
         SceneObject::Table(t) => format!("Table: {}r×{}c", t.rows, t.col_widths.len()),
+        SceneObject::Art(a) => {
+            let name = if a.name.is_empty() { "custom" } else { &a.name };
+            format!("Art: {name}")
+        }
     }
 }

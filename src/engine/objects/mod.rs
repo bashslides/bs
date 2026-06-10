@@ -5,6 +5,7 @@
 
 pub mod font;
 mod arrow;
+mod art;
 mod group;
 mod header;
 mod hline;
@@ -13,6 +14,7 @@ mod rect;
 pub mod table;
 
 pub use arrow::Arrow;
+pub use art::Art;
 pub use group::Group;
 pub use header::Header;
 pub use hline::HLine;
@@ -39,6 +41,7 @@ impl Resolve for SceneObject {
             SceneObject::Group(o) => o.resolve(frame, ops),
             SceneObject::Arrow(o) => o.resolve(frame, ops),
             SceneObject::Table(o) => o.resolve(frame, ops),
+            SceneObject::Art(o) => o.resolve(frame, ops),
         }
     }
 }

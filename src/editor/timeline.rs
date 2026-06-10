@@ -44,6 +44,8 @@ pub fn render_timeline(
         Mode::AnimateProperty { .. } => "ANIMATE",
         Mode::Confirm { .. } => "CONFIRM",
         Mode::SelectGroupMembers { .. } => "ADD GROUP",
+        Mode::AddArt { .. } => "ADD ART",
+        Mode::LoadArtFile { .. } => "LOAD ART",
         Mode::TableAddColumn { .. } => "ADD COL",
         Mode::TableRemoveColumn { .. } => "REMOVE COL",
         Mode::TableEditCellProps { .. } => "EDIT CELLS",

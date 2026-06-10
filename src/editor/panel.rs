@@ -69,6 +69,68 @@ pub fn render_right_panel(
         return Ok(());
     }
 
+    // === AddArt ===
+    if let Mode::AddArt { selected, items } = &state.mode {
+        let selected = *selected;
+        draw_header(stdout, "Add Art")?;
+        // One row per library piece, then a final "Load from file…" action.
+        let mut labels: Vec<String> = items.iter().map(|it| it.name.clone()).collect();
+        labels.push("Load from file…".to_string());
+        for (i, name) in labels.iter().enumerate() {
+            let y = cy + (i + 2) as u16;
+            if y >= cy + layout.canvas_height {
+                break;
+            }
+            let text: String = name.chars().take(max_width.saturating_sub(2)).collect();
+            queue!(stdout, cursor::MoveTo(panel_x + 2, y))?;
+            if i == selected {
+                queue!(
+                    stdout,
+                    style::SetAttribute(style::Attribute::Reverse),
+                    style::Print(format!("> {:<width$}", text, width = max_width.saturating_sub(2))),
+                    style::SetAttribute(style::Attribute::Reset),
+                )?;
+            } else {
+                queue!(
+                    stdout,
+                    style::Print(format!("  {:<width$}", text, width = max_width.saturating_sub(2))),
+                )?;
+            }
+        }
+        return Ok(());
+    }
+
+    // === LoadArtFile ===
+    if let Mode::LoadArtFile { buf, cursor } = &state.mode {
+        let cursor = *cursor;
+        draw_header(stdout, "Load Art File")?;
+        if cy + 2 < cy + layout.canvas_height {
+            let instr: String = "Path to art file:".chars().take(max_width).collect();
+            queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 2),
+                style::SetAttribute(style::Attribute::Dim),
+                style::Print(instr),
+                style::SetAttribute(style::Attribute::Reset))?;
+        }
+        if cy + 3 < cy + layout.canvas_height {
+            let before: String = buf.chars().take(cursor).collect();
+            let after_str: String = buf.chars().skip(cursor).collect();
+            let display = format!("{}\u{2588}{}", before, after_str);
+            let display: String = display.chars().take(max_width).collect();
+            queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 3),
+                style::SetAttribute(style::Attribute::Reverse),
+                style::Print(format!("{:<width$}", display, width = max_width)),
+                style::SetAttribute(style::Attribute::Reset))?;
+        }
+        if cy + 5 < cy + layout.canvas_height {
+            let hint: String = "Enter = load   Esc = back".chars().take(max_width).collect();
+            queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 5),
+                style::SetAttribute(style::Attribute::Dim),
+                style::Print(hint),
+                style::SetAttribute(style::Attribute::Reset))?;
+        }
+        return Ok(());
+    }
+
     // === SelectObject ===
     if let Mode::SelectObject { selected } = &state.mode {
         let selected = *selected;

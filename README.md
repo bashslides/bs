@@ -75,7 +75,17 @@ WYSIWYG preview. See `CLAUDE.md` for the full architecture and module map.
 }
 ```
 
-- Object types: `label`, `hline`, `rect`, `header`, `group`, `arrow`, `table`
+- Object types (JSON `type` tag): `label`, `h_line`, `rect`, `header`, `group`,
+  `arrow`, `table`, `art`
 - `style` is optional; `frames.end` is exclusive
 - Colors: named (`black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`,
   `white`) or `{ "rgb": [r, g, b] }`
+
+### ASCII-art pieces
+
+The `art` object embeds a pre-made ASCII-art drawing. In the editor, **add →
+Art** opens a palette of built-in pieces (`human`, `ghost`, `tree`) plus any
+files you drop in `~/.config/bs/art/` (one piece per file, the file stem is its
+name). The palette's **Load from file…** entry imports an art file by path at
+runtime. Whatever you pick is copied into the object, so saved presentations
+never depend on the library afterwards.

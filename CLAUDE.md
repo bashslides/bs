@@ -52,11 +52,12 @@ The editor runs the full Engine+Renderer pipeline live for WYSIWYG preview.
 | `src/main.rs` | CLI entry point |
 | `src/types.rs` | Shared types: `Color`, `Style`, `Cell`, `DrawOp`, `Frame`, `PlayablePresentation` |
 | `src/engine/source.rs` | `SourcePresentation`, `SceneObject`, `Coordinate` (Fixed/Animated), `FrameRange` |
-| `src/engine/objects/` | Seven object types: `Label`, `HLine`, `Rect`, `Header`, `Group`, `Arrow`, `Table` — each implements `Resolve` |
+| `src/engine/objects/` | Eight object types: `Label`, `HLine`, `Rect`, `Header`, `Group`, `Arrow`, `Table`, `Art` — each implements `Resolve` |
+| `src/art_library.rs` | Built-in + user ASCII-art palette (`~/.config/bs/art/`, one file per piece); pieces are copied into self-contained `Art` objects when added |
 | `src/renderer/mod.rs` | Rasterizes DrawOps into cell grid; diffs frames |
 | `src/player/mod.rs` | Playback loop, keyboard nav (arrows, space, q, F11) |
 | `src/editor/mod.rs` | Editor lifecycle, raw mode setup, main loop |
-| `src/editor/state.rs` | `EditorState`, `Mode` enum (~16 variants, incl. table sub-modes) |
+| `src/editor/state.rs` | `EditorState`, `Mode` enum (~18 variants, incl. table sub-modes + art picker) |
 | `src/editor/config.rs` | `KeyBindings` — all bindings configurable via `~/.config/bs/editor.json` |
 | `src/editor/input.rs` | All key event handling (~2,057 lines — monolithic; ~34% is table handlers) |
 | `src/editor/panel.rs` | Left panel (Add Object), right panel (Properties), object selection overlay |
@@ -148,6 +149,7 @@ targets the pure, deterministic core):
 | `tests/units.rs` | `Coordinate::evaluate` (fixed flooring, animation interpolation/clamping), `FrameRange` exclusivity, the number-or-object coordinate deserializer |
 | `tests/pipeline.rs` | End-to-end: label placement, full-vs-diff frames, animation moving + clearing cells, z-order, exclusive frame ranges, off-grid clipping |
 | `tests/table.rs` | Table layout math, `normalize_cells`, add/remove column rescaling, border/borderless/header rendering, height padding, `col_pixel_range` |
+| `tests/art.rs` | `Art` object: per-line placement, positioning, and space-transparency |
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the

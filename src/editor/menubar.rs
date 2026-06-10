@@ -101,6 +101,16 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[Enter] create group",
             "[Esc] cancel",
         ],
+        Mode::AddArt { .. } => vec![
+            "[↑][↓] navigate",
+            "[Enter] add",
+            "[Esc] back",
+        ],
+        Mode::LoadArtFile { .. } => vec![
+            "[type] file path",
+            "[Enter] load",
+            "[Esc] back",
+        ],
         Mode::TableAddColumn { after, .. } => vec![
             if *after { "[col#] add after" } else { "[col#] add before" },
             "[Enter] confirm",
