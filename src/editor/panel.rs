@@ -131,6 +131,65 @@ pub fn render_right_panel(
         return Ok(());
     }
 
+    // === Settings (frame size) ===
+    if let Mode::Settings { selected_field, width_buf, height_buf, cursor } = &state.mode {
+        draw_header(stdout, "Frame Size")?;
+        if cy + 2 < cy + layout.canvas_height {
+            let instr: String = "Output size (cells):".chars().take(max_width).collect();
+            queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 2),
+                style::SetAttribute(style::Attribute::Dim),
+                style::Print(instr),
+                style::SetAttribute(style::Attribute::Reset))?;
+        }
+
+        let fields = [("width", width_buf), ("height", height_buf)];
+        for (i, (name, buf)) in fields.iter().enumerate() {
+            let y = cy + 4 + i as u16;
+            if y >= cy + layout.canvas_height {
+                break;
+            }
+            let selected = *selected_field == i;
+            let marker = if selected { "\u{203a} " } else { "  " };
+            let prefix = format!("{marker}{name:>6}: ");
+            queue!(stdout, cursor::MoveTo(panel_x + 2, y), style::Print(&prefix))?;
+
+            let vx = panel_x + 2 + prefix.chars().count() as u16;
+            if selected {
+                // Block cursor: invert the character at the caret (or a trailing
+                // blank when the caret is at the end / the field is empty).
+                let cur = (*cursor).min(buf.chars().count());
+                let mut col = 0u16;
+                for (ci, ch) in buf.chars().enumerate() {
+                    queue!(stdout, cursor::MoveTo(vx + col, y))?;
+                    if ci == cur {
+                        queue!(stdout, style::SetAttribute(style::Attribute::Reverse),
+                            style::Print(ch), style::SetAttribute(style::Attribute::Reset))?;
+                    } else {
+                        queue!(stdout, style::Print(ch))?;
+                    }
+                    col += 1;
+                }
+                if cur >= buf.chars().count() {
+                    queue!(stdout, cursor::MoveTo(vx + col, y),
+                        style::SetAttribute(style::Attribute::Reverse),
+                        style::Print(' '), style::SetAttribute(style::Attribute::Reset))?;
+                }
+            } else {
+                let val: String = buf.chars().take(max_width).collect();
+                queue!(stdout, cursor::MoveTo(vx, y), style::Print(val))?;
+            }
+        }
+
+        if cy + 7 < cy + layout.canvas_height {
+            let hint: String = "Enter = apply   Esc = cancel".chars().take(max_width).collect();
+            queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 7),
+                style::SetAttribute(style::Attribute::Dim),
+                style::Print(hint),
+                style::SetAttribute(style::Attribute::Reset))?;
+        }
+        return Ok(());
+    }
+
     // === SelectObject ===
     if let Mode::SelectObject { selected } = &state.mode {
         let selected = *selected;

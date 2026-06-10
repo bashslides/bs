@@ -89,7 +89,8 @@ Normal ──a──→ AddObject ──Enter──→ Normal (object added)
        ──d──→ (delete selected)
 ```
 
-- **Normal**: frame navigation (←/→), +/- add/remove frames, Ctrl-s save, q quit
+- **Normal**: frame navigation (←/→), +/- add/remove frames, g presentation settings (frame size), Ctrl-s save, q quit
+- **Settings**: edit the output frame size (width × height in cells); ↑↓/Tab switch field, Enter apply, Esc cancel
 - **AddObject**: choose object type from list
 - **SelectObject**: pick object visible on current frame
 - **EditProperties**: edit typed properties; color fields show dropdown; text fields support multi-line (Alt-Enter = newline); property list scrolls vertically

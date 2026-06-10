@@ -46,6 +46,7 @@ pub fn render_timeline(
         Mode::SelectGroupMembers { .. } => "ADD GROUP",
         Mode::AddArt { .. } => "ADD ART",
         Mode::LoadArtFile { .. } => "LOAD ART",
+        Mode::Settings { .. } => "SETTINGS",
         Mode::TableAddColumn { .. } => "ADD COL",
         Mode::TableRemoveColumn { .. } => "REMOVE COL",
         Mode::TableEditCellProps { .. } => "EDIT CELLS",

@@ -39,6 +39,9 @@ pub struct KeyBindings {
     pub table_add_list: String,
     #[serde(default = "default_table_edit_cell_style")]
     pub table_edit_cell_style: String,
+    /// Open the presentation settings (frame size) from Normal mode.
+    #[serde(default = "default_open_settings")]
+    pub open_settings: String,
 }
 
 fn default_table_add_col_after() -> String { "Alt-a".into() }
@@ -47,6 +50,7 @@ fn default_table_remove_col() -> String { "Alt-r".into() }
 fn default_table_edit_cells() -> String { "Alt-c".into() }
 fn default_table_add_list() -> String { "l".into() }
 fn default_table_edit_cell_style() -> String { "s".into() }
+fn default_open_settings() -> String { "g".into() }
 
 impl Default for EditorConfig {
     fn default() -> Self {
@@ -75,6 +79,7 @@ impl Default for EditorConfig {
                 table_edit_cells: default_table_edit_cells(),
                 table_add_list: default_table_add_list(),
                 table_edit_cell_style: default_table_edit_cell_style(),
+                open_settings: default_open_settings(),
             },
         }
     }

@@ -134,6 +134,15 @@ pub enum Mode {
         buf: String,
         cursor: usize,
     },
+    /// Presentation settings — currently the output frame size (width × height).
+    Settings {
+        /// 0 = width, 1 = height.
+        selected_field: usize,
+        width_buf: String,
+        height_buf: String,
+        /// Text cursor within the selected field's buffer.
+        cursor: usize,
+    },
     /// Navigating / selecting cells in a table to edit their properties.
     TableEditCellProps {
         object_index: usize,

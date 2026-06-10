@@ -19,8 +19,16 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[s]elect",
             "[+] dup",
             "[-] del",
+            "[g] settings",
             "[Ctrl-s]ave",
             "[q]uit",
+            "[F11] full",
+        ],
+        Mode::Settings { .. } => vec![
+            "[↑↓][Tab] field",
+            "[0-9] edit",
+            "[Enter] apply",
+            "[Esc] cancel",
             "[F11] full",
         ],
         Mode::AddObject { .. } => {

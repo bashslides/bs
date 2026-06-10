@@ -25,7 +25,8 @@ impl Layout {
             | Mode::Confirm { .. }
             | Mode::SelectGroupMembers { .. }
             | Mode::AddArt { .. }
-            | Mode::LoadArtFile { .. } => RIGHT_PANEL_WIDTH,
+            | Mode::LoadArtFile { .. }
+            | Mode::Settings { .. } => RIGHT_PANEL_WIDTH,
             _ => 0,
         };
         let timeline_h: u16 = 2;

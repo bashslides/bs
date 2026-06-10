@@ -79,6 +79,7 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
         }
         Mode::AddArt { .. } => handle_add_art(state, key),
         Mode::LoadArtFile { .. } => handle_load_art_file(state, key),
+        Mode::Settings { .. } => handle_settings(state, key),
     }
 }
 
@@ -212,6 +213,87 @@ fn handle_load_art_file(state: &mut EditorState, key: KeyEvent) -> Action {
     Action::Continue
 }
 
+fn handle_settings(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+
+    let (mut selected_field, mut width_buf, mut height_buf, mut cursor) = match &state.mode {
+        Mode::Settings { selected_field, width_buf, height_buf, cursor } => {
+            (*selected_field, width_buf.clone(), height_buf.clone(), *cursor)
+        }
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::Normal;
+        return Action::Redraw;
+    }
+
+    if matches_binding(&bindings.confirm, &key) {
+        match (width_buf.trim().parse::<u16>(), height_buf.trim().parse::<u16>()) {
+            (Ok(w), Ok(h)) if w >= 1 && h >= 1 => {
+                state.source.width = w;
+                state.source.height = h;
+                state.dirty = true;
+                state.status_message = Some(format!("Frame size set to {w}×{h}"));
+                state.mode = Mode::Normal;
+            }
+            _ => {
+                state.status_message =
+                    Some("Width and height must be whole numbers ≥ 1".into());
+            }
+        }
+        return Action::Redraw;
+    }
+
+    // Switch between the width and height fields; park the cursor at the end of
+    // the newly-selected field.
+    if matches_binding(&bindings.move_up, &key)
+        || matches_binding(&bindings.move_down, &key)
+        || (key.code == KeyCode::Tab && key.modifiers == KeyModifiers::NONE)
+    {
+        selected_field = if selected_field == 0 { 1 } else { 0 };
+        cursor = if selected_field == 0 {
+            width_buf.chars().count()
+        } else {
+            height_buf.chars().count()
+        };
+        state.mode = Mode::Settings { selected_field, width_buf, height_buf, cursor };
+        return Action::Redraw;
+    }
+
+    // Edit the selected field (digits only).
+    let buf = if selected_field == 0 { &mut width_buf } else { &mut height_buf };
+    match key.code {
+        KeyCode::Char(c)
+            if c.is_ascii_digit()
+                && (key.modifiers == KeyModifiers::NONE
+                    || key.modifiers == KeyModifiers::SHIFT) =>
+        {
+            if buf.chars().count() < 4 {
+                let bi = char_to_byte_idx(buf, cursor);
+                buf.insert(bi, c);
+                cursor += 1;
+            }
+        }
+        KeyCode::Backspace if key.modifiers == KeyModifiers::NONE => {
+            if cursor > 0 {
+                let bi = char_to_byte_idx(buf, cursor - 1);
+                buf.remove(bi);
+                cursor -= 1;
+            }
+        }
+        KeyCode::Left if key.modifiers == KeyModifiers::NONE => {
+            cursor = cursor.saturating_sub(1);
+        }
+        KeyCode::Right if key.modifiers == KeyModifiers::NONE => {
+            cursor = (cursor + 1).min(buf.chars().count());
+        }
+        _ => return Action::Continue,
+    }
+    state.mode = Mode::Settings { selected_field, width_buf, height_buf, cursor };
+    Action::Redraw
+}
+
 fn handle_normal(state: &mut EditorState, key: KeyEvent) -> Action {
     let bindings = &state.config.key_bindings;
 
@@ -253,6 +335,14 @@ fn handle_normal(state: &mut EditorState, key: KeyEvent) -> Action {
             Ok(()) => {}
             Err(e) => state.status_message = Some(format!("Save failed: {e}")),
         }
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.open_settings, &key) {
+        let width_buf = state.source.width.to_string();
+        let height_buf = state.source.height.to_string();
+        let cursor = width_buf.chars().count();
+        state.mode = Mode::Settings { selected_field: 0, width_buf, height_buf, cursor };
+        state.status_message = None;
         return Action::Redraw;
     }
     if matches_binding(&bindings.add_frame, &key) {
