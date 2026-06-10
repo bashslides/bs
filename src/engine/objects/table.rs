@@ -297,6 +297,23 @@ impl Table {
         max_lines
     }
 
+    /// Total natural (content-fit) height in terminal rows for `frame`,
+    /// ignoring any explicit `height`. This is the smallest height the table can
+    /// occupy — an explicit `height` only pads beyond it, never clips below. The
+    /// editor seeds vertical resizes from this so each step is visible instead of
+    /// being swallowed while the requested height is still under the content.
+    pub fn natural_height(&self, frame: usize) -> u16 {
+        let total_width = self.width.evaluate(frame) as usize;
+        let (cws, _) = self.layout(total_width);
+        let nrows = self.rows;
+        if nrows == 0 {
+            return 0;
+        }
+        let content: usize = (0..nrows).map(|r| self.row_height(r, &cws)).sum();
+        let border_rows = if self.borders { 1 + nrows } else { 0 };
+        (content + border_rows) as u16
+    }
+
     /// Per-row content heights for `frame`.
     ///
     /// Each row is at least tall enough for its wrapped content. When an

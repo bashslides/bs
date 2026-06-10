@@ -65,6 +65,24 @@ fn command_draws_a_clean_placeholder_box_into_the_static_frame() {
 }
 
 #[test]
+fn box_height_follows_the_height_field() {
+    // The drawn box must track `height`, so a vertical resize (which mutates
+    // `height`) is visible. Box top is at y=3; with height H the bottom row is
+    // at y = 3 + H - 1.
+    let with_height = |h: u16| {
+        source_json().replace(r#""width": 40, "height": 10,"#, &format!(r#""width": 40, "height": {h},"#))
+    };
+
+    let p6 = render_json(&with_height(6));
+    assert_eq!(char_at(&p6, 0, 5, 8), '└'); // 3 + 6 - 1 = 8
+    assert_eq!(char_at(&p6, 0, 44, 8), '┘');
+
+    let p12 = render_json(&with_height(12));
+    assert_eq!(char_at(&p12, 0, 5, 14), '└'); // 3 + 12 - 1 = 14
+    assert_eq!(char_at(&p12, 0, 44, 14), '┘');
+}
+
+#[test]
 fn border_can_be_disabled_for_a_frameless_region() {
     let json = source_json().replace(
         r#""command": "echo","#,

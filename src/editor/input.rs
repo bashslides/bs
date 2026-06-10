@@ -556,12 +556,16 @@ fn handle_selected_object(state: &mut EditorState, key: KeyEvent) -> Action {
                 properties::resize_group(&mut state.source.objects, object_index, dw.abs(), dh.abs(), anchor_left, anchor_top);
             } else if is_table {
                 // For tables: Right/Down grows from the right/bottom edge,
-                // Left/Up shrinks from the right/bottom edge (opposite of grow).
+                // Left/Up shrinks from the right/bottom edge. A table's height
+                // auto-fits its content, so vertical resizes are seeded from the
+                // natural height — otherwise small changes sit below the content
+                // height and look like a no-op.
+                let frame = state.current_frame;
                 match key.code {
                     KeyCode::Right => properties::resize_object(&mut state.source.objects[object_index], 1, 0),
                     KeyCode::Left  => properties::shrink_object(&mut state.source.objects[object_index], 1, 0),
-                    KeyCode::Down  => properties::resize_object(&mut state.source.objects[object_index], 0, 1),
-                    KeyCode::Up    => properties::shrink_object(&mut state.source.objects[object_index], 0, 1),
+                    KeyCode::Down  => grow_table_height(&mut state.source.objects[object_index], frame, 1),
+                    KeyCode::Up    => grow_table_height(&mut state.source.objects[object_index], frame, -1),
                     _ => {}
                 }
             } else {
@@ -593,6 +597,27 @@ fn handle_selected_object(state: &mut EditorState, key: KeyEvent) -> Action {
     }
 
     Action::Continue
+}
+
+/// Grow (`delta > 0`) or shrink (`delta < 0`) a table's height by one row,
+/// seeded from its natural content-fit height so the change is always visible.
+/// Dropping back to (or below) the natural height stores 0, i.e. auto-fit, since
+/// a table is never clipped below its content.
+fn grow_table_height(obj: &mut SceneObject, frame: usize, delta: i32) {
+    if let SceneObject::Table(t) = obj {
+        // Only adjust a fixed height; leave an animated height untouched.
+        if !matches!(t.height, Coordinate::Fixed(_)) {
+            return;
+        }
+        let natural = t.natural_height(frame);
+        let current = t.height.evaluate(frame).max(natural);
+        let new = (current as i32 + delta).max(0) as u16;
+        t.height = if new <= natural {
+            Coordinate::Fixed(0.0)
+        } else {
+            Coordinate::Fixed(new as f64)
+        };
+    }
 }
 
 fn handle_confirm(state: &mut EditorState, key: KeyEvent) -> Action {

@@ -288,6 +288,35 @@ fn explicit_height_never_clips_taller_content() {
 }
 
 // ---------------------------------------------------------------------------
+// natural_height — the content-fit height the editor seeds vertical resizes from
+// ---------------------------------------------------------------------------
+
+#[test]
+fn natural_height_is_content_plus_border_rows() {
+    // 3 single-line rows, bordered: 3 content rows + (1 + 3) border rows = 7.
+    let t = table_from_json(
+        r#"{ "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+             "width": 30, "col_widths": [0.5, 0.5], "rows": 3,
+             "frames": { "start": 0, "end": 1 } }"#,
+    );
+    assert_eq!(t.natural_height(0), 7);
+}
+
+#[test]
+fn natural_height_grows_with_wrapped_content() {
+    // A cell whose content wraps to 3 lines makes its row 3 tall: one row of
+    // height 3 + 2 border rows = 5. This is the floor a vertical resize works
+    // from, so the editor never appears to "do nothing".
+    let t = table_from_json(
+        r#"{ "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+             "width": 8, "col_widths": [1.0], "rows": 1,
+             "cells": [[{ "content": "AB\nCD\nEF" }]],
+             "frames": { "start": 0, "end": 1 } }"#,
+    );
+    assert_eq!(t.natural_height(0), 5);
+}
+
+// ---------------------------------------------------------------------------
 // col_pixel_range spans the column's borders (matches its documented contract)
 // ---------------------------------------------------------------------------
 
