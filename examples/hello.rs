@@ -26,8 +26,8 @@ fn main() -> anyhow::Result<()> {
             SceneObject::Header(Header {
                 text: "Gnosis VPN".to_string(),
                 position: Position {
-                    x: Coordinate::Fixed(25),
-                    y: Coordinate::Fixed(9),
+                    x: Coordinate::Fixed(25.0),
+                    y: Coordinate::Fixed(9.0),
                 },
                 style: Style {
                     fg: Some(Color::Named(NamedColor::Cyan)),
@@ -41,9 +41,13 @@ fn main() -> anyhow::Result<()> {
             SceneObject::Label(Label {
                 text: "Welcome to ASCII Presenter".to_string(),
                 position: Position {
-                    x: Coordinate::Fixed(27),
-                    y: Coordinate::Fixed(16),
+                    x: Coordinate::Fixed(27.0),
+                    y: Coordinate::Fixed(16.0),
                 },
+                width: Coordinate::Fixed(0.0),
+                height: Coordinate::Fixed(0.0),
+                framed: false,
+                frame_style: None,
                 style: Style {
                     dim: true,
                     ..Default::default()
@@ -51,13 +55,12 @@ fn main() -> anyhow::Result<()> {
                 frames: FrameRange { start: 0, end: 1 },
                 z_order: 0,
             }),
-
             // ── Slide 2: big "HOPR" header (frames 5–9) ──────────────
             SceneObject::Header(Header {
                 text: "HOPR".to_string(),
                 position: Position {
-                    x: Coordinate::Fixed(28),
-                    y: Coordinate::Fixed(9),
+                    x: Coordinate::Fixed(28.0),
+                    y: Coordinate::Fixed(9.0),
                 },
                 style: Style {
                     fg: Some(Color::Named(NamedColor::Green)),
@@ -71,9 +74,13 @@ fn main() -> anyhow::Result<()> {
             SceneObject::Label(Label {
                 text: "Let's see it in action...".to_string(),
                 position: Position {
-                    x: Coordinate::Fixed(28),
-                    y: Coordinate::Fixed(16),
+                    x: Coordinate::Fixed(28.0),
+                    y: Coordinate::Fixed(16.0),
                 },
+                width: Coordinate::Fixed(0.0),
+                height: Coordinate::Fixed(0.0),
+                framed: false,
+                frame_style: None,
                 style: Style {
                     dim: true,
                     ..Default::default()
@@ -81,16 +88,19 @@ fn main() -> anyhow::Result<()> {
                 frames: FrameRange { start: 2, end: 3 },
                 z_order: 0,
             }),
-
             // ── Original slides (frames 10–24) ───────────────────────
 
             // Title (visible from the start of this section)
             SceneObject::Label(Label {
                 text: "ASCII Presenter".to_string(),
                 position: Position {
-                    x: Coordinate::Fixed(32),
-                    y: Coordinate::Fixed(2),
+                    x: Coordinate::Fixed(32.0),
+                    y: Coordinate::Fixed(2.0),
                 },
+                width: Coordinate::Fixed(0.0),
+                height: Coordinate::Fixed(0.0),
+                framed: false,
+                frame_style: None,
                 style: Style {
                     bold: true,
                     ..Default::default()
@@ -100,9 +110,9 @@ fn main() -> anyhow::Result<()> {
             }),
             // Horizontal divider (appears on frame 11)
             SceneObject::HLine(HLine {
-                y: 4,
-                x_start: 20,
-                x_end: 60,
+                y: Coordinate::Fixed(4.0),
+                x_start: Coordinate::Fixed(20.0),
+                x_end: Coordinate::Fixed(60.0),
                 ch: '─',
                 style: Style {
                     fg: Some(Color::Named(NamedColor::Cyan)),
@@ -121,8 +131,12 @@ fn main() -> anyhow::Result<()> {
                         start_frame: 13,
                         end_frame: 22,
                     },
-                    y: Coordinate::Fixed(4),
+                    y: Coordinate::Fixed(4.0),
                 },
+                width: Coordinate::Fixed(0.0),
+                height: Coordinate::Fixed(0.0),
+                framed: false,
+                frame_style: None,
                 style: Style {
                     fg: Some(Color::Named(NamedColor::Green)),
                     bold: true,
@@ -134,11 +148,11 @@ fn main() -> anyhow::Result<()> {
             // Status box (appears mid-presentation)
             SceneObject::Rect(Rect {
                 position: Position {
-                    x: Coordinate::Fixed(25),
-                    y: Coordinate::Fixed(7),
+                    x: Coordinate::Fixed(25.0),
+                    y: Coordinate::Fixed(7.0),
                 },
-                width: 30,
-                height: 5,
+                width: Coordinate::Fixed(30.0),
+                height: Coordinate::Fixed(5.0),
                 style: Style {
                     fg: Some(Color::Named(NamedColor::Yellow)),
                     ..Default::default()
@@ -151,9 +165,13 @@ fn main() -> anyhow::Result<()> {
             SceneObject::Label(Label {
                 text: "Packet delivered!".to_string(),
                 position: Position {
-                    x: Coordinate::Fixed(31),
-                    y: Coordinate::Fixed(9),
+                    x: Coordinate::Fixed(31.0),
+                    y: Coordinate::Fixed(9.0),
                 },
+                width: Coordinate::Fixed(0.0),
+                height: Coordinate::Fixed(0.0),
+                framed: false,
+                frame_style: None,
                 style: Style::default(),
                 frames: FrameRange { start: 18, end: 25 },
                 z_order: 1,
@@ -162,9 +180,13 @@ fn main() -> anyhow::Result<()> {
             SceneObject::Label(Label {
                 text: "A minimal boilerplate example".to_string(),
                 position: Position {
-                    x: Coordinate::Fixed(25),
-                    y: Coordinate::Fixed(20),
+                    x: Coordinate::Fixed(25.0),
+                    y: Coordinate::Fixed(20.0),
                 },
+                width: Coordinate::Fixed(0.0),
+                height: Coordinate::Fixed(0.0),
+                framed: false,
+                frame_style: None,
                 style: Style {
                     dim: true,
                     ..Default::default()
