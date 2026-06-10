@@ -1096,10 +1096,31 @@ impl Editable for Art {
 /// Groups need access to all objects to compute their bounding box.
 pub fn get_properties(objects: &[SceneObject], object_index: usize) -> Vec<Property> {
     let ctx = PropContext { objects, index: object_index };
-    as_editable(&objects[object_index]).properties(&ctx)
+    let mut props = as_editable(&objects[object_index]).properties(&ctx);
+    // `first_frame` is stored 0-based (the inclusive start index) but shown to
+    // the user as a 1-based slide number, so an object only on slide 1 reads
+    // first_frame=1 / last_frame=1 (last_frame is the exclusive end, which
+    // already equals the 1-based inclusive last slide).
+    for p in &mut props {
+        if p.name == "first_frame" {
+            if let Ok(start) = p.value.parse::<usize>() {
+                p.value = (start + 1).to_string();
+            }
+        }
+    }
+    props
 }
 
 pub fn set_property(obj: &mut SceneObject, name: &str, value: &str) -> Result<()> {
+    if name == "first_frame" {
+        // Translate the user's 1-based slide number back to the 0-based start.
+        let one_based: usize = match value.trim().parse() {
+            Ok(v) => v,
+            Err(_) => bail!("first_frame must be a whole number"),
+        };
+        let start = one_based.saturating_sub(1);
+        return as_editable_mut(obj).set(name, &start.to_string());
+    }
     as_editable_mut(obj).set(name, value)
 }
 
