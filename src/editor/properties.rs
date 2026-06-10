@@ -1,6 +1,8 @@
 use anyhow::{bail, Result};
 
-use crate::engine::source::{Coordinate, SceneObject};
+use crate::engine::source::{
+    Arrow, Coordinate, Group, HLine, Header, Label, Rect, SceneObject, Table,
+};
 use crate::types::{Color, NamedColor};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,373 +87,837 @@ fn fmt_f64(v: f64) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Properties list
+// Editable — one impl per object type
+// ---------------------------------------------------------------------------
+//
+// All per-type property/geometry editing lives in that type's `impl Editable`.
+// Adding or changing a property touches exactly one impl block; the generic
+// dispatch below (`get_properties`, `set_property`, geometry accessors, …)
+// never needs to change. This replaces what used to be ~12 functions that each
+// matched on every object type and property name.
+
+/// Cross-object context passed to [`Editable::properties`]. Only `Group` reads
+/// it (to compute its members' bounding box); every other type ignores it.
+pub struct PropContext<'a> {
+    pub objects: &'a [SceneObject],
+    pub index: usize,
+}
+
+trait Editable {
+    /// Editable/displayable properties, in display order.
+    fn properties(&self, ctx: &PropContext) -> Vec<Property>;
+    /// Apply a property edit from its string form.
+    fn set(&mut self, name: &str, value: &str) -> Result<()>;
+
+    /// Clone the named `Coordinate` field, if any.
+    fn get_coord(&self, name: &str) -> Option<Coordinate>;
+    /// Set the named `Coordinate` field directly (bypassing string parsing).
+    fn set_coord(&mut self, name: &str, coord: Coordinate) -> Result<()>;
+
+    // --- f64 geometry (used by group scaling) ---
+    fn origin_x(&self) -> f64;
+    fn origin_y(&self) -> f64;
+    fn dim_x(&self) -> f64;
+    fn dim_y(&self) -> f64;
+    fn set_origin_x(&mut self, v: f64);
+    fn set_origin_y(&mut self, v: f64);
+    fn set_dim_x(&mut self, v: f64);
+    fn set_dim_y(&mut self, v: f64);
+
+    // --- integer-step move/resize/shrink (Fixed coords only) ---
+    fn move_by(&mut self, dx: i32, dy: i32);
+    /// Grow the object's far edge. Default: no-op (objects without a size).
+    fn resize_by(&mut self, _dw: i32, _dh: i32) {}
+    /// Pull the object's far edge inward. Default: no-op.
+    fn shrink_by(&mut self, _dw: i32, _dh: i32) {}
+}
+
+/// View a `SceneObject` as `&dyn Editable` — the single place that maps the
+/// enum to its per-type impl.
+fn as_editable(obj: &SceneObject) -> &dyn Editable {
+    match obj {
+        SceneObject::Label(o) => o,
+        SceneObject::HLine(o) => o,
+        SceneObject::Rect(o) => o,
+        SceneObject::Header(o) => o,
+        SceneObject::Arrow(o) => o,
+        SceneObject::Group(o) => o,
+        SceneObject::Table(o) => o,
+    }
+}
+
+fn as_editable_mut(obj: &mut SceneObject) -> &mut dyn Editable {
+    match obj {
+        SceneObject::Label(o) => o,
+        SceneObject::HLine(o) => o,
+        SceneObject::Rect(o) => o,
+        SceneObject::Header(o) => o,
+        SceneObject::Arrow(o) => o,
+        SceneObject::Group(o) => o,
+        SceneObject::Table(o) => o,
+    }
+}
+
+impl Editable for Label {
+    fn properties(&self, _ctx: &PropContext) -> Vec<Property> {
+        vec![
+            Property { name: "text", value: self.text.clone(), kind: PropertyKind::Text },
+            Property { name: "x", value: format_coordinate(&self.position.x), kind: PropertyKind::Coordinate },
+            Property { name: "y", value: format_coordinate(&self.position.y), kind: PropertyKind::Coordinate },
+            Property { name: "width", value: format_coordinate(&self.width), kind: PropertyKind::Coordinate },
+            Property { name: "height", value: format_coordinate(&self.height), kind: PropertyKind::Coordinate },
+            Property { name: "framed", value: self.framed.to_string(), kind: PropertyKind::Text },
+            Property { name: "frame_fg_color", value: format_opt_color(&self.frame_style.as_ref().and_then(|s| s.fg.clone())), kind: PropertyKind::Color },
+            Property { name: "frame_bg_color", value: format_opt_color(&self.frame_style.as_ref().and_then(|s| s.bg.clone())), kind: PropertyKind::Color },
+            Property { name: "fg_color", value: format_opt_color(&self.style.fg), kind: PropertyKind::Color },
+            Property { name: "bg_color", value: format_opt_color(&self.style.bg), kind: PropertyKind::Color },
+            Property { name: "bold", value: self.style.bold.to_string(), kind: PropertyKind::Text },
+            Property { name: "dimmed", value: self.style.dim.to_string(), kind: PropertyKind::Text },
+            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Text },
+            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Text },
+            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Text },
+        ]
+    }
+
+    fn set(&mut self, name: &str, value: &str) -> Result<()> {
+        match name {
+            "text" => self.text = value.to_string(),
+            "x" => self.position.x = parse_coordinate(value)?,
+            "y" => self.position.y = parse_coordinate(value)?,
+            "width" => self.width = parse_coordinate(value)?,
+            "height" => self.height = parse_coordinate(value)?,
+            "framed" => self.framed = parse_bool(value)?,
+            "frame_fg_color" => {
+                let color = parse_opt_color(value)?;
+                let fs = self.frame_style.get_or_insert_with(Default::default);
+                fs.fg = color;
+                if fs.fg.is_none() && fs.bg.is_none() {
+                    self.frame_style = None;
+                }
+            }
+            "frame_bg_color" => {
+                let color = parse_opt_color(value)?;
+                let fs = self.frame_style.get_or_insert_with(Default::default);
+                fs.bg = color;
+                if fs.fg.is_none() && fs.bg.is_none() {
+                    self.frame_style = None;
+                }
+            }
+            "fg_color" => self.style.fg = parse_opt_color(value)?,
+            "bg_color" => self.style.bg = parse_opt_color(value)?,
+            "bold" => self.style.bold = parse_bool(value)?,
+            "dimmed" => self.style.dim = parse_bool(value)?,
+            "first_frame" => self.frames.start = value.parse()?,
+            "last_frame" => self.frames.end = value.parse()?,
+            "z_order" => self.z_order = value.parse()?,
+            _ => bail!("Unknown property: {name}"),
+        }
+        Ok(())
+    }
+
+    fn get_coord(&self, name: &str) -> Option<Coordinate> {
+        match name {
+            "x" => Some(self.position.x.clone()),
+            "y" => Some(self.position.y.clone()),
+            "width" => Some(self.width.clone()),
+            "height" => Some(self.height.clone()),
+            _ => None,
+        }
+    }
+
+    fn set_coord(&mut self, name: &str, coord: Coordinate) -> Result<()> {
+        match name {
+            "x" => self.position.x = coord,
+            "y" => self.position.y = coord,
+            "width" => self.width = coord,
+            "height" => self.height = coord,
+            _ => bail!("Unknown coordinate property: {name}"),
+        }
+        Ok(())
+    }
+
+    fn origin_x(&self) -> f64 { coord_val_f(&self.position.x) }
+    fn origin_y(&self) -> f64 { coord_val_f(&self.position.y) }
+    fn dim_x(&self) -> f64 { coord_val_f(&self.width) }
+    fn dim_y(&self) -> f64 { coord_val_f(&self.height) }
+    fn set_origin_x(&mut self, v: f64) { set_fixed(&mut self.position.x, v); }
+    fn set_origin_y(&mut self, v: f64) { set_fixed(&mut self.position.y, v); }
+    fn set_dim_x(&mut self, v: f64) { set_fixed(&mut self.width, v); }
+    fn set_dim_y(&mut self, v: f64) { set_fixed(&mut self.height, v); }
+
+    fn move_by(&mut self, dx: i32, dy: i32) {
+        adjust_coordinate(&mut self.position.x, dx);
+        adjust_coordinate(&mut self.position.y, dy);
+    }
+
+    fn resize_by(&mut self, dw: i32, dh: i32) {
+        if dw > 0 {
+            adjust_coordinate_add(&mut self.width, dw as f64);
+        } else if dw < 0 {
+            let delta = (-dw) as f64;
+            adjust_coordinate_add(&mut self.width, delta);
+            adjust_coordinate(&mut self.position.x, dw);
+        }
+        if dh > 0 {
+            adjust_coordinate_add(&mut self.height, dh as f64);
+        } else if dh < 0 {
+            let delta = (-dh) as f64;
+            adjust_coordinate_add(&mut self.height, delta);
+            adjust_coordinate(&mut self.position.y, dh);
+        }
+    }
+
+    fn shrink_by(&mut self, dw: i32, dh: i32) {
+        if dw > 0 {
+            if let Coordinate::Fixed(v) = &mut self.width {
+                *v = (*v - dw as f64).max(0.0);
+            }
+        } else if dw < 0 {
+            let delta = (-dw) as f64;
+            if coordinate_val(&self.width) > 0 {
+                if let Coordinate::Fixed(v) = &mut self.width {
+                    *v = (*v - delta).max(0.0);
+                }
+                adjust_coordinate(&mut self.position.x, -dw);
+            }
+        }
+        if dh > 0 {
+            if let Coordinate::Fixed(v) = &mut self.height {
+                *v = (*v - dh as f64).max(0.0);
+            }
+        } else if dh < 0 {
+            let delta = (-dh) as f64;
+            if coordinate_val(&self.height) > 0 {
+                if let Coordinate::Fixed(v) = &mut self.height {
+                    *v = (*v - delta).max(0.0);
+                }
+                adjust_coordinate(&mut self.position.y, -dh);
+            }
+        }
+    }
+}
+
+impl Editable for HLine {
+    fn properties(&self, _ctx: &PropContext) -> Vec<Property> {
+        vec![
+            Property { name: "y", value: format_coordinate(&self.y), kind: PropertyKind::Coordinate },
+            Property { name: "from_x", value: format_coordinate(&self.x_start), kind: PropertyKind::Coordinate },
+            Property { name: "to_x", value: format_coordinate(&self.x_end), kind: PropertyKind::Coordinate },
+            Property { name: "draw_char", value: self.ch.to_string(), kind: PropertyKind::Text },
+            Property { name: "fg_color", value: format_opt_color(&self.style.fg), kind: PropertyKind::Color },
+            Property { name: "bg_color", value: format_opt_color(&self.style.bg), kind: PropertyKind::Color },
+            Property { name: "bold", value: self.style.bold.to_string(), kind: PropertyKind::Text },
+            Property { name: "dimmed", value: self.style.dim.to_string(), kind: PropertyKind::Text },
+            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Text },
+            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Text },
+            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Text },
+        ]
+    }
+
+    fn set(&mut self, name: &str, value: &str) -> Result<()> {
+        match name {
+            "y" => self.y = parse_coordinate(value)?,
+            "from_x" => self.x_start = parse_coordinate(value)?,
+            "to_x" => self.x_end = parse_coordinate(value)?,
+            "draw_char" => self.ch = parse_char(value)?,
+            "fg_color" => self.style.fg = parse_opt_color(value)?,
+            "bg_color" => self.style.bg = parse_opt_color(value)?,
+            "bold" => self.style.bold = parse_bool(value)?,
+            "dimmed" => self.style.dim = parse_bool(value)?,
+            "first_frame" => self.frames.start = value.parse()?,
+            "last_frame" => self.frames.end = value.parse()?,
+            "z_order" => self.z_order = value.parse()?,
+            _ => bail!("Unknown property: {name}"),
+        }
+        Ok(())
+    }
+
+    fn get_coord(&self, name: &str) -> Option<Coordinate> {
+        match name {
+            "y" => Some(self.y.clone()),
+            "from_x" => Some(self.x_start.clone()),
+            "to_x" => Some(self.x_end.clone()),
+            _ => None,
+        }
+    }
+
+    fn set_coord(&mut self, name: &str, coord: Coordinate) -> Result<()> {
+        match name {
+            "y" => self.y = coord,
+            "from_x" => self.x_start = coord,
+            "to_x" => self.x_end = coord,
+            _ => bail!("Unknown coordinate property: {name}"),
+        }
+        Ok(())
+    }
+
+    fn origin_x(&self) -> f64 { coord_val_f(&self.x_start) }
+    fn origin_y(&self) -> f64 { coord_val_f(&self.y) }
+    fn dim_x(&self) -> f64 { (coord_val_f(&self.x_end) - coord_val_f(&self.x_start)).max(0.0) }
+    fn dim_y(&self) -> f64 { 1.0 }
+    fn set_origin_x(&mut self, v: f64) {
+        // Preserve the line width when shifting x_start.
+        let w = (coord_val_f(&self.x_end) - coord_val_f(&self.x_start)).max(0.0);
+        set_fixed(&mut self.x_start, v);
+        set_fixed(&mut self.x_end, v + w);
+    }
+    fn set_origin_y(&mut self, v: f64) { set_fixed(&mut self.y, v); }
+    fn set_dim_x(&mut self, v: f64) {
+        let start = coord_val_f(&self.x_start);
+        set_fixed(&mut self.x_end, start + v.max(0.0));
+    }
+    fn set_dim_y(&mut self, _v: f64) {} // height is always 1
+
+    fn move_by(&mut self, dx: i32, dy: i32) {
+        adjust_coordinate(&mut self.y, dy);
+        adjust_coordinate(&mut self.x_start, dx);
+        adjust_coordinate(&mut self.x_end, dx);
+    }
+
+    fn resize_by(&mut self, dw: i32, _dh: i32) {
+        if dw > 0 {
+            adjust_coordinate_add(&mut self.x_end, dw as f64);
+        } else if dw < 0 {
+            adjust_coordinate(&mut self.x_start, dw);
+        }
+    }
+
+    fn shrink_by(&mut self, dw: i32, _dh: i32) {
+        if dw > 0 {
+            let xe = coordinate_val(&self.x_end);
+            let xs = coordinate_val(&self.x_start);
+            if xe > xs {
+                if let Coordinate::Fixed(v) = &mut self.x_end {
+                    *v = (*v - dw as f64).max(xs as f64 + 1.0);
+                }
+            }
+        } else if dw < 0 {
+            let delta = (-dw) as u16;
+            let xe = coordinate_val(&self.x_end);
+            let xs = coordinate_val(&self.x_start);
+            if xs + delta < xe {
+                adjust_coordinate_add(&mut self.x_start, delta as f64);
+            }
+        }
+    }
+}
+
+impl Editable for Rect {
+    fn properties(&self, _ctx: &PropContext) -> Vec<Property> {
+        vec![
+            Property { name: "x", value: format_coordinate(&self.position.x), kind: PropertyKind::Coordinate },
+            Property { name: "y", value: format_coordinate(&self.position.y), kind: PropertyKind::Coordinate },
+            Property { name: "width", value: format_coordinate(&self.width), kind: PropertyKind::Coordinate },
+            Property { name: "height", value: format_coordinate(&self.height), kind: PropertyKind::Coordinate },
+            Property { name: "title", value: self.title.clone().unwrap_or_default(), kind: PropertyKind::Text },
+            Property { name: "fg_color", value: format_opt_color(&self.style.fg), kind: PropertyKind::Color },
+            Property { name: "bg_color", value: format_opt_color(&self.style.bg), kind: PropertyKind::Color },
+            Property { name: "bold", value: self.style.bold.to_string(), kind: PropertyKind::Text },
+            Property { name: "dimmed", value: self.style.dim.to_string(), kind: PropertyKind::Text },
+            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Text },
+            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Text },
+            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Text },
+        ]
+    }
+
+    fn set(&mut self, name: &str, value: &str) -> Result<()> {
+        match name {
+            "x" => self.position.x = parse_coordinate(value)?,
+            "y" => self.position.y = parse_coordinate(value)?,
+            "width" => self.width = parse_coordinate(value)?,
+            "height" => self.height = parse_coordinate(value)?,
+            "title" => {
+                self.title = if value.is_empty() { None } else { Some(value.to_string()) };
+            }
+            "fg_color" => self.style.fg = parse_opt_color(value)?,
+            "bg_color" => self.style.bg = parse_opt_color(value)?,
+            "bold" => self.style.bold = parse_bool(value)?,
+            "dimmed" => self.style.dim = parse_bool(value)?,
+            "first_frame" => self.frames.start = value.parse()?,
+            "last_frame" => self.frames.end = value.parse()?,
+            "z_order" => self.z_order = value.parse()?,
+            _ => bail!("Unknown property: {name}"),
+        }
+        Ok(())
+    }
+
+    fn get_coord(&self, name: &str) -> Option<Coordinate> {
+        match name {
+            "x" => Some(self.position.x.clone()),
+            "y" => Some(self.position.y.clone()),
+            "width" => Some(self.width.clone()),
+            "height" => Some(self.height.clone()),
+            _ => None,
+        }
+    }
+
+    fn set_coord(&mut self, name: &str, coord: Coordinate) -> Result<()> {
+        match name {
+            "x" => self.position.x = coord,
+            "y" => self.position.y = coord,
+            "width" => self.width = coord,
+            "height" => self.height = coord,
+            _ => bail!("Unknown coordinate property: {name}"),
+        }
+        Ok(())
+    }
+
+    fn origin_x(&self) -> f64 { coord_val_f(&self.position.x) }
+    fn origin_y(&self) -> f64 { coord_val_f(&self.position.y) }
+    fn dim_x(&self) -> f64 { coord_val_f(&self.width) }
+    fn dim_y(&self) -> f64 { coord_val_f(&self.height) }
+    fn set_origin_x(&mut self, v: f64) { set_fixed(&mut self.position.x, v); }
+    fn set_origin_y(&mut self, v: f64) { set_fixed(&mut self.position.y, v); }
+    fn set_dim_x(&mut self, v: f64) { set_fixed(&mut self.width, v); }
+    fn set_dim_y(&mut self, v: f64) { set_fixed(&mut self.height, v); }
+
+    fn move_by(&mut self, dx: i32, dy: i32) {
+        adjust_coordinate(&mut self.position.x, dx);
+        adjust_coordinate(&mut self.position.y, dy);
+    }
+
+    fn resize_by(&mut self, dw: i32, dh: i32) {
+        if dw > 0 {
+            adjust_coordinate_add(&mut self.width, dw as f64);
+        } else if dw < 0 {
+            let delta = (-dw) as f64;
+            adjust_coordinate_add(&mut self.width, delta);
+            adjust_coordinate(&mut self.position.x, dw);
+        }
+        if dh > 0 {
+            adjust_coordinate_add(&mut self.height, dh as f64);
+        } else if dh < 0 {
+            let delta = (-dh) as f64;
+            adjust_coordinate_add(&mut self.height, delta);
+            adjust_coordinate(&mut self.position.y, dh);
+        }
+    }
+
+    fn shrink_by(&mut self, dw: i32, dh: i32) {
+        if dw > 0 {
+            if let Coordinate::Fixed(v) = &mut self.width {
+                *v = (*v - dw as f64).max(1.0);
+            }
+        } else if dw < 0 {
+            let delta = (-dw) as f64;
+            if coordinate_val(&self.width) > 1 {
+                if let Coordinate::Fixed(v) = &mut self.width {
+                    *v = (*v - delta).max(1.0);
+                }
+                adjust_coordinate(&mut self.position.x, -dw);
+            }
+        }
+        if dh > 0 {
+            if let Coordinate::Fixed(v) = &mut self.height {
+                *v = (*v - dh as f64).max(1.0);
+            }
+        } else if dh < 0 {
+            let delta = (-dh) as f64;
+            if coordinate_val(&self.height) > 1 {
+                if let Coordinate::Fixed(v) = &mut self.height {
+                    *v = (*v - delta).max(1.0);
+                }
+                adjust_coordinate(&mut self.position.y, -dh);
+            }
+        }
+    }
+}
+
+impl Editable for Header {
+    fn properties(&self, _ctx: &PropContext) -> Vec<Property> {
+        vec![
+            Property { name: "text", value: self.text.clone(), kind: PropertyKind::Text },
+            Property { name: "x", value: format_coordinate(&self.position.x), kind: PropertyKind::Coordinate },
+            Property { name: "y", value: format_coordinate(&self.position.y), kind: PropertyKind::Coordinate },
+            Property { name: "draw_char", value: self.ch.to_string(), kind: PropertyKind::Text },
+            Property { name: "fg_color", value: format_opt_color(&self.style.fg), kind: PropertyKind::Color },
+            Property { name: "bg_color", value: format_opt_color(&self.style.bg), kind: PropertyKind::Color },
+            Property { name: "bold", value: self.style.bold.to_string(), kind: PropertyKind::Text },
+            Property { name: "dimmed", value: self.style.dim.to_string(), kind: PropertyKind::Text },
+            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Text },
+            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Text },
+            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Text },
+        ]
+    }
+
+    fn set(&mut self, name: &str, value: &str) -> Result<()> {
+        match name {
+            "text" => self.text = value.to_string(),
+            "x" => self.position.x = parse_coordinate(value)?,
+            "y" => self.position.y = parse_coordinate(value)?,
+            "draw_char" => self.ch = parse_char(value)?,
+            "fg_color" => self.style.fg = parse_opt_color(value)?,
+            "bg_color" => self.style.bg = parse_opt_color(value)?,
+            "bold" => self.style.bold = parse_bool(value)?,
+            "dimmed" => self.style.dim = parse_bool(value)?,
+            "first_frame" => self.frames.start = value.parse()?,
+            "last_frame" => self.frames.end = value.parse()?,
+            "z_order" => self.z_order = value.parse()?,
+            _ => bail!("Unknown property: {name}"),
+        }
+        Ok(())
+    }
+
+    fn get_coord(&self, name: &str) -> Option<Coordinate> {
+        match name {
+            "x" => Some(self.position.x.clone()),
+            "y" => Some(self.position.y.clone()),
+            _ => None,
+        }
+    }
+
+    fn set_coord(&mut self, name: &str, coord: Coordinate) -> Result<()> {
+        match name {
+            "x" => self.position.x = coord,
+            "y" => self.position.y = coord,
+            _ => bail!("Unknown coordinate property: {name}"),
+        }
+        Ok(())
+    }
+
+    fn origin_x(&self) -> f64 { coord_val_f(&self.position.x) }
+    fn origin_y(&self) -> f64 { coord_val_f(&self.position.y) }
+    fn dim_x(&self) -> f64 { 0.0 }
+    fn dim_y(&self) -> f64 { 1.0 }
+    fn set_origin_x(&mut self, v: f64) { set_fixed(&mut self.position.x, v); }
+    fn set_origin_y(&mut self, v: f64) { set_fixed(&mut self.position.y, v); }
+    fn set_dim_x(&mut self, _v: f64) {}
+    fn set_dim_y(&mut self, _v: f64) {}
+
+    fn move_by(&mut self, dx: i32, dy: i32) {
+        adjust_coordinate(&mut self.position.x, dx);
+        adjust_coordinate(&mut self.position.y, dy);
+    }
+    // resize_by / shrink_by: default no-op (a header has no resizable box).
+}
+
+impl Editable for Arrow {
+    fn properties(&self, _ctx: &PropContext) -> Vec<Property> {
+        vec![
+            Property { name: "x1", value: format_coordinate(&self.x1), kind: PropertyKind::Coordinate },
+            Property { name: "y1", value: format_coordinate(&self.y1), kind: PropertyKind::Coordinate },
+            Property { name: "x2", value: format_coordinate(&self.x2), kind: PropertyKind::Coordinate },
+            Property { name: "y2", value: format_coordinate(&self.y2), kind: PropertyKind::Coordinate },
+            Property { name: "head", value: self.head.to_string(), kind: PropertyKind::Text },
+            Property { name: "head_char", value: self.head_ch.map(|c| c.to_string()).unwrap_or_else(|| "auto".to_string()), kind: PropertyKind::HeadChar },
+            Property { name: "body_char", value: self.body_ch.map(|c| c.to_string()).unwrap_or_else(|| "auto".to_string()), kind: PropertyKind::BodyChar },
+            Property { name: "fg_color", value: format_opt_color(&self.style.fg), kind: PropertyKind::Color },
+            Property { name: "bg_color", value: format_opt_color(&self.style.bg), kind: PropertyKind::Color },
+            Property { name: "bold", value: self.style.bold.to_string(), kind: PropertyKind::Text },
+            Property { name: "dimmed", value: self.style.dim.to_string(), kind: PropertyKind::Text },
+            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Text },
+            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Text },
+            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Text },
+        ]
+    }
+
+    fn set(&mut self, name: &str, value: &str) -> Result<()> {
+        match name {
+            "x1" => self.x1 = parse_coordinate(value)?,
+            "y1" => self.y1 = parse_coordinate(value)?,
+            "x2" => self.x2 = parse_coordinate(value)?,
+            "y2" => self.y2 = parse_coordinate(value)?,
+            "head" => self.head = parse_bool(value)?,
+            "head_char" => self.head_ch = parse_opt_char(value)?,
+            "body_char" => self.body_ch = parse_opt_char(value)?,
+            "fg_color" => self.style.fg = parse_opt_color(value)?,
+            "bg_color" => self.style.bg = parse_opt_color(value)?,
+            "bold" => self.style.bold = parse_bool(value)?,
+            "dimmed" => self.style.dim = parse_bool(value)?,
+            "first_frame" => self.frames.start = value.parse()?,
+            "last_frame" => self.frames.end = value.parse()?,
+            "z_order" => self.z_order = value.parse()?,
+            _ => bail!("Unknown property: {name}"),
+        }
+        Ok(())
+    }
+
+    fn get_coord(&self, name: &str) -> Option<Coordinate> {
+        match name {
+            "x1" => Some(self.x1.clone()),
+            "y1" => Some(self.y1.clone()),
+            "x2" => Some(self.x2.clone()),
+            "y2" => Some(self.y2.clone()),
+            _ => None,
+        }
+    }
+
+    fn set_coord(&mut self, name: &str, coord: Coordinate) -> Result<()> {
+        match name {
+            "x1" => self.x1 = coord,
+            "y1" => self.y1 = coord,
+            "x2" => self.x2 = coord,
+            "y2" => self.y2 = coord,
+            _ => bail!("Unknown coordinate property: {name}"),
+        }
+        Ok(())
+    }
+
+    fn origin_x(&self) -> f64 { coord_val_f(&self.x1).min(coord_val_f(&self.x2)) }
+    fn origin_y(&self) -> f64 { coord_val_f(&self.y1).min(coord_val_f(&self.y2)) }
+    fn dim_x(&self) -> f64 { (coord_val_f(&self.x2) - coord_val_f(&self.x1)).abs() }
+    fn dim_y(&self) -> f64 { (coord_val_f(&self.y2) - coord_val_f(&self.y1)).abs().max(1.0) }
+
+    fn set_origin_x(&mut self, v: f64) {
+        let dx = coord_val_f(&self.x2) - coord_val_f(&self.x1);
+        set_fixed(&mut self.x1, v);
+        set_fixed(&mut self.x2, v + dx);
+    }
+    fn set_origin_y(&mut self, v: f64) {
+        let dy = coord_val_f(&self.y2) - coord_val_f(&self.y1);
+        set_fixed(&mut self.y1, v);
+        set_fixed(&mut self.y2, v + dy);
+    }
+    fn set_dim_x(&mut self, v: f64) {
+        let x1 = coord_val_f(&self.x1);
+        let sign = if coord_val_f(&self.x2) >= x1 { 1.0 } else { -1.0 };
+        set_fixed(&mut self.x2, x1 + sign * v.max(0.0));
+    }
+    fn set_dim_y(&mut self, v: f64) {
+        let y1 = coord_val_f(&self.y1);
+        let sign = if coord_val_f(&self.y2) >= y1 { 1.0 } else { -1.0 };
+        set_fixed(&mut self.y2, y1 + sign * v.max(0.0));
+    }
+
+    fn move_by(&mut self, dx: i32, dy: i32) {
+        adjust_coordinate(&mut self.x1, dx);
+        adjust_coordinate(&mut self.y1, dy);
+        adjust_coordinate(&mut self.x2, dx);
+        adjust_coordinate(&mut self.y2, dy);
+    }
+
+    fn resize_by(&mut self, dw: i32, dh: i32) {
+        adjust_coordinate(&mut self.x2, dw);
+        adjust_coordinate(&mut self.y2, dh);
+    }
+
+    fn shrink_by(&mut self, dw: i32, dh: i32) {
+        adjust_coordinate(&mut self.x2, -dw);
+        adjust_coordinate(&mut self.y2, -dh);
+    }
+}
+
+impl Editable for Group {
+    fn properties(&self, ctx: &PropContext) -> Vec<Property> {
+        let (gx, gy, gw, gh) = group_bounds(ctx.objects, ctx.index);
+        let mut props = vec![
+            Property { name: "x",      value: fmt_f64(gx), kind: PropertyKind::ReadOnly },
+            Property { name: "y",      value: fmt_f64(gy), kind: PropertyKind::ReadOnly },
+            Property { name: "width",  value: fmt_f64(gw), kind: PropertyKind::ReadOnly },
+            Property { name: "height", value: fmt_f64(gh), kind: PropertyKind::ReadOnly },
+            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Text },
+            Property { name: "last_frame",  value: self.frames.end.to_string(),   kind: PropertyKind::Text },
+            Property { name: "z_order",     value: self.z_order.to_string(),      kind: PropertyKind::Text },
+        ];
+        for &member_idx in &self.members {
+            props.push(Property {
+                name: "member",
+                value: member_idx.to_string(),
+                kind: PropertyKind::GroupMember,
+            });
+        }
+        props
+    }
+
+    fn set(&mut self, name: &str, value: &str) -> Result<()> {
+        match name {
+            "first_frame" => self.frames.start = value.parse()?,
+            "last_frame"  => self.frames.end   = value.parse()?,
+            "z_order"     => self.z_order      = value.parse()?,
+            _ => bail!("Unknown property: {name}"),
+        }
+        Ok(())
+    }
+
+    fn get_coord(&self, _name: &str) -> Option<Coordinate> { None }
+    fn set_coord(&mut self, _name: &str, _coord: Coordinate) -> Result<()> {
+        bail!("Groups have no coordinate properties")
+    }
+
+    // A group has no position/size of its own — its bounds are derived from
+    // members, which are moved/scaled via `move_group` / `resize_group`.
+    fn origin_x(&self) -> f64 { 0.0 }
+    fn origin_y(&self) -> f64 { 0.0 }
+    fn dim_x(&self) -> f64 { 0.0 }
+    fn dim_y(&self) -> f64 { 0.0 }
+    fn set_origin_x(&mut self, _v: f64) {}
+    fn set_origin_y(&mut self, _v: f64) {}
+    fn set_dim_x(&mut self, _v: f64) {}
+    fn set_dim_y(&mut self, _v: f64) {}
+    fn move_by(&mut self, _dx: i32, _dy: i32) {}
+}
+
+impl Editable for Table {
+    fn properties(&self, _ctx: &PropContext) -> Vec<Property> {
+        let mut props = vec![
+            Property { name: "x",           value: format_coordinate(&self.position.x), kind: PropertyKind::Coordinate },
+            Property { name: "y",           value: format_coordinate(&self.position.y), kind: PropertyKind::Coordinate },
+            Property { name: "width",       value: format_coordinate(&self.width),      kind: PropertyKind::Coordinate },
+            Property { name: "height",      value: format_coordinate(&self.height),     kind: PropertyKind::Coordinate },
+            Property { name: "rows",        value: self.rows.to_string(),               kind: PropertyKind::Text },
+            Property { name: "cols",        value: self.col_widths.len().to_string(),   kind: PropertyKind::ReadOnly },
+            Property { name: "header_bold", value: self.header_bold.to_string(),        kind: PropertyKind::Text },
+            Property { name: "borders",     value: self.borders.to_string(),            kind: PropertyKind::Text },
+            Property { name: "fg_color",    value: format_opt_color(&self.style.fg),    kind: PropertyKind::Color },
+            Property { name: "bg_color",    value: format_opt_color(&self.style.bg),    kind: PropertyKind::Color },
+            Property { name: "bold",        value: self.style.bold.to_string(),         kind: PropertyKind::Text },
+            Property { name: "dimmed",      value: self.style.dim.to_string(),          kind: PropertyKind::Text },
+            Property { name: "first_frame", value: self.frames.start.to_string(),       kind: PropertyKind::Text },
+            Property { name: "last_frame",  value: self.frames.end.to_string(),         kind: PropertyKind::Text },
+            Property { name: "z_order",     value: self.z_order.to_string(),            kind: PropertyKind::Text },
+        ];
+        // Per-column width properties.
+        for (col_idx, &frac) in self.col_widths.iter().enumerate() {
+            if col_idx < TABLE_COL_WIDTH_NAMES.len() {
+                props.push(Property {
+                    name: TABLE_COL_WIDTH_NAMES[col_idx],
+                    value: format!("{:.1}", frac * 100.0),
+                    kind: PropertyKind::TableColWidth,
+                });
+            }
+        }
+        props
+    }
+
+    fn set(&mut self, name: &str, value: &str) -> Result<()> {
+        // Column-width properties: "col_N_width"
+        if let Some(col_idx) = parse_col_width_name(name) {
+            let pct: f64 = value.trim().trim_end_matches('%').parse()
+                .map_err(|_| anyhow::anyhow!("Invalid percentage: {value}"))?;
+            if col_idx < self.col_widths.len() {
+                self.col_widths[col_idx] = (pct / 100.0).max(0.01).min(1.0);
+            }
+            return Ok(());
+        }
+        match name {
+            "x"           => self.position.x = parse_coordinate(value)?,
+            "y"           => self.position.y = parse_coordinate(value)?,
+            "width"       => self.width  = parse_coordinate(value)?,
+            "height"      => self.height = parse_coordinate(value)?,
+            "rows"        => {
+                let new_rows: usize = value.parse()?;
+                self.rows = new_rows.max(1);
+                self.normalize_cells();
+            }
+            "header_bold" => self.header_bold = parse_bool(value)?,
+            "borders"     => self.borders     = parse_bool(value)?,
+            "fg_color"    => self.style.fg     = parse_opt_color(value)?,
+            "bg_color"    => self.style.bg     = parse_opt_color(value)?,
+            "bold"        => self.style.bold   = parse_bool(value)?,
+            "dimmed"      => self.style.dim    = parse_bool(value)?,
+            "first_frame" => self.frames.start = value.parse()?,
+            "last_frame"  => self.frames.end   = value.parse()?,
+            "z_order"     => self.z_order      = value.parse()?,
+            _ => bail!("Unknown property: {name}"),
+        }
+        Ok(())
+    }
+
+    fn get_coord(&self, name: &str) -> Option<Coordinate> {
+        match name {
+            "x"      => Some(self.position.x.clone()),
+            "y"      => Some(self.position.y.clone()),
+            "width"  => Some(self.width.clone()),
+            "height" => Some(self.height.clone()),
+            _ => None,
+        }
+    }
+
+    fn set_coord(&mut self, name: &str, coord: Coordinate) -> Result<()> {
+        match name {
+            "x"      => self.position.x = coord,
+            "y"      => self.position.y = coord,
+            "width"  => self.width  = coord,
+            "height" => self.height = coord,
+            _ => bail!("Unknown coordinate property: {name}"),
+        }
+        Ok(())
+    }
+
+    fn origin_x(&self) -> f64 { coord_val_f(&self.position.x) }
+    fn origin_y(&self) -> f64 { coord_val_f(&self.position.y) }
+    fn dim_x(&self) -> f64 { coord_val_f(&self.width) }
+    fn dim_y(&self) -> f64 { coord_val_f(&self.height).max(1.0) }
+    fn set_origin_x(&mut self, v: f64) { set_fixed(&mut self.position.x, v); }
+    fn set_origin_y(&mut self, v: f64) { set_fixed(&mut self.position.y, v); }
+    fn set_dim_x(&mut self, v: f64) { set_fixed(&mut self.width, v); }
+    fn set_dim_y(&mut self, v: f64) { set_fixed(&mut self.height, v); }
+
+    fn move_by(&mut self, dx: i32, dy: i32) {
+        adjust_coordinate(&mut self.position.x, dx);
+        adjust_coordinate(&mut self.position.y, dy);
+    }
+
+    fn resize_by(&mut self, dw: i32, dh: i32) {
+        if dw > 0 {
+            adjust_coordinate_add(&mut self.width, dw as f64);
+        } else if dw < 0 {
+            let delta = (-dw) as f64;
+            adjust_coordinate_add(&mut self.width, delta);
+            adjust_coordinate(&mut self.position.x, dw);
+        }
+        if dh > 0 {
+            adjust_coordinate_add(&mut self.height, dh as f64);
+        } else if dh < 0 {
+            let delta = (-dh) as f64;
+            adjust_coordinate_add(&mut self.height, delta);
+            adjust_coordinate(&mut self.position.y, dh);
+        }
+    }
+
+    fn shrink_by(&mut self, dw: i32, dh: i32) {
+        if dw > 0 {
+            if let Coordinate::Fixed(v) = &mut self.width {
+                *v = (*v - dw as f64).max(3.0);
+            }
+        } else if dw < 0 {
+            let delta = (-dw) as f64;
+            if coordinate_val(&self.width) > 3 {
+                if let Coordinate::Fixed(v) = &mut self.width {
+                    *v = (*v - delta).max(3.0);
+                }
+                adjust_coordinate(&mut self.position.x, -dw);
+            }
+        }
+        if dh > 0 {
+            if let Coordinate::Fixed(v) = &mut self.height {
+                *v = (*v - dh as f64).max(0.0);
+            }
+        } else if dh < 0 {
+            let delta = (-dh) as f64;
+            if coordinate_val(&self.height) > 0 {
+                if let Coordinate::Fixed(v) = &mut self.height {
+                    *v = (*v - delta).max(0.0);
+                }
+                adjust_coordinate(&mut self.position.y, -dh);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Generic dispatch over the per-type `Editable` impls
 // ---------------------------------------------------------------------------
 
 /// Returns the editable/displayable properties for object at `object_index`.
 /// Groups need access to all objects to compute their bounding box.
 pub fn get_properties(objects: &[SceneObject], object_index: usize) -> Vec<Property> {
-    let obj = &objects[object_index];
-    match obj {
-        SceneObject::Label(l) => vec![
-            Property { name: "text", value: l.text.clone(), kind: PropertyKind::Text },
-            Property { name: "x", value: format_coordinate(&l.position.x), kind: PropertyKind::Coordinate },
-            Property { name: "y", value: format_coordinate(&l.position.y), kind: PropertyKind::Coordinate },
-            Property { name: "width", value: format_coordinate(&l.width), kind: PropertyKind::Coordinate },
-            Property { name: "height", value: format_coordinate(&l.height), kind: PropertyKind::Coordinate },
-            Property { name: "framed", value: l.framed.to_string(), kind: PropertyKind::Text },
-            Property { name: "frame_fg_color", value: format_opt_color(&l.frame_style.as_ref().and_then(|s| s.fg.clone())), kind: PropertyKind::Color },
-            Property { name: "frame_bg_color", value: format_opt_color(&l.frame_style.as_ref().and_then(|s| s.bg.clone())), kind: PropertyKind::Color },
-            Property { name: "fg_color", value: format_opt_color(&l.style.fg), kind: PropertyKind::Color },
-            Property { name: "bg_color", value: format_opt_color(&l.style.bg), kind: PropertyKind::Color },
-            Property { name: "bold", value: l.style.bold.to_string(), kind: PropertyKind::Text },
-            Property { name: "dimmed", value: l.style.dim.to_string(), kind: PropertyKind::Text },
-            Property { name: "first_frame", value: l.frames.start.to_string(), kind: PropertyKind::Text },
-            Property { name: "last_frame", value: l.frames.end.to_string(), kind: PropertyKind::Text },
-            Property { name: "z_order", value: l.z_order.to_string(), kind: PropertyKind::Text },
-        ],
-        SceneObject::HLine(h) => vec![
-            Property { name: "y", value: format_coordinate(&h.y), kind: PropertyKind::Coordinate },
-            Property { name: "from_x", value: format_coordinate(&h.x_start), kind: PropertyKind::Coordinate },
-            Property { name: "to_x", value: format_coordinate(&h.x_end), kind: PropertyKind::Coordinate },
-            Property { name: "draw_char", value: h.ch.to_string(), kind: PropertyKind::Text },
-            Property { name: "fg_color", value: format_opt_color(&h.style.fg), kind: PropertyKind::Color },
-            Property { name: "bg_color", value: format_opt_color(&h.style.bg), kind: PropertyKind::Color },
-            Property { name: "bold", value: h.style.bold.to_string(), kind: PropertyKind::Text },
-            Property { name: "dimmed", value: h.style.dim.to_string(), kind: PropertyKind::Text },
-            Property { name: "first_frame", value: h.frames.start.to_string(), kind: PropertyKind::Text },
-            Property { name: "last_frame", value: h.frames.end.to_string(), kind: PropertyKind::Text },
-            Property { name: "z_order", value: h.z_order.to_string(), kind: PropertyKind::Text },
-        ],
-        SceneObject::Rect(r) => vec![
-            Property { name: "x", value: format_coordinate(&r.position.x), kind: PropertyKind::Coordinate },
-            Property { name: "y", value: format_coordinate(&r.position.y), kind: PropertyKind::Coordinate },
-            Property { name: "width", value: format_coordinate(&r.width), kind: PropertyKind::Coordinate },
-            Property { name: "height", value: format_coordinate(&r.height), kind: PropertyKind::Coordinate },
-            Property { name: "title", value: r.title.clone().unwrap_or_default(), kind: PropertyKind::Text },
-            Property { name: "fg_color", value: format_opt_color(&r.style.fg), kind: PropertyKind::Color },
-            Property { name: "bg_color", value: format_opt_color(&r.style.bg), kind: PropertyKind::Color },
-            Property { name: "bold", value: r.style.bold.to_string(), kind: PropertyKind::Text },
-            Property { name: "dimmed", value: r.style.dim.to_string(), kind: PropertyKind::Text },
-            Property { name: "first_frame", value: r.frames.start.to_string(), kind: PropertyKind::Text },
-            Property { name: "last_frame", value: r.frames.end.to_string(), kind: PropertyKind::Text },
-            Property { name: "z_order", value: r.z_order.to_string(), kind: PropertyKind::Text },
-        ],
-        SceneObject::Header(h) => vec![
-            Property { name: "text", value: h.text.clone(), kind: PropertyKind::Text },
-            Property { name: "x", value: format_coordinate(&h.position.x), kind: PropertyKind::Coordinate },
-            Property { name: "y", value: format_coordinate(&h.position.y), kind: PropertyKind::Coordinate },
-            Property { name: "draw_char", value: h.ch.to_string(), kind: PropertyKind::Text },
-            Property { name: "fg_color", value: format_opt_color(&h.style.fg), kind: PropertyKind::Color },
-            Property { name: "bg_color", value: format_opt_color(&h.style.bg), kind: PropertyKind::Color },
-            Property { name: "bold", value: h.style.bold.to_string(), kind: PropertyKind::Text },
-            Property { name: "dimmed", value: h.style.dim.to_string(), kind: PropertyKind::Text },
-            Property { name: "first_frame", value: h.frames.start.to_string(), kind: PropertyKind::Text },
-            Property { name: "last_frame", value: h.frames.end.to_string(), kind: PropertyKind::Text },
-            Property { name: "z_order", value: h.z_order.to_string(), kind: PropertyKind::Text },
-        ],
-        SceneObject::Arrow(a) => vec![
-            Property { name: "x1", value: format_coordinate(&a.x1), kind: PropertyKind::Coordinate },
-            Property { name: "y1", value: format_coordinate(&a.y1), kind: PropertyKind::Coordinate },
-            Property { name: "x2", value: format_coordinate(&a.x2), kind: PropertyKind::Coordinate },
-            Property { name: "y2", value: format_coordinate(&a.y2), kind: PropertyKind::Coordinate },
-            Property { name: "head", value: a.head.to_string(), kind: PropertyKind::Text },
-            Property { name: "head_char", value: a.head_ch.map(|c| c.to_string()).unwrap_or_else(|| "auto".to_string()), kind: PropertyKind::HeadChar },
-            Property { name: "body_char", value: a.body_ch.map(|c| c.to_string()).unwrap_or_else(|| "auto".to_string()), kind: PropertyKind::BodyChar },
-            Property { name: "fg_color", value: format_opt_color(&a.style.fg), kind: PropertyKind::Color },
-            Property { name: "bg_color", value: format_opt_color(&a.style.bg), kind: PropertyKind::Color },
-            Property { name: "bold", value: a.style.bold.to_string(), kind: PropertyKind::Text },
-            Property { name: "dimmed", value: a.style.dim.to_string(), kind: PropertyKind::Text },
-            Property { name: "first_frame", value: a.frames.start.to_string(), kind: PropertyKind::Text },
-            Property { name: "last_frame", value: a.frames.end.to_string(), kind: PropertyKind::Text },
-            Property { name: "z_order", value: a.z_order.to_string(), kind: PropertyKind::Text },
-        ],
-        SceneObject::Group(g) => {
-            let (gx, gy, gw, gh) = group_bounds(objects, object_index);
-            let mut props = vec![
-                Property { name: "x",      value: fmt_f64(gx), kind: PropertyKind::ReadOnly },
-                Property { name: "y",      value: fmt_f64(gy), kind: PropertyKind::ReadOnly },
-                Property { name: "width",  value: fmt_f64(gw), kind: PropertyKind::ReadOnly },
-                Property { name: "height", value: fmt_f64(gh), kind: PropertyKind::ReadOnly },
-                Property { name: "first_frame", value: g.frames.start.to_string(), kind: PropertyKind::Text },
-                Property { name: "last_frame",  value: g.frames.end.to_string(),   kind: PropertyKind::Text },
-                Property { name: "z_order",     value: g.z_order.to_string(),      kind: PropertyKind::Text },
-            ];
-            for &member_idx in &g.members {
-                props.push(Property {
-                    name: "member",
-                    value: member_idx.to_string(),
-                    kind: PropertyKind::GroupMember,
-                });
-            }
-            props
-        }
-        SceneObject::Table(t) => {
-            let mut props = vec![
-                Property { name: "x",           value: format_coordinate(&t.position.x), kind: PropertyKind::Coordinate },
-                Property { name: "y",           value: format_coordinate(&t.position.y), kind: PropertyKind::Coordinate },
-                Property { name: "width",       value: format_coordinate(&t.width),      kind: PropertyKind::Coordinate },
-                Property { name: "height",      value: format_coordinate(&t.height),     kind: PropertyKind::Coordinate },
-                Property { name: "rows",        value: t.rows.to_string(),               kind: PropertyKind::Text },
-                Property { name: "cols",        value: t.col_widths.len().to_string(),   kind: PropertyKind::ReadOnly },
-                Property { name: "header_bold", value: t.header_bold.to_string(),        kind: PropertyKind::Text },
-                Property { name: "borders",     value: t.borders.to_string(),            kind: PropertyKind::Text },
-                Property { name: "fg_color",    value: format_opt_color(&t.style.fg),    kind: PropertyKind::Color },
-                Property { name: "bg_color",    value: format_opt_color(&t.style.bg),    kind: PropertyKind::Color },
-                Property { name: "bold",        value: t.style.bold.to_string(),         kind: PropertyKind::Text },
-                Property { name: "dimmed",      value: t.style.dim.to_string(),          kind: PropertyKind::Text },
-                Property { name: "first_frame", value: t.frames.start.to_string(),       kind: PropertyKind::Text },
-                Property { name: "last_frame",  value: t.frames.end.to_string(),         kind: PropertyKind::Text },
-                Property { name: "z_order",     value: t.z_order.to_string(),            kind: PropertyKind::Text },
-            ];
-            // Per-column width properties
-            for (col_idx, &frac) in t.col_widths.iter().enumerate() {
-                if col_idx < TABLE_COL_WIDTH_NAMES.len() {
-                    props.push(Property {
-                        name: TABLE_COL_WIDTH_NAMES[col_idx],
-                        value: format!("{:.1}", frac * 100.0),
-                        kind: PropertyKind::TableColWidth,
-                    });
-                }
-            }
-            props
-        }
-    }
+    let ctx = PropContext { objects, index: object_index };
+    as_editable(&objects[object_index]).properties(&ctx)
 }
 
 pub fn set_property(obj: &mut SceneObject, name: &str, value: &str) -> Result<()> {
-    match obj {
-        SceneObject::Label(l) => match name {
-            "text" => l.text = value.to_string(),
-            "x" => l.position.x = parse_coordinate(value)?,
-            "y" => l.position.y = parse_coordinate(value)?,
-            "width" => l.width = parse_coordinate(value)?,
-            "height" => l.height = parse_coordinate(value)?,
-            "framed" => l.framed = parse_bool(value)?,
-            "frame_fg_color" => {
-                let color = parse_opt_color(value)?;
-                let fs = l.frame_style.get_or_insert_with(Default::default);
-                fs.fg = color;
-                if fs.fg.is_none() && fs.bg.is_none() {
-                    l.frame_style = None;
-                }
-            }
-            "frame_bg_color" => {
-                let color = parse_opt_color(value)?;
-                let fs = l.frame_style.get_or_insert_with(Default::default);
-                fs.bg = color;
-                if fs.fg.is_none() && fs.bg.is_none() {
-                    l.frame_style = None;
-                }
-            }
-            "fg_color" => l.style.fg = parse_opt_color(value)?,
-            "bg_color" => l.style.bg = parse_opt_color(value)?,
-            "bold" => l.style.bold = parse_bool(value)?,
-            "dimmed" => l.style.dim = parse_bool(value)?,
-            "first_frame" => l.frames.start = value.parse()?,
-            "last_frame" => l.frames.end = value.parse()?,
-            "z_order" => l.z_order = value.parse()?,
-            _ => bail!("Unknown property: {name}"),
-        },
-        SceneObject::HLine(h) => match name {
-            "y" => h.y = parse_coordinate(value)?,
-            "from_x" => h.x_start = parse_coordinate(value)?,
-            "to_x" => h.x_end = parse_coordinate(value)?,
-            "draw_char" => h.ch = parse_char(value)?,
-            "fg_color" => h.style.fg = parse_opt_color(value)?,
-            "bg_color" => h.style.bg = parse_opt_color(value)?,
-            "bold" => h.style.bold = parse_bool(value)?,
-            "dimmed" => h.style.dim = parse_bool(value)?,
-            "first_frame" => h.frames.start = value.parse()?,
-            "last_frame" => h.frames.end = value.parse()?,
-            "z_order" => h.z_order = value.parse()?,
-            _ => bail!("Unknown property: {name}"),
-        },
-        SceneObject::Rect(r) => match name {
-            "x" => r.position.x = parse_coordinate(value)?,
-            "y" => r.position.y = parse_coordinate(value)?,
-            "width" => r.width = parse_coordinate(value)?,
-            "height" => r.height = parse_coordinate(value)?,
-            "title" => {
-                r.title = if value.is_empty() {
-                    None
-                } else {
-                    Some(value.to_string())
-                }
-            }
-            "fg_color" => r.style.fg = parse_opt_color(value)?,
-            "bg_color" => r.style.bg = parse_opt_color(value)?,
-            "bold" => r.style.bold = parse_bool(value)?,
-            "dimmed" => r.style.dim = parse_bool(value)?,
-            "first_frame" => r.frames.start = value.parse()?,
-            "last_frame" => r.frames.end = value.parse()?,
-            "z_order" => r.z_order = value.parse()?,
-            _ => bail!("Unknown property: {name}"),
-        },
-        SceneObject::Header(h) => match name {
-            "text" => h.text = value.to_string(),
-            "x" => h.position.x = parse_coordinate(value)?,
-            "y" => h.position.y = parse_coordinate(value)?,
-            "draw_char" => h.ch = parse_char(value)?,
-            "fg_color" => h.style.fg = parse_opt_color(value)?,
-            "bg_color" => h.style.bg = parse_opt_color(value)?,
-            "bold" => h.style.bold = parse_bool(value)?,
-            "dimmed" => h.style.dim = parse_bool(value)?,
-            "first_frame" => h.frames.start = value.parse()?,
-            "last_frame" => h.frames.end = value.parse()?,
-            "z_order" => h.z_order = value.parse()?,
-            _ => bail!("Unknown property: {name}"),
-        },
-        SceneObject::Arrow(a) => match name {
-            "x1" => a.x1 = parse_coordinate(value)?,
-            "y1" => a.y1 = parse_coordinate(value)?,
-            "x2" => a.x2 = parse_coordinate(value)?,
-            "y2" => a.y2 = parse_coordinate(value)?,
-            "head" => a.head = parse_bool(value)?,
-            "head_char" => a.head_ch = parse_opt_char(value)?,
-            "body_char" => a.body_ch = parse_opt_char(value)?,
-            "fg_color" => a.style.fg = parse_opt_color(value)?,
-            "bg_color" => a.style.bg = parse_opt_color(value)?,
-            "bold" => a.style.bold = parse_bool(value)?,
-            "dimmed" => a.style.dim = parse_bool(value)?,
-            "first_frame" => a.frames.start = value.parse()?,
-            "last_frame" => a.frames.end = value.parse()?,
-            "z_order" => a.z_order = value.parse()?,
-            _ => bail!("Unknown property: {name}"),
-        },
-        SceneObject::Group(g) => match name {
-            "first_frame" => g.frames.start = value.parse()?,
-            "last_frame"  => g.frames.end   = value.parse()?,
-            "z_order"     => g.z_order      = value.parse()?,
-            _ => bail!("Unknown property: {name}"),
-        },
-        SceneObject::Table(t) => {
-            // Column-width properties: "col_N_width"
-            if let Some(col_idx) = parse_col_width_name(name) {
-                let pct: f64 = value.trim().trim_end_matches('%').parse()
-                    .map_err(|_| anyhow::anyhow!("Invalid percentage: {value}"))?;
-                if col_idx < t.col_widths.len() {
-                    t.col_widths[col_idx] = (pct / 100.0).max(0.01).min(1.0);
-                }
-                return Ok(());
-            }
-            match name {
-                "x"           => t.position.x = parse_coordinate(value)?,
-                "y"           => t.position.y = parse_coordinate(value)?,
-                "width"       => t.width  = parse_coordinate(value)?,
-                "height"      => t.height = parse_coordinate(value)?,
-                "rows"        => {
-                    let new_rows: usize = value.parse()?;
-                    t.rows = new_rows.max(1);
-                    t.normalize_cells();
-                }
-                "header_bold" => t.header_bold = parse_bool(value)?,
-                "borders"     => t.borders     = parse_bool(value)?,
-                "fg_color"    => t.style.fg     = parse_opt_color(value)?,
-                "bg_color"    => t.style.bg     = parse_opt_color(value)?,
-                "bold"        => t.style.bold   = parse_bool(value)?,
-                "dimmed"      => t.style.dim    = parse_bool(value)?,
-                "first_frame" => t.frames.start = value.parse()?,
-                "last_frame"  => t.frames.end   = value.parse()?,
-                "z_order"     => t.z_order      = value.parse()?,
-                _ => bail!("Unknown property: {name}"),
-            }
-        }
-    }
-    Ok(())
+    as_editable_mut(obj).set(name, value)
 }
 
 /// Returns a clone of the named Coordinate field, if the object has one by that name.
 pub fn get_coord(obj: &SceneObject, name: &str) -> Option<Coordinate> {
-    match obj {
-        SceneObject::Label(l) => match name {
-            "x" => Some(l.position.x.clone()),
-            "y" => Some(l.position.y.clone()),
-            "width" => Some(l.width.clone()),
-            "height" => Some(l.height.clone()),
-            _ => None,
-        },
-        SceneObject::HLine(h) => match name {
-            "y" => Some(h.y.clone()),
-            "from_x" => Some(h.x_start.clone()),
-            "to_x" => Some(h.x_end.clone()),
-            _ => None,
-        },
-        SceneObject::Rect(r) => match name {
-            "x" => Some(r.position.x.clone()),
-            "y" => Some(r.position.y.clone()),
-            "width" => Some(r.width.clone()),
-            "height" => Some(r.height.clone()),
-            _ => None,
-        },
-        SceneObject::Header(h) => match name {
-            "x" => Some(h.position.x.clone()),
-            "y" => Some(h.position.y.clone()),
-            _ => None,
-        },
-        SceneObject::Arrow(a) => match name {
-            "x1" => Some(a.x1.clone()),
-            "y1" => Some(a.y1.clone()),
-            "x2" => Some(a.x2.clone()),
-            "y2" => Some(a.y2.clone()),
-            _ => None,
-        },
-        SceneObject::Group(_) => None,
-        SceneObject::Table(t) => match name {
-            "x"      => Some(t.position.x.clone()),
-            "y"      => Some(t.position.y.clone()),
-            "width"  => Some(t.width.clone()),
-            "height" => Some(t.height.clone()),
-            _ => None,
-        },
-    }
+    as_editable(obj).get_coord(name)
 }
 
 /// Directly sets a Coordinate field by name, bypassing string parsing.
 pub fn set_coordinate(obj: &mut SceneObject, name: &str, coord: Coordinate) -> Result<()> {
-    match obj {
-        SceneObject::Label(l) => match name {
-            "x" => l.position.x = coord,
-            "y" => l.position.y = coord,
-            "width" => l.width = coord,
-            "height" => l.height = coord,
-            _ => bail!("Unknown coordinate property: {name}"),
-        },
-        SceneObject::HLine(h) => match name {
-            "y" => h.y = coord,
-            "from_x" => h.x_start = coord,
-            "to_x" => h.x_end = coord,
-            _ => bail!("Unknown coordinate property: {name}"),
-        },
-        SceneObject::Rect(r) => match name {
-            "x" => r.position.x = coord,
-            "y" => r.position.y = coord,
-            "width" => r.width = coord,
-            "height" => r.height = coord,
-            _ => bail!("Unknown coordinate property: {name}"),
-        },
-        SceneObject::Header(h) => match name {
-            "x" => h.position.x = coord,
-            "y" => h.position.y = coord,
-            _ => bail!("Unknown coordinate property: {name}"),
-        },
-        SceneObject::Arrow(a) => match name {
-            "x1" => a.x1 = coord,
-            "y1" => a.y1 = coord,
-            "x2" => a.x2 = coord,
-            "y2" => a.y2 = coord,
-            _ => bail!("Unknown coordinate property: {name}"),
-        },
-        SceneObject::Group(_) => bail!("Groups have no coordinate properties"),
-        SceneObject::Table(t) => match name {
-            "x"      => t.position.x = coord,
-            "y"      => t.position.y = coord,
-            "width"  => t.width  = coord,
-            "height" => t.height = coord,
-            _ => bail!("Unknown coordinate property: {name}"),
-        },
-    }
-    Ok(())
+    as_editable_mut(obj).set_coord(name, coord)
 }
 
 pub fn format_coordinate(coord: &Coordinate) -> String {
@@ -598,130 +1064,17 @@ fn set_fixed(coord: &mut Coordinate, v: f64) {
 }
 
 // ---------------------------------------------------------------------------
-// Per-object f64 geometry accessors (used by group operations)
+// Per-object f64 geometry accessors (thin wrappers used by group operations)
 // ---------------------------------------------------------------------------
 
-fn object_origin_x_f(obj: &SceneObject) -> f64 {
-    match obj {
-        SceneObject::Label(l)  => coord_val_f(&l.position.x),
-        SceneObject::HLine(h)  => coord_val_f(&h.x_start),
-        SceneObject::Rect(r)   => coord_val_f(&r.position.x),
-        SceneObject::Header(h) => coord_val_f(&h.position.x),
-        SceneObject::Arrow(a)  => coord_val_f(&a.x1).min(coord_val_f(&a.x2)),
-        SceneObject::Group(_)  => 0.0,
-        SceneObject::Table(t)  => coord_val_f(&t.position.x),
-    }
-}
-
-fn object_origin_y_f(obj: &SceneObject) -> f64 {
-    match obj {
-        SceneObject::Label(l)  => coord_val_f(&l.position.y),
-        SceneObject::HLine(h)  => coord_val_f(&h.y),
-        SceneObject::Rect(r)   => coord_val_f(&r.position.y),
-        SceneObject::Header(h) => coord_val_f(&h.position.y),
-        SceneObject::Arrow(a)  => coord_val_f(&a.y1).min(coord_val_f(&a.y2)),
-        SceneObject::Group(_)  => 0.0,
-        SceneObject::Table(t)  => coord_val_f(&t.position.y),
-    }
-}
-
-/// Width contribution of an object (0 for objects with no explicit width).
-fn object_dim_x_f(obj: &SceneObject) -> f64 {
-    match obj {
-        SceneObject::Label(l)  => coord_val_f(&l.width),
-        SceneObject::HLine(h)  => (coord_val_f(&h.x_end) - coord_val_f(&h.x_start)).max(0.0),
-        SceneObject::Rect(r)   => coord_val_f(&r.width),
-        SceneObject::Header(_) => 0.0,
-        SceneObject::Arrow(a)  => (coord_val_f(&a.x2) - coord_val_f(&a.x1)).abs(),
-        SceneObject::Group(_)  => 0.0,
-        SceneObject::Table(t)  => coord_val_f(&t.width),
-    }
-}
-
-/// Height contribution of an object.
-fn object_dim_y_f(obj: &SceneObject) -> f64 {
-    match obj {
-        SceneObject::Label(l)  => coord_val_f(&l.height),
-        SceneObject::HLine(_)  => 1.0,
-        SceneObject::Rect(r)   => coord_val_f(&r.height),
-        SceneObject::Header(_) => 1.0,
-        SceneObject::Arrow(a)  => (coord_val_f(&a.y2) - coord_val_f(&a.y1)).abs().max(1.0),
-        SceneObject::Group(_)  => 0.0,
-        SceneObject::Table(t)  => coord_val_f(&t.height).max(1.0),
-    }
-}
-
-fn set_object_origin_x_f(obj: &mut SceneObject, v: f64) {
-    match obj {
-        SceneObject::Label(l)  => set_fixed(&mut l.position.x, v),
-        SceneObject::HLine(h)  => {
-            // Preserve the line width when shifting x_start.
-            let w = (coord_val_f(&h.x_end) - coord_val_f(&h.x_start)).max(0.0);
-            set_fixed(&mut h.x_start, v);
-            set_fixed(&mut h.x_end, v + w);
-        }
-        SceneObject::Rect(r)   => set_fixed(&mut r.position.x, v),
-        SceneObject::Header(h) => set_fixed(&mut h.position.x, v),
-        SceneObject::Arrow(a)  => {
-            let dx = coord_val_f(&a.x2) - coord_val_f(&a.x1);
-            set_fixed(&mut a.x1, v);
-            set_fixed(&mut a.x2, v + dx);
-        }
-        SceneObject::Group(_)  => {}
-        SceneObject::Table(t)  => set_fixed(&mut t.position.x, v),
-    }
-}
-
-fn set_object_origin_y_f(obj: &mut SceneObject, v: f64) {
-    match obj {
-        SceneObject::Label(l)  => set_fixed(&mut l.position.y, v),
-        SceneObject::HLine(h)  => set_fixed(&mut h.y, v),
-        SceneObject::Rect(r)   => set_fixed(&mut r.position.y, v),
-        SceneObject::Header(h) => set_fixed(&mut h.position.y, v),
-        SceneObject::Arrow(a)  => {
-            let dy = coord_val_f(&a.y2) - coord_val_f(&a.y1);
-            set_fixed(&mut a.y1, v);
-            set_fixed(&mut a.y2, v + dy);
-        }
-        SceneObject::Group(_)  => {}
-        SceneObject::Table(t)  => set_fixed(&mut t.position.y, v),
-    }
-}
-
-fn set_object_dim_x_f(obj: &mut SceneObject, v: f64) {
-    match obj {
-        SceneObject::Label(l)  => set_fixed(&mut l.width, v),
-        SceneObject::HLine(h)  => {
-            let start = coord_val_f(&h.x_start);
-            set_fixed(&mut h.x_end, start + v.max(0.0));
-        }
-        SceneObject::Rect(r)   => set_fixed(&mut r.width, v),
-        SceneObject::Header(_) => {}
-        SceneObject::Arrow(a)  => {
-            let x1 = coord_val_f(&a.x1);
-            let sign = if coord_val_f(&a.x2) >= x1 { 1.0 } else { -1.0 };
-            set_fixed(&mut a.x2, x1 + sign * v.max(0.0));
-        }
-        SceneObject::Group(_)  => {}
-        SceneObject::Table(t)  => set_fixed(&mut t.width, v),
-    }
-}
-
-fn set_object_dim_y_f(obj: &mut SceneObject, v: f64) {
-    match obj {
-        SceneObject::Label(l)  => set_fixed(&mut l.height, v),
-        SceneObject::HLine(_)  => {}  // height is always 1
-        SceneObject::Rect(r)   => set_fixed(&mut r.height, v),
-        SceneObject::Header(_) => {}  // height is always 1
-        SceneObject::Arrow(a)  => {
-            let y1 = coord_val_f(&a.y1);
-            let sign = if coord_val_f(&a.y2) >= y1 { 1.0 } else { -1.0 };
-            set_fixed(&mut a.y2, y1 + sign * v.max(0.0));
-        }
-        SceneObject::Group(_)  => {}
-        SceneObject::Table(t)  => set_fixed(&mut t.height, v),
-    }
-}
+fn object_origin_x_f(obj: &SceneObject) -> f64 { as_editable(obj).origin_x() }
+fn object_origin_y_f(obj: &SceneObject) -> f64 { as_editable(obj).origin_y() }
+fn object_dim_x_f(obj: &SceneObject) -> f64 { as_editable(obj).dim_x() }
+fn object_dim_y_f(obj: &SceneObject) -> f64 { as_editable(obj).dim_y() }
+fn set_object_origin_x_f(obj: &mut SceneObject, v: f64) { as_editable_mut(obj).set_origin_x(v); }
+fn set_object_origin_y_f(obj: &mut SceneObject, v: f64) { as_editable_mut(obj).set_origin_y(v); }
+fn set_object_dim_x_f(obj: &mut SceneObject, v: f64) { as_editable_mut(obj).set_dim_x(v); }
+fn set_object_dim_y_f(obj: &mut SceneObject, v: f64) { as_editable_mut(obj).set_dim_y(v); }
 
 // ---------------------------------------------------------------------------
 // Object movement (individual)
@@ -730,215 +1083,17 @@ fn set_object_dim_y_f(obj: &mut SceneObject, v: f64) {
 /// Move an object by (dx, dy) steps. Only Fixed coordinates are adjusted;
 /// Animated coordinates are left unchanged.
 pub fn move_object(obj: &mut SceneObject, dx: i32, dy: i32) {
-    match obj {
-        SceneObject::Label(l) => {
-            adjust_coordinate(&mut l.position.x, dx);
-            adjust_coordinate(&mut l.position.y, dy);
-        }
-        SceneObject::HLine(h) => {
-            adjust_coordinate(&mut h.y, dy);
-            adjust_coordinate(&mut h.x_start, dx);
-            adjust_coordinate(&mut h.x_end, dx);
-        }
-        SceneObject::Rect(r) => {
-            adjust_coordinate(&mut r.position.x, dx);
-            adjust_coordinate(&mut r.position.y, dy);
-        }
-        SceneObject::Header(h) => {
-            adjust_coordinate(&mut h.position.x, dx);
-            adjust_coordinate(&mut h.position.y, dy);
-        }
-        SceneObject::Arrow(a) => {
-            adjust_coordinate(&mut a.x1, dx);
-            adjust_coordinate(&mut a.y1, dy);
-            adjust_coordinate(&mut a.x2, dx);
-            adjust_coordinate(&mut a.y2, dy);
-        }
-        SceneObject::Group(_) => {} // groups have no position of their own
-        SceneObject::Table(t) => {
-            adjust_coordinate(&mut t.position.x, dx);
-            adjust_coordinate(&mut t.position.y, dy);
-        }
-    }
+    as_editable_mut(obj).move_by(dx, dy);
 }
 
 /// Resize an object's width/height by growing the specified edge.
 pub fn resize_object(obj: &mut SceneObject, dw: i32, dh: i32) {
-    match obj {
-        SceneObject::Rect(r) => {
-            if dw > 0 {
-                adjust_coordinate_add(&mut r.width, dw as f64);
-            } else if dw < 0 {
-                let delta = (-dw) as f64;
-                adjust_coordinate_add(&mut r.width, delta);
-                adjust_coordinate(&mut r.position.x, dw);
-            }
-            if dh > 0 {
-                adjust_coordinate_add(&mut r.height, dh as f64);
-            } else if dh < 0 {
-                let delta = (-dh) as f64;
-                adjust_coordinate_add(&mut r.height, delta);
-                adjust_coordinate(&mut r.position.y, dh);
-            }
-        }
-        SceneObject::HLine(h) => {
-            if dw > 0 {
-                adjust_coordinate_add(&mut h.x_end, dw as f64);
-            } else if dw < 0 {
-                adjust_coordinate(&mut h.x_start, dw);
-            }
-        }
-        SceneObject::Label(l) => {
-            if dw > 0 {
-                adjust_coordinate_add(&mut l.width, dw as f64);
-            } else if dw < 0 {
-                let delta = (-dw) as f64;
-                adjust_coordinate_add(&mut l.width, delta);
-                adjust_coordinate(&mut l.position.x, dw);
-            }
-            if dh > 0 {
-                adjust_coordinate_add(&mut l.height, dh as f64);
-            } else if dh < 0 {
-                let delta = (-dh) as f64;
-                adjust_coordinate_add(&mut l.height, delta);
-                adjust_coordinate(&mut l.position.y, dh);
-            }
-        }
-        SceneObject::Arrow(a) => {
-            adjust_coordinate(&mut a.x2, dw);
-            adjust_coordinate(&mut a.y2, dh);
-        }
-        SceneObject::Table(t) => {
-            if dw > 0 {
-                adjust_coordinate_add(&mut t.width, dw as f64);
-            } else if dw < 0 {
-                let delta = (-dw) as f64;
-                adjust_coordinate_add(&mut t.width, delta);
-                adjust_coordinate(&mut t.position.x, dw);
-            }
-            if dh > 0 {
-                adjust_coordinate_add(&mut t.height, dh as f64);
-            } else if dh < 0 {
-                let delta = (-dh) as f64;
-                adjust_coordinate_add(&mut t.height, delta);
-                adjust_coordinate(&mut t.position.y, dh);
-            }
-        }
-        _ => {}
-    }
+    as_editable_mut(obj).resize_by(dw, dh);
 }
 
 /// Shrink an object's width/height by pulling the specified edge inward.
 pub fn shrink_object(obj: &mut SceneObject, dw: i32, dh: i32) {
-    match obj {
-        SceneObject::Rect(r) => {
-            if dw > 0 {
-                if let Coordinate::Fixed(v) = &mut r.width {
-                    *v = (*v - dw as f64).max(1.0);
-                }
-            } else if dw < 0 {
-                let delta = (-dw) as f64;
-                if coordinate_val(&r.width) > 1 {
-                    if let Coordinate::Fixed(v) = &mut r.width {
-                        *v = (*v - delta).max(1.0);
-                    }
-                    adjust_coordinate(&mut r.position.x, -dw);
-                }
-            }
-            if dh > 0 {
-                if let Coordinate::Fixed(v) = &mut r.height {
-                    *v = (*v - dh as f64).max(1.0);
-                }
-            } else if dh < 0 {
-                let delta = (-dh) as f64;
-                if coordinate_val(&r.height) > 1 {
-                    if let Coordinate::Fixed(v) = &mut r.height {
-                        *v = (*v - delta).max(1.0);
-                    }
-                    adjust_coordinate(&mut r.position.y, -dh);
-                }
-            }
-        }
-        SceneObject::HLine(h) => {
-            if dw > 0 {
-                let xe = coordinate_val(&h.x_end);
-                let xs = coordinate_val(&h.x_start);
-                if xe > xs {
-                    if let Coordinate::Fixed(v) = &mut h.x_end {
-                        *v = (*v - dw as f64).max(xs as f64 + 1.0);
-                    }
-                }
-            } else if dw < 0 {
-                let delta = (-dw) as u16;
-                let xe = coordinate_val(&h.x_end);
-                let xs = coordinate_val(&h.x_start);
-                if xs + delta < xe {
-                    adjust_coordinate_add(&mut h.x_start, delta as f64);
-                }
-            }
-        }
-        SceneObject::Label(l) => {
-            if dw > 0 {
-                if let Coordinate::Fixed(v) = &mut l.width {
-                    *v = (*v - dw as f64).max(0.0);
-                }
-            } else if dw < 0 {
-                let delta = (-dw) as f64;
-                if coordinate_val(&l.width) > 0 {
-                    if let Coordinate::Fixed(v) = &mut l.width {
-                        *v = (*v - delta).max(0.0);
-                    }
-                    adjust_coordinate(&mut l.position.x, -dw);
-                }
-            }
-            if dh > 0 {
-                if let Coordinate::Fixed(v) = &mut l.height {
-                    *v = (*v - dh as f64).max(0.0);
-                }
-            } else if dh < 0 {
-                let delta = (-dh) as f64;
-                if coordinate_val(&l.height) > 0 {
-                    if let Coordinate::Fixed(v) = &mut l.height {
-                        *v = (*v - delta).max(0.0);
-                    }
-                    adjust_coordinate(&mut l.position.y, -dh);
-                }
-            }
-        }
-        SceneObject::Arrow(a) => {
-            adjust_coordinate(&mut a.x2, -dw);
-            adjust_coordinate(&mut a.y2, -dh);
-        }
-        SceneObject::Table(t) => {
-            if dw > 0 {
-                if let Coordinate::Fixed(v) = &mut t.width {
-                    *v = (*v - dw as f64).max(3.0);
-                }
-            } else if dw < 0 {
-                let delta = (-dw) as f64;
-                if coordinate_val(&t.width) > 3 {
-                    if let Coordinate::Fixed(v) = &mut t.width {
-                        *v = (*v - delta).max(3.0);
-                    }
-                    adjust_coordinate(&mut t.position.x, -dw);
-                }
-            }
-            if dh > 0 {
-                if let Coordinate::Fixed(v) = &mut t.height {
-                    *v = (*v - dh as f64).max(0.0);
-                }
-            } else if dh < 0 {
-                let delta = (-dh) as f64;
-                if coordinate_val(&t.height) > 0 {
-                    if let Coordinate::Fixed(v) = &mut t.height {
-                        *v = (*v - delta).max(0.0);
-                    }
-                    adjust_coordinate(&mut t.position.y, -dh);
-                }
-            }
-        }
-        _ => {}
-    }
+    as_editable_mut(obj).shrink_by(dw, dh);
 }
 
 // ---------------------------------------------------------------------------
@@ -1041,5 +1196,125 @@ pub fn resize_group(
             if *ndx > 0.0 { set_object_dim_x_f(&mut objects[m], *ndx); }
             if *ndy > 0.0 { set_object_dim_y_f(&mut objects[m], *ndy); }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn obj(json: &str) -> SceneObject {
+        serde_json::from_str(json).expect("test object JSON should parse")
+    }
+
+    /// Every property `get_properties` reports for an object must be accepted
+    /// by `set_property` (round-tripping its own displayed value) — this is the
+    /// invariant the old per-type/per-name duplication kept breaking. Read-only
+    /// and group-member rows are display-only and skipped.
+    fn assert_props_roundtrip(objects: &mut [SceneObject], idx: usize) {
+        let props = get_properties(objects, idx);
+        assert!(!props.is_empty());
+        for p in props {
+            if matches!(p.kind, PropertyKind::ReadOnly | PropertyKind::GroupMember) {
+                continue;
+            }
+            let r = set_property(&mut objects[idx], p.name, &p.value);
+            assert!(r.is_ok(), "set_property({:?}, {:?}) failed: {:?}", p.name, p.value, r.err());
+        }
+    }
+
+    #[test]
+    fn label_properties_roundtrip() {
+        let mut o = vec![obj(
+            r#"{"type":"label","text":"Hi","position":{"x":{"fixed":3},"y":{"fixed":1}},
+                "frames":{"start":0,"end":2}}"#,
+        )];
+        assert_props_roundtrip(&mut o, 0);
+    }
+
+    #[test]
+    fn hline_properties_roundtrip() {
+        let mut o = vec![obj(
+            r#"{"type":"h_line","y":2,"x_start":1,"x_end":5,"frames":{"start":0,"end":2}}"#,
+        )];
+        assert_props_roundtrip(&mut o, 0);
+    }
+
+    #[test]
+    fn rect_properties_roundtrip() {
+        let mut o = vec![obj(
+            r#"{"type":"rect","position":{"x":{"fixed":1},"y":{"fixed":1}},
+                "width":5,"height":3,"frames":{"start":0,"end":2}}"#,
+        )];
+        assert_props_roundtrip(&mut o, 0);
+    }
+
+    #[test]
+    fn header_properties_roundtrip() {
+        let mut o = vec![obj(
+            r#"{"type":"header","text":"Hi","position":{"x":{"fixed":1},"y":{"fixed":1}},
+                "frames":{"start":0,"end":2}}"#,
+        )];
+        assert_props_roundtrip(&mut o, 0);
+    }
+
+    #[test]
+    fn arrow_properties_roundtrip() {
+        let mut o = vec![obj(
+            r#"{"type":"arrow","x1":1,"y1":1,"x2":5,"y2":3,"frames":{"start":0,"end":2}}"#,
+        )];
+        assert_props_roundtrip(&mut o, 0);
+    }
+
+    #[test]
+    fn table_properties_roundtrip() {
+        let mut o = vec![obj(
+            r#"{"type":"table","position":{"x":{"fixed":0},"y":{"fixed":0}},
+                "col_widths":[0.5,0.5],"rows":2,"frames":{"start":0,"end":2}}"#,
+        )];
+        assert_props_roundtrip(&mut o, 0);
+    }
+
+    #[test]
+    fn group_properties_roundtrip_and_bounds() {
+        // Group at index 1 wraps the label at index 0.
+        let mut o = vec![
+            obj(r#"{"type":"label","text":"Hi","position":{"x":{"fixed":4},"y":{"fixed":2}},
+                    "width":6,"height":1,"frames":{"start":0,"end":2}}"#),
+            obj(r#"{"type":"group","members":[0],"frames":{"start":0,"end":2}}"#),
+        ];
+        // Editable rows (frames / z_order) round-trip; x/y/width/height are ReadOnly.
+        assert_props_roundtrip(&mut o, 1);
+
+        let props = get_properties(&o, 1);
+        let x = props.iter().find(|p| p.name == "x").unwrap();
+        assert_eq!(x.kind, PropertyKind::ReadOnly);
+        assert_eq!(x.value, "4");
+        let w = props.iter().find(|p| p.name == "width").unwrap();
+        assert_eq!(w.value, "6");
+    }
+
+    #[test]
+    fn unknown_property_is_rejected() {
+        let mut label = obj(
+            r#"{"type":"label","text":"Hi","position":{"x":{"fixed":0},"y":{"fixed":0}},
+                "frames":{"start":0,"end":1}}"#,
+        );
+        assert!(set_property(&mut label, "nonexistent", "x").is_err());
+    }
+
+    #[test]
+    fn coordinate_get_set_roundtrips() {
+        let mut label = obj(
+            r#"{"type":"label","text":"Hi","position":{"x":{"fixed":3},"y":{"fixed":7}},
+                "frames":{"start":0,"end":1}}"#,
+        );
+        let y = get_coord(&label, "y").unwrap();
+        set_coordinate(&mut label, "x", y).unwrap();
+        assert_eq!(get_coord(&label, "x").unwrap().evaluate(0), 7);
     }
 }

@@ -60,7 +60,7 @@ The editor runs the full Engine+Renderer pipeline live for WYSIWYG preview.
 | `src/editor/config.rs` | `KeyBindings` — all bindings configurable via `~/.config/bs/editor.json` |
 | `src/editor/input.rs` | All key event handling (~2,057 lines — monolithic; ~34% is table handlers) |
 | `src/editor/panel.rs` | Left panel (Add Object), right panel (Properties), object selection overlay |
-| `src/editor/properties.rs` | Type-aware property getter/setter for all object types |
+| `src/editor/properties.rs` | `Editable` trait — one impl per object type holds its property list, setter, coordinate + geometry accessors; generic dispatch (`get_properties`, `set_property`, …) is type-agnostic |
 | `src/editor/preview.rs` | Canvas preview using Engine+Renderer |
 | `src/editor/timeline.rs` | Frame bar and status line |
 | `src/editor/menubar.rs` | Context-sensitive menu bar |
@@ -155,17 +155,16 @@ editor. Expected geometry is hand-derived from the layout spec, not snapshotted.
 
 ## Status & known issues
 
-Recent fixes (table): `Table.height` now pads short tables (never clips taller
-content) via a shared `Table::row_heights`; `col_pixel_range` now includes the
-column's border columns per its doc.
+Recent work: object property handling is now a single `Editable` trait with one
+impl per type (was ~64 per-type match arms across ~8 functions) — adding a
+property touches only that type's impl. Table fixes: `Table.height` now pads
+short tables (never clips taller content) via a shared `Table::row_heights`;
+`col_pixel_range` now includes the column's border columns per its doc.
 
 Outstanding maintainability work (from a code review; not yet done):
 
 - `editor/input.rs` is a 2,057-line monolith with three `handle_table_cell_style_*`
   handlers that duplicate the generic `EditProperties` navigation/dropdown/edit logic.
-- `editor/properties.rs` exposes object properties via ~64 per-type match arms across
-  ~8 functions; adding one property touches 6+ places. A trait-based property schema
-  would collapse this.
 - The `Mode` FSM (~16 variants, some with 7–15 fields) grows with every object type.
 - No "how to add an object type" checklist exists; word-wrap is duplicated between
   `label.rs` and `table.rs`.
