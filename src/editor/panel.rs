@@ -8,6 +8,22 @@ use super::properties::{self, PropertyKind};
 use super::state::{scene_object_summary, scene_object_type_name, EditorState, Mode, TableCellSubState};
 use super::ui::Layout;
 
+/// If `value` names a concrete colour (named or `#rrggbb`), paint a two-cell
+/// swatch in that colour at `(x, y)`. No-op for `none`/`auto`/sentinels.
+fn draw_color_swatch(stdout: &mut io::Stdout, x: u16, y: u16, value: &str) -> anyhow::Result<()> {
+    if let Ok(Some(color)) = properties::parse_opt_color_pub(value) {
+        let ct = crate::player::to_ct_color(&color);
+        let cs = style::ContentStyle { background_color: Some(ct), ..Default::default() };
+        queue!(
+            stdout,
+            cursor::MoveTo(x, y),
+            style::PrintStyledContent(style::StyledContent::new(cs, ' ')),
+            style::PrintStyledContent(style::StyledContent::new(cs, ' ')),
+        )?;
+    }
+    Ok(())
+}
+
 pub fn render_right_panel(
     stdout: &mut io::Stdout,
     layout: &Layout,
@@ -587,6 +603,15 @@ pub fn render_right_panel(
                     base_style.bold.to_string(),
                     base_style.dim.to_string(),
                 ];
+                // bold/dimmed render as a checkbox; colours as "name: value".
+                let label = |name: &str, value: &str| -> String {
+                    if name == "bold" || name == "dimmed" {
+                        let mark = if value.trim() == "true" { "x" } else { " " };
+                        format!("[{}] {}", mark, name)
+                    } else {
+                        format!("{}: {}", name, value)
+                    }
+                };
                 let mut sel_screen_y = None;
                 for (i, &name) in properties::CELL_STYLE_PROPS.iter().enumerate() {
                     let y = cy + (i + 2) as u16;
@@ -602,10 +627,10 @@ pub fn render_right_panel(
                         } else if dropdown.is_some() {
                             format!("{}: \u{25bc} {}", name, prop_values[i])
                         } else {
-                            format!("{}: {}", name, prop_values[i])
+                            label(name, &prop_values[i])
                         }
                     } else {
-                        format!("{}: {}", name, prop_values[i])
+                        label(name, &prop_values[i])
                     };
                     let display: String = val.chars().take(max_width).collect();
                     if i == selected_prop {
@@ -616,6 +641,13 @@ pub fn render_right_panel(
                         sel_screen_y = Some(y);
                     } else {
                         queue!(stdout, style::Print(display))?;
+                    }
+                    // Swatch for the fg/bg colour rows (not while editing the hex).
+                    if (name == "fg_color" || name == "bg_color")
+                        && !(i == selected_prop && editing_value.is_some())
+                    {
+                        let sx = panel_x + 2 + (max_width as u16).saturating_sub(2);
+                        draw_color_swatch(stdout, sx, y, &prop_values[i])?;
                     }
                 }
 
@@ -638,6 +670,7 @@ pub fn render_right_panel(
                         } else {
                             queue!(stdout, style::Print(line))?;
                         }
+                        draw_color_swatch(stdout, panel_x + 2 + (max_width as u16).saturating_sub(2), y, opt)?;
                     }
                 }
             }
@@ -693,7 +726,10 @@ pub fn render_right_panel(
         }
 
         if i == selected_prop {
-            if let Some(buf) = editing {
+            // `Text` values are edited in the centred overlay (drawn separately),
+            // so the panel just shows a preview row for them; other editable
+            // kinds (coordinate/colour/char) edit inline here.
+            if let Some(buf) = editing.as_ref().filter(|_| prop.kind != PropertyKind::Text) {
                 // ── Multi-line editing: each \n-delimited segment on its own row ──
                 let (cursor_line_idx, cursor_col_in_line) = cursor_line_col(buf, cursor);
 
@@ -769,6 +805,9 @@ pub fn render_right_panel(
                         "?".to_string()
                     };
                     format!("[Del] {}", summary).chars().take(max_width).collect()
+                } else if prop.kind == PropertyKind::Bool {
+                    let mark = if prop.value.trim() == "true" { "x" } else { " " };
+                    format!("[{}] {}", mark, prop.name).chars().take(max_width).collect()
                 } else {
                     format!("{}: {}", prop.name, fmt_val(&prop.value))
                         .chars().take(max_width).collect()
@@ -815,6 +854,13 @@ pub fn render_right_panel(
                 queue!(stdout, style::Print(display))?;
             }
 
+            // Colour rows get a swatch at the right edge (skip while its dropdown
+            // is open — the option list below shows swatches of its own).
+            if prop.kind == PropertyKind::Color && !(i == selected_prop && dropdown.is_some()) {
+                let sx = panel_x + 2 + (max_width as u16).saturating_sub(2);
+                draw_color_swatch(stdout, sx, screen_y, &prop.value)?;
+            }
+
             screen_y += 1;
         }
         visual_row += 1;
@@ -850,7 +896,98 @@ pub fn render_right_panel(
             } else {
                 queue!(stdout, style::Print(line))?;
             }
+            draw_color_swatch(stdout, panel_x + 2 + (max_width as u16).saturating_sub(2), y, opt)?;
         }
+    }
+
+    Ok(())
+}
+
+/// Draw the centred multi-line text-editing overlay over the canvas. Active only
+/// while editing a `Text` property's value; a no-op otherwise. The interior
+/// shows `\n`-delimited lines with a block cursor, scrolling vertically and
+/// (per cursor line) horizontally so the caret is always visible.
+pub fn render_text_overlay(
+    stdout: &mut io::Stdout,
+    layout: &Layout,
+    state: &EditorState,
+) -> anyhow::Result<()> {
+    let (object_index, selected_property, buf, cursor) = match &state.mode {
+        Mode::EditProperties { object_index, selected_property, editing_value: Some(b), cursor, .. } =>
+            (*object_index, *selected_property, b.clone(), *cursor),
+        _ => return Ok(()),
+    };
+
+    let props = properties::get_properties(&state.source.objects, object_index);
+    match props.get(selected_property) {
+        Some(p) if p.kind == PropertyKind::Text => {}
+        _ => return Ok(()),
+    }
+    let name = props[selected_property].name;
+
+    let (bx, by, bw, bh) = super::ui::text_overlay(layout);
+    if bw < 4 || bh < 3 {
+        return Ok(());
+    }
+    let inner_w = (bw - 2) as usize;
+    let inner_h = (bh - 2) as usize;
+
+    // Cursor position as (line, col) over the logical buffer.
+    let (cur_line, cur_col) = {
+        let (mut line, mut col) = (0usize, 0usize);
+        for (i, ch) in buf.chars().enumerate() {
+            if i == cursor { break; }
+            if ch == '\n' { line += 1; col = 0; } else { col += 1; }
+        }
+        (line, col)
+    };
+    let lines: Vec<&str> = buf.split('\n').collect();
+    let v_off = if cur_line >= inner_h { cur_line - inner_h + 1 } else { 0 };
+    let h_off = if cur_col >= inner_w { cur_col - inner_w + 1 } else { 0 };
+
+    // Border with a title on the top edge and a hint on the bottom edge.
+    let title = {
+        let t = format!(" edit {name} ");
+        t.chars().take(inner_w).collect::<String>()
+    };
+    let hint = " Alt+Enter: newline · Enter: save · Esc: cancel ";
+    let hint: String = hint.chars().take(inner_w).collect();
+
+    let top: String = std::iter::once('\u{250c}')
+        .chain(title.chars())
+        .chain(std::iter::repeat('\u{2500}').take(inner_w.saturating_sub(title.chars().count())))
+        .chain(std::iter::once('\u{2510}'))
+        .collect();
+    let bottom: String = std::iter::once('\u{2514}')
+        .chain(hint.chars())
+        .chain(std::iter::repeat('\u{2500}').take(inner_w.saturating_sub(hint.chars().count())))
+        .chain(std::iter::once('\u{2518}'))
+        .collect();
+
+    queue!(stdout, cursor::MoveTo(bx, by), style::Print(top))?;
+    queue!(stdout, cursor::MoveTo(bx, by + bh - 1), style::Print(bottom))?;
+
+    for row in 0..inner_h {
+        let y = by + 1 + row as u16;
+        queue!(stdout, cursor::MoveTo(bx, y), style::Print("\u{2502}"))?;
+        let li = v_off + row;
+        let chars: Vec<char> = lines.get(li).copied().unwrap_or("").chars().collect();
+        let line_h_off = if li == cur_line { h_off } else { 0 };
+        for col in 0..inner_w {
+            let ci = line_h_off + col;
+            let ch = chars.get(ci).copied().unwrap_or(' ');
+            if li == cur_line && ci == cur_col {
+                queue!(
+                    stdout,
+                    style::SetAttribute(style::Attribute::Reverse),
+                    style::Print(ch),
+                    style::SetAttribute(style::Attribute::Reset),
+                )?;
+            } else {
+                queue!(stdout, style::Print(ch))?;
+            }
+        }
+        queue!(stdout, style::Print("\u{2502}"))?;
     }
 
     Ok(())

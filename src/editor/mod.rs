@@ -6,6 +6,7 @@ mod panel;
 mod preview;
 mod properties;
 pub mod state;
+mod textedit;
 mod timeline;
 mod ui;
 
@@ -149,6 +150,10 @@ impl Editor {
         if !self.state.fullscreen {
             timeline::render_timeline(stdout, &layout, &self.state)?;
         }
+
+        // Multi-line text editing draws a centred overlay over the canvas; a
+        // no-op unless a Text property value is currently being edited.
+        panel::render_text_overlay(stdout, &layout, &self.state)?;
 
         stdout.flush()?;
         Ok(())

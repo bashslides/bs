@@ -15,6 +15,18 @@ pub struct Layout {
     pub menu_h: u16,
 }
 
+/// Outer rectangle `(x, y, w, h)` of the multi-line text-editing overlay,
+/// centred in the canvas. The editable interior is this inset by one cell on
+/// every side (so a border can be drawn around it). Used when editing a
+/// `Text` property — far roomier than the ~21-column right-panel field.
+pub fn text_overlay(layout: &Layout) -> (u16, u16, u16, u16) {
+    let w = layout.canvas_width.min(64).max(12);
+    let h = layout.canvas_height.min(16).max(5);
+    let x = layout.canvas_x + layout.canvas_width.saturating_sub(w) / 2;
+    let y = layout.canvas_y + layout.canvas_height.saturating_sub(h) / 2;
+    (x, y, w, h)
+}
+
 impl Layout {
     pub fn compute(term_width: u16, term_height: u16, mode: &Mode, fullscreen: bool) -> Self {
         let right = match mode {

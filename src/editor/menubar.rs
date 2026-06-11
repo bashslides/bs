@@ -59,17 +59,20 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
         Mode::EditProperties { editing_value: None, object_index, selected_property, .. } => {
             let props = properties::get_properties(&state.source.objects, *object_index);
             let prop = &props[*selected_property];
-            let is_bool = prop.value == "true" || prop.value == "false";
+            let is_bool = prop.kind == PropertyKind::Bool;
             let is_coord = prop.kind == PropertyKind::Coordinate;
             let is_table = matches!(
                 state.source.objects.get(*object_index),
                 Some(SceneObject::Table(_))
             );
-            let mut items = vec!["[↑][↓] prop", "[Enter] edit"];
+            let mut items = vec!["[↑][↓] prop"];
             if is_bool {
-                items.push("[Space] toggle");
-            } else if is_coord {
-                items.push("[a]nimate");
+                items.push("[Enter][Space] toggle");
+            } else {
+                items.push("[Enter] edit");
+                if is_coord {
+                    items.push("[a]nimate");
+                }
             }
             if is_table {
                 items.push("[Alt-c] edit cells");
@@ -144,16 +147,22 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             TableCellSubState::EditingContent { .. } => vec![
                 "[←→] move cursor",
                 "[type] insert after",
-                "[Shift+Enter] newline",
+                "[Alt+Enter] newline",
                 "[Backspace] delete",
                 "[Enter] save",
                 "[Esc] cancel",
             ],
-            TableCellSubState::EditingStyle { .. } => vec![
-                "[←→↑↓] navigate",
-                "[Enter] edit value",
-                "[Esc] back",
-            ],
+            TableCellSubState::EditingStyle { selected_prop, .. } => {
+                let name = properties::CELL_STYLE_PROPS.get(*selected_prop).copied().unwrap_or("");
+                let mut v = vec!["[↑][↓] prop"];
+                if name == "bold" || name == "dimmed" {
+                    v.push("[Enter][Space] toggle");
+                } else {
+                    v.push("[Enter] pick color");
+                }
+                v.push("[Esc] back");
+                v
+            }
         },
     }
 }

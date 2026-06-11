@@ -73,9 +73,10 @@ stay on the slide and move on with the arrow keys.
 | `src/editor/mod.rs` | Editor lifecycle, raw mode setup, main loop |
 | `src/editor/state.rs` | `EditorState`, `Mode` enum (~18 variants, incl. table sub-modes + art picker) |
 | `src/editor/config.rs` | `KeyBindings` — all bindings configurable via `~/.config/bs/editor.json` |
-| `src/editor/input.rs` | All key event handling (~2,057 lines — monolithic; ~34% is table handlers) |
-| `src/editor/panel.rs` | Left panel (Add Object), right panel (Properties), object selection overlay |
-| `src/editor/properties.rs` | `Editable` trait — one impl per object type holds its property list, setter, coordinate + geometry accessors; generic dispatch (`get_properties`, `set_property`, …) is type-agnostic |
+| `src/editor/input.rs` | All key event handling. Property browse/edit/dropdown flows (object + table cell-style) share helpers: `TextEdit` (text fields), `dropdown_key`/`DropdownKey` (list nav), and the `ep_*` `Mode::EditProperties` constructors |
+| `src/editor/textedit.rs` | `TextEdit` — reusable text-buffer + cursor used by every text field (property values, the multi-line overlay, cell-style values); translates key events into edits (insert/delete/arrows/home-end/newline) |
+| `src/editor/panel.rs` | Left panel (Add Object), right panel (Properties incl. `Bool` checkboxes + colour swatches), object selection overlay, and the centred multi-line text-editing overlay (`render_text_overlay`) |
+| `src/editor/properties.rs` | `Editable` trait — one impl per object type holds its property list, setter, coordinate + geometry accessors; generic dispatch (`get_properties`, `set_property`, …) is type-agnostic. `PropertyKind::Bool` flags toggle in place (Space/Enter) |
 | `src/editor/preview.rs` | Canvas preview using Engine+Renderer |
 | `src/editor/timeline.rs` | Frame bar and status line |
 | `src/editor/menubar.rs` | Context-sensitive menu bar |
@@ -181,10 +182,17 @@ property touches only that type's impl. Table fixes: `Table.height` now pads
 short tables (never clips taller content) via a shared `Table::row_heights`;
 `col_pixel_range` now includes the column's border columns per its doc.
 
+Menu/property UX overhaul: `PropertyKind::Bool` renders as a checkbox and toggles
+in place on Space/Enter (no text detour); `Text` values edit in a centred
+multi-line overlay over the canvas instead of the cramped ~21-col panel field;
+colour rows/dropdowns show a swatch. The three `handle_table_cell_style_*`
+handlers no longer duplicate the object-property flow — text editing goes through
+the shared `TextEdit` buffer (`textedit.rs`), dropdown navigation through
+`dropdown_key`, and `Mode::EditProperties` is built via the `ep_*` constructors
+(which also fixed browse-mode scroll not following the selection).
+
 Outstanding maintainability work (from a code review; not yet done):
 
-- `editor/input.rs` is a 2,057-line monolith with three `handle_table_cell_style_*`
-  handlers that duplicate the generic `EditProperties` navigation/dropdown/edit logic.
 - The `Mode` FSM (~16 variants, some with 7–15 fields) grows with every object type.
 - No "how to add an object type" checklist exists; word-wrap is duplicated between
   `label.rs` and `table.rs`.

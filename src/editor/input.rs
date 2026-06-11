@@ -8,6 +8,7 @@ use crate::types::Style;
 use super::config::matches_binding;
 use super::object_defaults;
 use super::properties;
+use super::textedit::{TextAction, TextEdit};
 use super::state::{
     adjust_frames_after_delete, adjust_frames_after_insert, adjust_group_members_after_delete,
     ConfirmAction, EditorState, Mode, TableCellSubState,
@@ -110,6 +111,91 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
         Mode::AddArt { .. } => handle_add_art(state, key),
         Mode::LoadArtFile { .. } => handle_load_art_file(state, key),
         Mode::Settings { .. } => handle_settings(state, key),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Mode::EditProperties transition helpers
+//
+// The variant has seven fields but transitions only ever vary a couple of them,
+// so building the literal by hand (as this file used to, ~15 times) is noisy and
+// made it easy to reset a field — e.g. `panel_scroll` — that should have been
+// preserved. These constructors centralise the defaults.
+// ---------------------------------------------------------------------------
+
+/// Browsing the property list (no value being edited, no dropdown open).
+fn ep_browse(object_index: usize, selected_property: usize, panel_scroll: usize) -> Mode {
+    Mode::EditProperties {
+        object_index,
+        selected_property,
+        editing_value: None,
+        cursor: 0,
+        scroll: 0,
+        panel_scroll,
+        dropdown: None,
+    }
+}
+
+/// Editing a property's value as text.
+fn ep_editing(
+    object_index: usize,
+    selected_property: usize,
+    buf: String,
+    cursor: usize,
+    scroll: usize,
+    panel_scroll: usize,
+) -> Mode {
+    Mode::EditProperties {
+        object_index,
+        selected_property,
+        editing_value: Some(buf),
+        cursor,
+        scroll,
+        panel_scroll,
+        dropdown: None,
+    }
+}
+
+/// Showing an open dropdown for the selected property.
+fn ep_dropdown(
+    object_index: usize,
+    selected_property: usize,
+    dd_sel: usize,
+    panel_scroll: usize,
+) -> Mode {
+    Mode::EditProperties {
+        object_index,
+        selected_property,
+        editing_value: None,
+        cursor: 0,
+        scroll: 0,
+        panel_scroll,
+        dropdown: Some(dd_sel),
+    }
+}
+
+/// Vertical scroll so the property row at `selected_row` stays on screen. Mirrors
+/// the panel layout: menu(1) + timeline(2) + title(1) + separator(1) = 5 reserved.
+fn follow_panel_scroll(selected_row: usize, panel_scroll: usize, term_h: usize) -> usize {
+    let avail = term_h.saturating_sub(5);
+    if selected_row < panel_scroll {
+        selected_row
+    } else if avail > 0 && selected_row >= panel_scroll + avail {
+        selected_row + 1 - avail
+    } else {
+        panel_scroll
+    }
+}
+
+/// Apply a property edit and report it on the status line. Shared by the toggle,
+/// dropdown, and text-entry paths so they format success/errors identically.
+fn apply_property(state: &mut EditorState, object_index: usize, name: &str, value: &str) {
+    match properties::set_property(&mut state.source.objects[object_index], name, value) {
+        Ok(()) => {
+            state.dirty = true;
+            state.status_message = Some(format!("Set {name} = {value}"));
+        }
+        Err(e) => state.status_message = Some(format!("Error: {e}")),
     }
 }
 
@@ -920,137 +1006,94 @@ fn handle_edit_properties(state: &mut EditorState, key: KeyEvent) -> Action {
         _ => return Action::Continue,
     };
 
-    let prop_count = properties::get_properties(&state.source.objects, object_index).len();
+    // Fetched once: `Property` owns its strings, so this does not borrow `state`
+    // and the value/kind/name read below stay valid across the mutating calls.
+    let props = properties::get_properties(&state.source.objects, object_index);
+    let prop_count = props.len();
+    let prop_kind = props[selected_property].kind.clone();
+    let prop_name = props[selected_property].name;
+    let prop_value = props[selected_property].value.clone();
+    let term_h = terminal::size().map(|(_, h)| h).unwrap_or(24) as usize;
+
+    use properties::PropertyKind;
 
     // GroupMember property: 'd' opens a removal confirmation; editing is blocked.
     // Navigation (Up/Down) is allowed to fall through to the code below.
-    {
-        let props = properties::get_properties(&state.source.objects, object_index);
-        if props[selected_property].kind == properties::PropertyKind::GroupMember {
-            if matches_binding(&bindings.delete_object, &key) || key.code == KeyCode::Delete {
-                let member_idx: usize = props[selected_property].value.parse().unwrap_or(usize::MAX);
-                let member_summary = if member_idx < state.source.objects.len() {
-                    super::state::scene_object_summary(&state.source.objects[member_idx])
-                } else {
-                    "?".to_string()
-                };
-                state.mode = Mode::Confirm {
-                    message: format!("Remove {} from group?", member_summary),
-                    selected: 0,
-                    action: ConfirmAction::RemoveGroupMember {
-                        group_index: object_index,
-                        member_idx,
-                        return_selected_property: selected_property,
-                        return_panel_scroll: panel_scroll,
-                    },
-                    return_mode: Box::new(Mode::EditProperties {
-                        object_index,
-                        selected_property,
-                        editing_value: None,
-                        cursor: 0,
-                        scroll: 0,
-                        panel_scroll,
-                        dropdown: None,
-                    }),
-                };
-                return Action::Redraw;
-            }
-            // Block editing-start keys; navigation (Up/Down/Tab) falls through below.
-            if matches_binding(&bindings.confirm, &key) || matches_binding(&bindings.animate, &key) {
-                return Action::Continue;
-            }
+    if prop_kind == PropertyKind::GroupMember {
+        if matches_binding(&bindings.delete_object, &key) || key.code == KeyCode::Delete {
+            let member_idx: usize = prop_value.parse().unwrap_or(usize::MAX);
+            let member_summary = if member_idx < state.source.objects.len() {
+                super::state::scene_object_summary(&state.source.objects[member_idx])
+            } else {
+                "?".to_string()
+            };
+            state.mode = Mode::Confirm {
+                message: format!("Remove {} from group?", member_summary),
+                selected: 0,
+                action: ConfirmAction::RemoveGroupMember {
+                    group_index: object_index,
+                    member_idx,
+                    return_selected_property: selected_property,
+                    return_panel_scroll: panel_scroll,
+                },
+                return_mode: Box::new(ep_browse(object_index, selected_property, panel_scroll)),
+            };
+            return Action::Redraw;
+        }
+        // Block editing-start keys; navigation (Up/Down/Tab) falls through below.
+        if matches_binding(&bindings.confirm, &key) || matches_binding(&bindings.animate, &key) {
+            return Action::Continue;
         }
     }
 
     // ReadOnly property: block editing keys; allow navigation to fall through.
-    {
-        let props = properties::get_properties(&state.source.objects, object_index);
-        if props[selected_property].kind == properties::PropertyKind::ReadOnly {
-            if matches_binding(&bindings.confirm, &key)
-                || matches_binding(&bindings.animate, &key)
-                || matches_binding(&bindings.delete_object, &key)
-                || key.code == KeyCode::Delete
-            {
-                return Action::Continue;
-            }
+    if prop_kind == PropertyKind::ReadOnly {
+        if matches_binding(&bindings.confirm, &key)
+            || matches_binding(&bindings.animate, &key)
+            || matches_binding(&bindings.delete_object, &key)
+            || key.code == KeyCode::Delete
+        {
+            return Action::Continue;
         }
     }
 
-    // Up/Down, Tab/BackTab: navigate the property list
-    if matches_binding(&bindings.move_up, &key)
-        || (key.code == KeyCode::BackTab)
-    {
+    // Up/Down, Tab/BackTab: navigate the property list (scroll follows selection).
+    if matches_binding(&bindings.move_up, &key) || key.code == KeyCode::BackTab {
         let new_sel = if selected_property == 0 { prop_count - 1 } else { selected_property - 1 };
-        state.mode = Mode::EditProperties {
-            object_index,
-            selected_property: new_sel,
-            editing_value: None,
-            cursor: 0,
-            scroll: 0,
-            panel_scroll: 0,
-            dropdown: None,
-        };
+        let ps = follow_panel_scroll(new_sel, panel_scroll, term_h);
+        state.mode = ep_browse(object_index, new_sel, ps);
         return Action::Redraw;
     }
     if matches_binding(&bindings.move_down, &key)
         || (key.code == KeyCode::Tab && key.modifiers == KeyModifiers::NONE)
     {
         let new_sel = (selected_property + 1) % prop_count;
-        state.mode = Mode::EditProperties {
-            object_index,
-            selected_property: new_sel,
-            editing_value: None,
-            cursor: 0,
-            scroll: 0,
-            panel_scroll: 0,
-            dropdown: None,
-        };
+        let ps = follow_panel_scroll(new_sel, panel_scroll, term_h);
+        state.mode = ep_browse(object_index, new_sel, ps);
         return Action::Redraw;
     }
 
-    // Space: toggle boolean properties in-place (no edit mode needed)
-    if key.code == KeyCode::Char(' ') && key.modifiers == KeyModifiers::NONE {
-        let props = properties::get_properties(&state.source.objects, object_index);
-        let prop = &props[selected_property];
-        let toggled = match prop.value.as_str() {
-            "true"  => Some("false"),
-            "false" => Some("true"),
-            _ => None,
-        };
-        if let Some(new_val) = toggled {
-            match properties::set_property(&mut state.source.objects[object_index], prop.name, new_val) {
-                Ok(()) => {
-                    state.dirty = true;
-                    state.status_message = Some(format!("Set {} = {}", prop.name, new_val));
-                }
-                Err(e) => state.status_message = Some(format!("Error: {e}")),
-            }
-            return Action::Redraw;
-        }
+    // Booleans flip in place on Space or Enter — no text-entry detour.
+    let toggle_requested = matches_binding(&bindings.confirm, &key)
+        || (key.code == KeyCode::Char(' ') && key.modifiers == KeyModifiers::NONE);
+    if prop_kind == PropertyKind::Bool && toggle_requested {
+        apply_property(state, object_index, prop_name, properties::toggled_bool_value(&prop_value));
+        return Action::Redraw;
     }
+    // Space on a non-bool does nothing special; let it fall through (and be ignored).
 
     if matches_binding(&bindings.confirm, &key) {
-        let props = properties::get_properties(&state.source.objects, object_index);
-        let prop = &props[selected_property];
-        if let Some(opts) = properties::dropdown_options_for(&prop.kind) {
-            // Open dropdown; pre-select the matching option if recognised
-            let dd_sel = opts.iter().position(|&o| o == prop.value).unwrap_or(0);
-            state.mode = Mode::EditProperties {
-                object_index,
-                selected_property,
-                editing_value: None,
-                cursor: 0,
-                scroll: 0,
-                panel_scroll: 0,
-                dropdown: Some(dd_sel),
-            };
-        } else if prop.kind == properties::PropertyKind::Coordinate {
-            if let Some(coord) = properties::get_coord(&state.source.objects[object_index], prop.name) {
+        if let Some(opts) = properties::dropdown_options_for(&prop_kind) {
+            // Open dropdown; pre-select the matching option if recognised.
+            let dd_sel = opts.iter().position(|&o| o == prop_value).unwrap_or(0);
+            state.mode = ep_dropdown(object_index, selected_property, dd_sel, panel_scroll);
+        } else if prop_kind == PropertyKind::Coordinate {
+            if let Some(coord) = properties::get_coord(&state.source.objects[object_index], prop_name) {
                 if let Coordinate::Animated { from, to, start_frame, end_frame } = &coord {
                     state.mode = Mode::AnimateProperty {
                         object_index,
                         return_property: selected_property,
-                        property_name: prop.name,
+                        property_name: prop_name,
                         selected_field: 0,
                         editing: None,
                         cursor: 0,
@@ -1060,27 +1103,13 @@ fn handle_edit_properties(state: &mut EditorState, key: KeyEvent) -> Action {
                         end_frame: *end_frame,
                     };
                 } else {
-                    state.mode = Mode::EditProperties {
-                        object_index,
-                        selected_property,
-                        editing_value: Some(prop.value.clone()),
-                        cursor: 0,
-                        scroll: 0,
-                        panel_scroll: 0,
-                        dropdown: None,
-                    };
+                    let cursor = prop_value.chars().count();
+                    state.mode = ep_editing(object_index, selected_property, prop_value, cursor, 0, panel_scroll);
                 }
             }
         } else {
-            state.mode = Mode::EditProperties {
-                object_index,
-                selected_property,
-                editing_value: Some(prop.value.clone()),
-                cursor: 0,
-                scroll: 0,
-                panel_scroll: 0,
-                dropdown: None,
-            };
+            let cursor = prop_value.chars().count();
+            state.mode = ep_editing(object_index, selected_property, prop_value, cursor, 0, panel_scroll);
         }
         return Action::Redraw;
     }
@@ -1143,10 +1172,8 @@ fn handle_edit_properties(state: &mut EditorState, key: KeyEvent) -> Action {
 
     // [a]nimate: open AnimateProperty panel for Coordinate properties
     if matches_binding(&bindings.animate, &key) {
-        let props = properties::get_properties(&state.source.objects, object_index);
-        let prop = &props[selected_property];
-        if prop.kind == properties::PropertyKind::Coordinate {
-            if let Some(coord) = properties::get_coord(&state.source.objects[object_index], prop.name) {
+        if prop_kind == PropertyKind::Coordinate {
+            if let Some(coord) = properties::get_coord(&state.source.objects[object_index], prop_name) {
                 let (from, to, start_frame, end_frame) = match &coord {
                     Coordinate::Fixed(v) => (
                         v.floor() as u16, v.floor() as u16,
@@ -1160,7 +1187,7 @@ fn handle_edit_properties(state: &mut EditorState, key: KeyEvent) -> Action {
                 state.mode = Mode::AnimateProperty {
                     object_index,
                     return_property: selected_property,
-                    property_name: prop.name,
+                    property_name: prop_name,
                     selected_field: 0,
                     editing: None,
                     cursor: 0,
@@ -1178,7 +1205,7 @@ fn handle_edit_properties(state: &mut EditorState, key: KeyEvent) -> Action {
 }
 
 fn handle_edit_value(state: &mut EditorState, key: KeyEvent) -> Action {
-    let (object_index, selected_property, editing_value, mut cursor, mut scroll, mut panel_scroll) =
+    let (object_index, selected_property, editing_value, cursor, scroll, panel_scroll) =
         match &state.mode {
             Mode::EditProperties {
                 object_index, selected_property, editing_value, cursor, scroll, panel_scroll, ..
@@ -1186,310 +1213,138 @@ fn handle_edit_value(state: &mut EditorState, key: KeyEvent) -> Action {
             _ => return Action::Continue,
         };
 
-    let mut buf = editing_value.unwrap_or_default();
+    let props = properties::get_properties(&state.source.objects, object_index);
+    let prop_name = props[selected_property].name;
+    // `Text` values are edited in the wide overlay (which derives its own scroll
+    // from the cursor); everything else is a short field in the narrow panel.
+    let is_text = props[selected_property].kind == properties::PropertyKind::Text;
+    let prefix0 = prop_name.chars().count() + 2;
 
-    let max_width = (super::ui::RIGHT_PANEL_WIDTH - 3) as usize;
-    // prefix_len for line 0 ("propname: "); continuation lines have indent "  " (2 chars).
-    let prefix0 = {
-        let props = properties::get_properties(&state.source.objects, object_index);
-        props[selected_property].name.chars().count() + 2
-    };
+    let newline = matches_binding(&state.config.key_bindings.insert_newline, &key);
+    let mut te = TextEdit::new(editing_value.unwrap_or_default(), cursor);
 
-    // Returns (line_index, col_within_that_line) for a char-index cursor.
-    fn cursor_line_col(buf: &str, cursor: usize) -> (usize, usize) {
-        let mut line = 0usize;
-        let mut col = 0usize;
-        for (i, ch) in buf.chars().enumerate() {
-            if i == cursor { break; }
-            if ch == '\n' { line += 1; col = 0; } else { col += 1; }
+    match te.handle_key(&key, newline) {
+        TextAction::Ignored => Action::Continue,
+        TextAction::Cancel => {
+            state.mode = ep_browse(object_index, selected_property, panel_scroll);
+            Action::Redraw
         }
-        (line, col)
-    }
-
-    fn line_col_to_cursor(buf: &str, target_line: usize, target_col: usize) -> usize {
-        let mut line = 0usize;
-        let mut col = 0usize;
-        for (i, ch) in buf.chars().enumerate() {
-            if line == target_line && col == target_col { return i; }
-            if ch == '\n' {
-                if line == target_line { return i; } // clamp: target_col beyond line length
-                line += 1; col = 0;
+        TextAction::Commit => {
+            apply_property(state, object_index, prop_name, &te.buf);
+            state.mode = ep_browse(object_index, selected_property, panel_scroll);
+            Action::Redraw
+        }
+        TextAction::Edited => {
+            let (new_scroll, new_ps) = if is_text {
+                (0, panel_scroll)
             } else {
-                col += 1;
-            }
-        }
-        // cursor at end of buffer (target_col may be beyond last line's length)
-        buf.chars().count()
-    }
-
-    // Update horizontal scroll for the cursor's current line.
-    // Resets to 0 if the cursor crossed to a different line (old_line != new_line).
-    let update_h_scroll = |new_cursor: usize, old_line: usize, old_scroll: usize, b: &str| -> usize {
-        let (new_line, new_col) = cursor_line_col(b, new_cursor);
-        let plen = if new_line == 0 { prefix0 } else { 2 };
-        let horiz_w = max_width.saturating_sub(plen);
-        let base = if new_line != old_line { 0 } else { old_scroll };
-        if new_col < base { new_col }
-        else if horiz_w > 0 && new_col >= base + horiz_w { new_col + 1 - horiz_w }
-        else { base }
-    };
-
-    // Update panel scroll so the cursor's visual row stays visible.
-    let update_panel_scroll = |new_cursor: usize, old_ps: usize, b: &str| -> usize {
-        let (new_line, _) = cursor_line_col(b, new_cursor);
-        let vis_row = selected_property + new_line;
-        let term_h = terminal::size().map(|(_, h)| h).unwrap_or(24) as usize;
-        let avail = term_h.saturating_sub(5); // menu:1 + timeline:2 + title:1 + sep:1
-        if vis_row < old_ps { vis_row }
-        else if avail > 0 && vis_row >= old_ps + avail { vis_row + 1 - avail }
-        else { old_ps }
-    };
-
-    // Shorthand: build the editing Mode after a cursor/buf change.
-    macro_rules! editing_mode {
-        ($buf:expr, $cursor:expr, $scroll:expr, $ps:expr) => {
-            Mode::EditProperties {
-                object_index, selected_property,
-                editing_value: Some($buf),
-                cursor: $cursor, scroll: $scroll, panel_scroll: $ps,
-                dropdown: None,
-            }
-        };
-    }
-
-    // insert_newline binding: insert a newline at the cursor position
-    if matches_binding(&state.config.key_bindings.insert_newline, &key) {
-        let (old_line, _) = cursor_line_col(&buf, cursor);
-        let byte_idx = char_to_byte_idx(&buf, cursor);
-        buf.insert(byte_idx, '\n');
-        cursor += 1;
-        scroll = update_h_scroll(cursor, old_line, scroll, &buf);
-        panel_scroll = update_panel_scroll(cursor, panel_scroll, &buf);
-        state.mode = editing_mode!(buf, cursor, scroll, panel_scroll);
-        return Action::Redraw;
-    }
-
-    match key.code {
-        KeyCode::Enter => {
-            // Apply the value
-            let props = properties::get_properties(&state.source.objects, object_index);
-            let prop_name = props[selected_property].name;
-            match properties::set_property(
-                &mut state.source.objects[object_index],
-                prop_name,
-                &buf,
-            ) {
-                Ok(()) => {
-                    state.dirty = true;
-                    state.status_message = Some(format!("Set {prop_name}"));
-                }
-                Err(e) => {
-                    state.status_message = Some(format!("Error: {e}"));
-                }
-            }
-            state.mode = Mode::EditProperties {
-                object_index, selected_property,
-                editing_value: None, cursor: 0, scroll: 0, panel_scroll: 0, dropdown: None,
+                panel_field_scrolls(&te, selected_property, prefix0, scroll, panel_scroll)
             };
-            return Action::Redraw;
+            state.mode = ep_editing(object_index, selected_property, te.buf, te.cursor, new_scroll, new_ps);
+            Action::Redraw
         }
-        KeyCode::Esc => {
-            // Cancel editing
-            state.mode = Mode::EditProperties {
-                object_index, selected_property,
-                editing_value: None, cursor: 0, scroll: 0, panel_scroll: 0, dropdown: None,
-            };
-            return Action::Redraw;
-        }
-        KeyCode::Left if key.modifiers == KeyModifiers::NONE => {
-            let (old_line, _) = cursor_line_col(&buf, cursor);
-            cursor = cursor.saturating_sub(1);
-            scroll = update_h_scroll(cursor, old_line, scroll, &buf);
-            panel_scroll = update_panel_scroll(cursor, panel_scroll, &buf);
-            state.mode = editing_mode!(buf, cursor, scroll, panel_scroll);
-            return Action::Redraw;
-        }
-        KeyCode::Right if key.modifiers == KeyModifiers::NONE => {
-            let (old_line, _) = cursor_line_col(&buf, cursor);
-            cursor = (cursor + 1).min(buf.chars().count());
-            scroll = update_h_scroll(cursor, old_line, scroll, &buf);
-            panel_scroll = update_panel_scroll(cursor, panel_scroll, &buf);
-            state.mode = editing_mode!(buf, cursor, scroll, panel_scroll);
-            return Action::Redraw;
-        }
-        KeyCode::Up if key.modifiers == KeyModifiers::NONE => {
-            let (line, col) = cursor_line_col(&buf, cursor);
-            if line > 0 {
-                cursor = line_col_to_cursor(&buf, line - 1, col);
-                scroll = update_h_scroll(cursor, line, scroll, &buf);
-                panel_scroll = update_panel_scroll(cursor, panel_scroll, &buf);
-                state.mode = editing_mode!(buf, cursor, scroll, panel_scroll);
-            }
-            return Action::Redraw;
-        }
-        KeyCode::Down if key.modifiers == KeyModifiers::NONE => {
-            let (line, col) = cursor_line_col(&buf, cursor);
-            let line_count = buf.chars().filter(|&c| c == '\n').count() + 1;
-            if line + 1 < line_count {
-                cursor = line_col_to_cursor(&buf, line + 1, col);
-                scroll = update_h_scroll(cursor, line, scroll, &buf);
-                panel_scroll = update_panel_scroll(cursor, panel_scroll, &buf);
-                state.mode = editing_mode!(buf, cursor, scroll, panel_scroll);
-            }
-            return Action::Redraw;
-        }
-        KeyCode::Home if key.modifiers == KeyModifiers::NONE => {
-            let (line, _) = cursor_line_col(&buf, cursor);
-            cursor = line_col_to_cursor(&buf, line, 0);
-            scroll = 0;
-            panel_scroll = update_panel_scroll(cursor, panel_scroll, &buf);
-            state.mode = editing_mode!(buf, cursor, scroll, panel_scroll);
-            return Action::Redraw;
-        }
-        KeyCode::End if key.modifiers == KeyModifiers::NONE => {
-            let (line, _) = cursor_line_col(&buf, cursor);
-            // Find length of the current line
-            let line_len = buf.split('\n').nth(line).map(|s| s.chars().count()).unwrap_or(0);
-            cursor = line_col_to_cursor(&buf, line, line_len);
-            let (end_line, end_col) = cursor_line_col(&buf, cursor);
-            let plen = if end_line == 0 { prefix0 } else { 2 };
-            let horiz_w = max_width.saturating_sub(plen);
-            scroll = end_col.saturating_sub(horiz_w.saturating_sub(1));
-            panel_scroll = update_panel_scroll(cursor, panel_scroll, &buf);
-            state.mode = editing_mode!(buf, cursor, scroll, panel_scroll);
-            return Action::Redraw;
-        }
-        KeyCode::Delete if key.modifiers == KeyModifiers::NONE => {
-            let char_count = buf.chars().count();
-            if cursor < char_count {
-                let start = char_to_byte_idx(&buf, cursor);
-                let end = char_to_byte_idx(&buf, cursor + 1);
-                buf.drain(start..end);
-            }
-            let (old_line, _) = cursor_line_col(&buf, cursor);
-            scroll = update_h_scroll(cursor, old_line, scroll, &buf);
-            panel_scroll = update_panel_scroll(cursor, panel_scroll, &buf);
-            state.mode = editing_mode!(buf, cursor, scroll, panel_scroll);
-            return Action::Redraw;
-        }
-        KeyCode::Backspace => {
-            let (old_line, _) = cursor_line_col(&buf, cursor);
-            if cursor > 0 {
-                let start = char_to_byte_idx(&buf, cursor - 1);
-                let end = char_to_byte_idx(&buf, cursor);
-                buf.drain(start..end);
-                cursor -= 1;
-            }
-            scroll = update_h_scroll(cursor, old_line, scroll, &buf);
-            panel_scroll = update_panel_scroll(cursor, panel_scroll, &buf);
-            state.mode = editing_mode!(buf, cursor, scroll, panel_scroll);
-            return Action::Redraw;
-        }
-        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let (old_line, _) = cursor_line_col(&buf, cursor);
-            let byte_idx = char_to_byte_idx(&buf, cursor);
-            buf.insert(byte_idx, c);
-            cursor += 1;
-            scroll = update_h_scroll(cursor, old_line, scroll, &buf);
-            panel_scroll = update_panel_scroll(cursor, panel_scroll, &buf);
-            state.mode = editing_mode!(buf, cursor, scroll, panel_scroll);
-            return Action::Redraw;
-        }
-        _ => {}
     }
+}
 
-    Action::Continue
+/// Horizontal + vertical scroll for editing a short value inside the narrow
+/// right panel (coordinates, colors, char pickers). Keeps the cursor visible
+/// without jumping the window while it is already in view.
+fn panel_field_scrolls(
+    te: &TextEdit,
+    selected_property: usize,
+    prefix0: usize,
+    old_scroll: usize,
+    old_ps: usize,
+) -> (usize, usize) {
+    let max_width = (super::ui::RIGHT_PANEL_WIDTH - 3) as usize;
+    let (line, col) = te.line_col();
+    let plen = if line == 0 { prefix0 } else { 2 };
+    let horiz_w = max_width.saturating_sub(plen);
+    let scroll = if col < old_scroll {
+        col
+    } else if horiz_w > 0 && col >= old_scroll + horiz_w {
+        col + 1 - horiz_w
+    } else {
+        old_scroll
+    };
+    let term_h = terminal::size().map(|(_, h)| h).unwrap_or(24) as usize;
+    let ps = follow_panel_scroll(selected_property + line, old_ps, term_h);
+    (scroll, ps)
+}
+
+/// Outcome of a key in a dropdown list. Shared by the object-property dropdown
+/// and the table cell-style colour dropdown so both navigate identically.
+enum DropdownKey {
+    Move(usize),
+    Choose(usize),
+    Cancel,
+    Ignored,
+}
+
+fn dropdown_key(
+    key: &KeyEvent,
+    bindings: &super::config::KeyBindings,
+    current: usize,
+    count: usize,
+) -> DropdownKey {
+    if matches_binding(&bindings.cancel, key) {
+        DropdownKey::Cancel
+    } else if matches_binding(&bindings.move_up, key) {
+        DropdownKey::Move(if current == 0 { count - 1 } else { current - 1 })
+    } else if matches_binding(&bindings.move_down, key) {
+        DropdownKey::Move((current + 1) % count)
+    } else if matches_binding(&bindings.confirm, key) {
+        DropdownKey::Choose(current)
+    } else {
+        DropdownKey::Ignored
+    }
 }
 
 fn handle_dropdown(state: &mut EditorState, key: KeyEvent) -> Action {
-    let (object_index, selected_property, dd_sel) = match &state.mode {
-        Mode::EditProperties { object_index, selected_property, dropdown: Some(sel), .. } => {
-            (*object_index, *selected_property, *sel)
-        }
+    let (object_index, selected_property, dd_sel, panel_scroll) = match &state.mode {
+        Mode::EditProperties { object_index, selected_property, panel_scroll, dropdown: Some(sel), .. } =>
+            (*object_index, *selected_property, *sel, *panel_scroll),
         _ => return Action::Continue,
     };
 
     let props = properties::get_properties(&state.source.objects, object_index);
     let prop_kind = props[selected_property].kind.clone();
-    let options = properties::dropdown_options_for(&prop_kind)
-        .unwrap_or(properties::COLOR_OPTIONS);
-    let opt_count = options.len();
+    let prop_name = props[selected_property].name;
+    let prop_value = props[selected_property].value.clone();
+    let options = properties::dropdown_options_for(&prop_kind).unwrap_or(properties::COLOR_OPTIONS);
     let sentinel = properties::dropdown_custom_sentinel(&prop_kind);
-
-    // Navigate up/down through options
-    if key.code == KeyCode::Up && key.modifiers == KeyModifiers::NONE {
-        let new_sel = if dd_sel == 0 { opt_count - 1 } else { dd_sel - 1 };
-        state.mode = Mode::EditProperties {
-            object_index, selected_property,
-            editing_value: None, cursor: 0,
-            scroll: 0, panel_scroll: 0,
-            dropdown: Some(new_sel),
-        };
-        return Action::Redraw;
-    }
-    if key.code == KeyCode::Down && key.modifiers == KeyModifiers::NONE {
-        let new_sel = (dd_sel + 1) % opt_count;
-        state.mode = Mode::EditProperties {
-            object_index, selected_property,
-            editing_value: None, cursor: 0,
-            scroll: 0, panel_scroll: 0,
-            dropdown: Some(new_sel),
-        };
-        return Action::Redraw;
-    }
-
     let bindings = state.config.key_bindings.clone();
 
-    if matches_binding(&bindings.confirm, &key) {
-        let chosen = options[dd_sel];
-        if chosen == sentinel {
-            // Switch to text input; seed with current value if useful
-            let current = &props[selected_property].value;
-            let initial = if prop_kind == properties::PropertyKind::Color {
-                if current.starts_with('#') { current.clone() } else { "#".to_string() }
-            } else {
-                // For char options: seed with current char, or empty if "auto"
-                if current != "auto" { current.clone() } else { String::new() }
-            };
-            let cursor = initial.chars().count();
-            state.mode = Mode::EditProperties {
-                object_index, selected_property,
-                editing_value: Some(initial), cursor,
-                scroll: 0, panel_scroll: 0,
-                dropdown: None,
-            };
-        } else {
-            let prop_name = props[selected_property].name;
-            match properties::set_property(&mut state.source.objects[object_index], prop_name, chosen) {
-                Ok(()) => {
-                    state.dirty = true;
-                    state.status_message = Some(format!("Set {prop_name} = {chosen}"));
-                }
-                Err(e) => {
-                    state.status_message = Some(format!("Error: {e}"));
-                }
-            }
-            state.mode = Mode::EditProperties {
-                object_index, selected_property,
-                editing_value: None, cursor: 0,
-                scroll: 0, panel_scroll: 0,
-                dropdown: None,
-            };
+    match dropdown_key(&key, &bindings, dd_sel, options.len()) {
+        DropdownKey::Ignored => Action::Continue,
+        DropdownKey::Cancel => {
+            state.mode = ep_browse(object_index, selected_property, panel_scroll);
+            Action::Redraw
         }
-        return Action::Redraw;
+        DropdownKey::Move(n) => {
+            state.mode = ep_dropdown(object_index, selected_property, n, panel_scroll);
+            Action::Redraw
+        }
+        DropdownKey::Choose(n) => {
+            let chosen = options[n];
+            if chosen == sentinel {
+                // Switch to text input, seeding with the current value if useful.
+                let initial = if prop_kind == properties::PropertyKind::Color {
+                    if prop_value.starts_with('#') { prop_value.clone() } else { "#".to_string() }
+                } else if prop_value != "auto" {
+                    prop_value.clone()
+                } else {
+                    String::new()
+                };
+                let cursor = initial.chars().count();
+                state.mode = ep_editing(object_index, selected_property, initial, cursor, 0, panel_scroll);
+            } else {
+                apply_property(state, object_index, prop_name, chosen);
+                state.mode = ep_browse(object_index, selected_property, panel_scroll);
+            }
+            Action::Redraw
+        }
     }
-
-    if key.code == KeyCode::Esc {
-        state.mode = Mode::EditProperties {
-            object_index, selected_property,
-            editing_value: None, cursor: 0,
-            scroll: 0, panel_scroll: 0,
-            dropdown: None,
-        };
-        return Action::Redraw;
-    }
-
-    Action::Continue
 }
 
 fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
@@ -2147,10 +2002,46 @@ fn cell_style_prop_value(style: &Style, prop: &str) -> String {
     }
 }
 
+/// Build the `EditingStyle` sub-mode of `TableEditCellProps`.
+fn cell_style_mode(
+    object_index: usize,
+    cursor_row: usize,
+    cursor_col: usize,
+    selected_cells: Vec<(usize, usize)>,
+    selected_prop: usize,
+    editing_value: Option<String>,
+    cursor: usize,
+    dropdown: Option<usize>,
+) -> Mode {
+    Mode::TableEditCellProps {
+        object_index,
+        cursor_row,
+        cursor_col,
+        selected_cells,
+        sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value, cursor, dropdown },
+    }
+}
+
+/// Back to plain cell selection.
+fn cell_selecting_mode(
+    object_index: usize,
+    cursor_row: usize,
+    cursor_col: usize,
+    selected_cells: Vec<(usize, usize)>,
+) -> Mode {
+    Mode::TableEditCellProps {
+        object_index,
+        cursor_row,
+        cursor_col,
+        selected_cells,
+        sub_state: TableCellSubState::Selecting,
+    }
+}
+
 fn handle_table_cell_style_props(state: &mut EditorState, key: KeyEvent) -> Action {
     let bindings = state.config.key_bindings.clone();
 
-    let (object_index, cursor_row, cursor_col, selected_cells, mut selected_prop) = match &state.mode {
+    let (object_index, cursor_row, cursor_col, selected_cells, selected_prop) = match &state.mode {
         Mode::TableEditCellProps {
             object_index, cursor_row, cursor_col, selected_cells,
             sub_state: TableCellSubState::EditingStyle { selected_prop, .. },
@@ -2159,68 +2050,40 @@ fn handle_table_cell_style_props(state: &mut EditorState, key: KeyEvent) -> Acti
     };
 
     let prop_count = properties::CELL_STYLE_PROPS.len();
+    let prop_name = properties::CELL_STYLE_PROPS[selected_prop];
+    // `bold`/`dimmed` are booleans (toggled); `fg_color`/`bg_color` open a dropdown.
+    let is_bool = prop_name == "bold" || prop_name == "dimmed";
 
     if matches_binding(&bindings.cancel, &key) {
-        state.mode = Mode::TableEditCellProps {
-            object_index, cursor_row, cursor_col, selected_cells,
-            sub_state: TableCellSubState::Selecting,
-        };
+        state.mode = cell_selecting_mode(object_index, cursor_row, cursor_col, selected_cells);
         return Action::Redraw;
     }
-
     if matches_binding(&bindings.move_up, &key) {
-        selected_prop = if selected_prop == 0 { prop_count - 1 } else { selected_prop - 1 };
-        state.mode = Mode::TableEditCellProps {
-            object_index, cursor_row, cursor_col, selected_cells,
-            sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: None },
-        };
+        let sp = if selected_prop == 0 { prop_count - 1 } else { selected_prop - 1 };
+        state.mode = cell_style_mode(object_index, cursor_row, cursor_col, selected_cells, sp, None, 0, None);
         return Action::Redraw;
     }
     if matches_binding(&bindings.move_down, &key) || (key.code == KeyCode::Tab && key.modifiers == KeyModifiers::NONE) {
-        selected_prop = (selected_prop + 1) % prop_count;
-        state.mode = Mode::TableEditCellProps {
-            object_index, cursor_row, cursor_col, selected_cells,
-            sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: None },
-        };
+        let sp = (selected_prop + 1) % prop_count;
+        state.mode = cell_style_mode(object_index, cursor_row, cursor_col, selected_cells, sp, None, 0, None);
         return Action::Redraw;
     }
 
-    // Space: toggle bool props
-    if key.code == KeyCode::Char(' ') && key.modifiers == KeyModifiers::NONE {
-        let prop_name = properties::CELL_STYLE_PROPS[selected_prop];
-        if prop_name == "bold" || prop_name == "dimmed" {
-            apply_cell_style(state, object_index, selected_cells.clone(), cursor_row, cursor_col, prop_name, None);
-        }
-        state.mode = Mode::TableEditCellProps {
-            object_index, cursor_row, cursor_col, selected_cells,
-            sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: None },
-        };
+    // Booleans flip on Space or Enter — same affordance as object properties.
+    let toggle = matches_binding(&bindings.confirm, &key)
+        || (key.code == KeyCode::Char(' ') && key.modifiers == KeyModifiers::NONE);
+    if is_bool && toggle {
+        apply_cell_style(state, object_index, selected_cells.clone(), cursor_row, cursor_col, prop_name, None);
+        state.mode = cell_style_mode(object_index, cursor_row, cursor_col, selected_cells, selected_prop, None, 0, None);
         return Action::Redraw;
     }
 
+    // Colours open the shared dropdown on Enter.
     if matches_binding(&bindings.confirm, &key) {
-        let prop_name = properties::CELL_STYLE_PROPS[selected_prop];
         let style = cell_style_for_editing(state, object_index, &selected_cells, cursor_row, cursor_col);
         let current_val = cell_style_prop_value(&style, prop_name);
-
-        // Color props: open dropdown
-        if prop_name == "fg_color" || prop_name == "bg_color" {
-            let dd_sel = properties::COLOR_OPTIONS.iter()
-                .position(|&o| o == current_val).unwrap_or(0);
-            state.mode = Mode::TableEditCellProps {
-                object_index, cursor_row, cursor_col, selected_cells,
-                sub_state: TableCellSubState::EditingStyle {
-                    selected_prop, editing_value: None, cursor: 0, dropdown: Some(dd_sel),
-                },
-            };
-        } else {
-            state.mode = Mode::TableEditCellProps {
-                object_index, cursor_row, cursor_col, selected_cells,
-                sub_state: TableCellSubState::EditingStyle {
-                    selected_prop, editing_value: Some(current_val), cursor: 0, dropdown: None,
-                },
-            };
-        }
+        let dd_sel = properties::COLOR_OPTIONS.iter().position(|&o| o == current_val).unwrap_or(0);
+        state.mode = cell_style_mode(object_index, cursor_row, cursor_col, selected_cells, selected_prop, None, 0, Some(dd_sel));
         return Action::Redraw;
     }
 
@@ -2230,7 +2093,7 @@ fn handle_table_cell_style_props(state: &mut EditorState, key: KeyEvent) -> Acti
 fn handle_table_cell_style_dropdown(state: &mut EditorState, key: KeyEvent) -> Action {
     let bindings = state.config.key_bindings.clone();
 
-    let (object_index, cursor_row, cursor_col, selected_cells, selected_prop, mut dd_sel) = match &state.mode {
+    let (object_index, cursor_row, cursor_col, selected_cells, selected_prop, dd_sel) = match &state.mode {
         Mode::TableEditCellProps {
             object_index, cursor_row, cursor_col, selected_cells,
             sub_state: TableCellSubState::EditingStyle { selected_prop, dropdown: Some(dd), .. },
@@ -2239,61 +2102,38 @@ fn handle_table_cell_style_dropdown(state: &mut EditorState, key: KeyEvent) -> A
     };
 
     let opts = properties::COLOR_OPTIONS;
-    let n = opts.len();
+    let prop_name = properties::CELL_STYLE_PROPS[selected_prop];
+    let sentinel = properties::dropdown_custom_sentinel(&properties::PropertyKind::Color);
 
-    if matches_binding(&bindings.cancel, &key) {
-        state.mode = Mode::TableEditCellProps {
-            object_index, cursor_row, cursor_col, selected_cells,
-            sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: None },
-        };
-        return Action::Redraw;
-    }
-    if matches_binding(&bindings.move_up, &key) {
-        dd_sel = if dd_sel == 0 { n - 1 } else { dd_sel - 1 };
-        state.mode = Mode::TableEditCellProps {
-            object_index, cursor_row, cursor_col, selected_cells,
-            sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: Some(dd_sel) },
-        };
-        return Action::Redraw;
-    }
-    if matches_binding(&bindings.move_down, &key) {
-        dd_sel = (dd_sel + 1) % n;
-        state.mode = Mode::TableEditCellProps {
-            object_index, cursor_row, cursor_col, selected_cells,
-            sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: Some(dd_sel) },
-        };
-        return Action::Redraw;
-    }
-    if matches_binding(&bindings.confirm, &key) {
-        let chosen = opts[dd_sel];
-        let prop_name = properties::CELL_STYLE_PROPS[selected_prop];
-        if chosen == "RGB" {
-            // Open text input for RGB hex
-            let style = cell_style_for_editing(state, object_index, &selected_cells, cursor_row, cursor_col);
-            let cur_val = cell_style_prop_value(&style, prop_name);
-            state.mode = Mode::TableEditCellProps {
-                object_index, cursor_row, cursor_col, selected_cells,
-                sub_state: TableCellSubState::EditingStyle {
-                    selected_prop, editing_value: Some(cur_val), cursor: 0, dropdown: None,
-                },
-            };
-        } else {
-            apply_cell_style(state, object_index, selected_cells.clone(), cursor_row, cursor_col, prop_name, Some(chosen));
-            state.mode = Mode::TableEditCellProps {
-                object_index, cursor_row, cursor_col, selected_cells,
-                sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: None },
-            };
+    match dropdown_key(&key, &bindings, dd_sel, opts.len()) {
+        DropdownKey::Ignored => Action::Continue,
+        DropdownKey::Cancel => {
+            state.mode = cell_style_mode(object_index, cursor_row, cursor_col, selected_cells, selected_prop, None, 0, None);
+            Action::Redraw
         }
-        return Action::Redraw;
+        DropdownKey::Move(n) => {
+            state.mode = cell_style_mode(object_index, cursor_row, cursor_col, selected_cells, selected_prop, None, 0, Some(n));
+            Action::Redraw
+        }
+        DropdownKey::Choose(n) => {
+            let chosen = opts[n];
+            if chosen == sentinel {
+                // Switch to text entry for a custom hex colour.
+                let style = cell_style_for_editing(state, object_index, &selected_cells, cursor_row, cursor_col);
+                let cur_val = cell_style_prop_value(&style, prop_name);
+                let cur = cur_val.chars().count();
+                state.mode = cell_style_mode(object_index, cursor_row, cursor_col, selected_cells, selected_prop, Some(cur_val), cur, None);
+            } else {
+                apply_cell_style(state, object_index, selected_cells.clone(), cursor_row, cursor_col, prop_name, Some(chosen));
+                state.mode = cell_style_mode(object_index, cursor_row, cursor_col, selected_cells, selected_prop, None, 0, None);
+            }
+            Action::Redraw
+        }
     }
-
-    Action::Continue
 }
 
 fn handle_table_cell_style_edit_value(state: &mut EditorState, key: KeyEvent) -> Action {
-    let bindings = state.config.key_bindings.clone();
-
-    let (object_index, cursor_row, cursor_col, selected_cells, selected_prop, mut buf, mut cursor) = match &state.mode {
+    let (object_index, cursor_row, cursor_col, selected_cells, selected_prop, ev, cursor) = match &state.mode {
         Mode::TableEditCellProps {
             object_index, cursor_row, cursor_col, selected_cells,
             sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: Some(ev), cursor, .. },
@@ -2301,65 +2141,26 @@ fn handle_table_cell_style_edit_value(state: &mut EditorState, key: KeyEvent) ->
         _ => return Action::Continue,
     };
 
-    if matches_binding(&bindings.cancel, &key) {
-        state.mode = Mode::TableEditCellProps {
-            object_index, cursor_row, cursor_col, selected_cells,
-            sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: None },
-        };
-        return Action::Redraw;
-    }
+    let prop_name = properties::CELL_STYLE_PROPS[selected_prop];
+    let newline = matches_binding(&state.config.key_bindings.insert_newline, &key);
+    let mut te = TextEdit::new(ev, cursor);
 
-    match key.code {
-        KeyCode::Enter => {
-            let prop_name = properties::CELL_STYLE_PROPS[selected_prop];
-            apply_cell_style(state, object_index, selected_cells.clone(), cursor_row, cursor_col, prop_name, Some(&buf));
-            state.mode = Mode::TableEditCellProps {
-                object_index, cursor_row, cursor_col, selected_cells,
-                sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: None, cursor: 0, dropdown: None },
-            };
-            return Action::Redraw;
+    match te.handle_key(&key, newline) {
+        TextAction::Ignored => Action::Continue,
+        TextAction::Cancel => {
+            state.mode = cell_style_mode(object_index, cursor_row, cursor_col, selected_cells, selected_prop, None, 0, None);
+            Action::Redraw
         }
-        KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT => {
-            let bi = char_to_byte_idx(&buf, cursor);
-            buf.insert(bi, c);
-            cursor += 1;
-            state.mode = Mode::TableEditCellProps {
-                object_index, cursor_row, cursor_col, selected_cells,
-                sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: Some(buf), cursor, dropdown: None },
-            };
-            return Action::Redraw;
+        TextAction::Commit => {
+            apply_cell_style(state, object_index, selected_cells.clone(), cursor_row, cursor_col, prop_name, Some(&te.buf));
+            state.mode = cell_style_mode(object_index, cursor_row, cursor_col, selected_cells, selected_prop, None, 0, None);
+            Action::Redraw
         }
-        KeyCode::Backspace if key.modifiers == KeyModifiers::NONE => {
-            if cursor > 0 {
-                let bi = char_to_byte_idx(&buf, cursor - 1);
-                buf.remove(bi);
-                cursor -= 1;
-            }
-            state.mode = Mode::TableEditCellProps {
-                object_index, cursor_row, cursor_col, selected_cells,
-                sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: Some(buf), cursor, dropdown: None },
-            };
-            return Action::Redraw;
+        TextAction::Edited => {
+            state.mode = cell_style_mode(object_index, cursor_row, cursor_col, selected_cells, selected_prop, Some(te.buf), te.cursor, None);
+            Action::Redraw
         }
-        KeyCode::Left if key.modifiers == KeyModifiers::NONE => {
-            cursor = cursor.saturating_sub(1);
-            state.mode = Mode::TableEditCellProps {
-                object_index, cursor_row, cursor_col, selected_cells,
-                sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: Some(buf), cursor, dropdown: None },
-            };
-            return Action::Redraw;
-        }
-        KeyCode::Right if key.modifiers == KeyModifiers::NONE => {
-            cursor = (cursor + 1).min(buf.chars().count());
-            state.mode = Mode::TableEditCellProps {
-                object_index, cursor_row, cursor_col, selected_cells,
-                sub_state: TableCellSubState::EditingStyle { selected_prop, editing_value: Some(buf), cursor, dropdown: None },
-            };
-            return Action::Redraw;
-        }
-        _ => {}
     }
-    Action::Continue
 }
 
 /// Apply a style property to all selected cells (or the cursor cell if none selected).
