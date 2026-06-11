@@ -665,46 +665,63 @@ fn handle_add_object(state: &mut EditorState, key: KeyEvent) -> Action {
         return Action::Redraw;
     }
     if matches_binding(&bindings.confirm, &key) {
-        if object_defaults::OBJECT_TYPES[selected] == "Group" {
-            // Group members are chosen from the objects on the current slide.
-            if state.objects_on_current_frame().is_empty() {
-                state.status_message = Some("No objects on this slide to group".into());
-                state.mode = Mode::Normal;
-            } else {
-                state.mode = Mode::SelectGroupMembers { selected: 0, members: Vec::new() };
+        return commit_add_object(state, selected);
+    }
+    // Quick-add: a single letter selects and adds its type directly. Checked
+    // after the configured nav/confirm bindings so a custom letter binding for
+    // those still wins. (The global fullscreen key is handled earlier.)
+    if let KeyCode::Char(c) = key.code {
+        if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT {
+            if let Some(idx) = object_defaults::object_type_for_key(c) {
+                return commit_add_object(state, idx);
             }
-        } else if object_defaults::OBJECT_TYPES[selected] == "Art" {
-            // Art needs a library piece chosen first.
-            state.mode = Mode::AddArt {
-                selected: 0,
-                items: crate::art_library::all_items(),
-            };
-        } else {
-            let obj = object_defaults::create_default(selected, state.current_frame);
-            let type_name = object_defaults::OBJECT_TYPES[selected];
-            state.source.objects.push(obj);
-            state.dirty = true;
-            let new_index = state.source.objects.len() - 1;
-            // Text-first objects (Label, List) jump straight into the centred
-            // multi-line text editor with an empty buffer, so the user can type
-            // content immediately instead of browsing properties first.
-            // Cancelling (Esc) leaves the object's default text intact.
-            state.mode = if type_name == "Label" || type_name == "List" {
-                ep_editing(new_index, 0, String::new(), 0, 0, 0)
-            } else {
-                ep_browse(new_index, 0, 0)
-            };
-            // A freshly added loop can already collide with another loop on the
-            // same slide — flag it immediately rather than only at compile time.
-            state.status_message = Some(match state.source.validate_loops() {
-                Ok(()) => format!("Added {type_name}"),
-                Err(e) => format!("Added {type_name} — ⚠ {e}"),
-            });
         }
-        return Action::Redraw;
     }
 
     Action::Continue
+}
+
+/// Commit the addition of the object type at `index` (from the Add-Object menu,
+/// via Enter or a quick-add shortcut). Most types land in EditProperties; Group
+/// and Art first enter their own member/library pickers.
+fn commit_add_object(state: &mut EditorState, index: usize) -> Action {
+    let type_name = object_defaults::OBJECT_TYPES[index];
+    if type_name == "Group" {
+        // Group members are chosen from the objects on the current slide.
+        if state.objects_on_current_frame().is_empty() {
+            state.status_message = Some("No objects on this slide to group".into());
+            state.mode = Mode::Normal;
+        } else {
+            state.mode = Mode::SelectGroupMembers { selected: 0, members: Vec::new() };
+        }
+    } else if type_name == "Art" {
+        // Art needs a library piece chosen first.
+        state.mode = Mode::AddArt {
+            selected: 0,
+            items: crate::art_library::all_items(),
+        };
+    } else {
+        let obj = object_defaults::create_default(index, state.current_frame);
+        state.source.objects.push(obj);
+        state.dirty = true;
+        let new_index = state.source.objects.len() - 1;
+        // Text-first objects (Label, List) jump straight into the centred
+        // multi-line text editor with an empty buffer, so the user can type
+        // content immediately instead of browsing properties first.
+        // Cancelling (Esc) leaves the object's default text intact.
+        state.mode = if type_name == "Label" || type_name == "List" {
+            ep_editing(new_index, 0, String::new(), 0, 0, 0)
+        } else {
+            ep_browse(new_index, 0, 0)
+        };
+        // A freshly added loop can already collide with another loop on the
+        // same slide — flag it immediately rather than only at compile time.
+        state.status_message = Some(match state.source.validate_loops() {
+            Ok(()) => format!("Added {type_name}"),
+            Err(e) => format!("Added {type_name} — ⚠ {e}"),
+        });
+    }
+    Action::Redraw
 }
 
 fn handle_select_group_members(state: &mut EditorState, key: KeyEvent) -> Action {

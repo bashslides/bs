@@ -229,6 +229,7 @@ reconstructed character grid (some also assert on cell styles).
 | Test | Verifies |
 |------|----------|
 | `create_default_covers_every_object_type` | `create_default` builds the expected variant for every `OBJECT_TYPES` index |
+| `every_type_has_a_unique_shortcut_key` | Each type has a unique quick-add key (case-insensitive, not the global `f`) aligned with `OBJECT_TYPES` |
 
 ### Frame operations — `src/editor/state.rs`
 

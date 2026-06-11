@@ -113,18 +113,21 @@ pub fn render_right_panel(
             if y >= cy + layout.canvas_height {
                 break;
             }
+            // Prefix each type with its quick-add shortcut, e.g. "[l] Label".
+            let key = object_defaults::OBJECT_TYPE_KEYS.get(i).copied().unwrap_or(' ');
+            let label = format!("[{key}] {name}");
             queue!(stdout, cursor::MoveTo(panel_x + 2, y))?;
             if i == selected {
                 queue!(
                     stdout,
                     style::SetAttribute(style::Attribute::Reverse),
-                    style::Print(format!("> {:<width$}", name, width = max_width.saturating_sub(2))),
+                    style::Print(format!("> {:<width$}", label, width = max_width.saturating_sub(2))),
                     style::SetAttribute(style::Attribute::Reset),
                 )?;
             } else {
                 queue!(
                     stdout,
-                    style::Print(format!("  {:<width$}", name, width = max_width.saturating_sub(2))),
+                    style::Print(format!("  {:<width$}", label, width = max_width.saturating_sub(2))),
                 )?;
             }
         }

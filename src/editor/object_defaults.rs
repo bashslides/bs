@@ -6,6 +6,21 @@ pub const OBJECT_TYPES: &[&str] = &[
     "Loop",
 ];
 
+/// One quick-add shortcut per object type, aligned by index with `OBJECT_TYPES`.
+/// The Add-Object menu shows each key (`[l] Label`); pressing it adds that type
+/// directly. Keys are unique and avoid the global fullscreen key (`f`). They are
+/// the type's initial where free, else another distinctive letter (Header→`e`,
+/// Arrow→`w`, Art→`a`, List→`i`, Loop→`p`).
+pub const OBJECT_TYPE_KEYS: &[char] =
+    &['l', 'h', 'r', 'e', 'g', 'w', 't', 'a', 'c', 'i', 'p'];
+
+/// Map a pressed character (case-insensitive) to an object-type index, if it is
+/// a quick-add shortcut.
+pub fn object_type_for_key(c: char) -> Option<usize> {
+    let c = c.to_ascii_lowercase();
+    OBJECT_TYPE_KEYS.iter().position(|&k| k == c)
+}
+
 /// Build an `Art` object embedding the given art text. Used by the editor's
 /// art-library picker (the index-based `create_default` path is never hit for
 /// Art, since adding one requires choosing a library piece first).
@@ -180,5 +195,22 @@ mod tests {
             let obj = create_default(i, 0);
             assert_eq!(scene_object_type_name(&obj), *name, "index {i} ({name})");
         }
+    }
+
+    #[test]
+    fn every_type_has_a_unique_shortcut_key() {
+        assert_eq!(OBJECT_TYPE_KEYS.len(), OBJECT_TYPES.len());
+        for (i, &k) in OBJECT_TYPE_KEYS.iter().enumerate() {
+            // The fullscreen toggle ('f') is a global key and must stay free.
+            assert_ne!(k, 'f', "shortcut for {} collides with fullscreen", OBJECT_TYPES[i]);
+            assert_eq!(object_type_for_key(k), Some(i));
+            // Uppercase resolves to the same type (case-insensitive lookup).
+            assert_eq!(object_type_for_key(k.to_ascii_uppercase()), Some(i));
+        }
+        // Keys are unique.
+        let mut seen = OBJECT_TYPE_KEYS.to_vec();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), OBJECT_TYPE_KEYS.len(), "shortcut keys must be unique");
     }
 }

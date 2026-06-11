@@ -129,7 +129,7 @@ Normal ──a──→ AddObject ──Enter──→ Normal (object added)
 - **FrameMenu**: frame operations — `a` add blank frame, `c` copy (duplicate) current frame, `d` delete current frame (with confirm), `m` move current frame, Esc back. `add` calls `state::insert_blank_frame` (the "make room" primitive — a new empty frame). `copy` calls `state::copy_frame`, which inserts a blank frame and then **deep-clones** every object on the source frame onto it, so the copy's objects are independent of the original (editing one never changes the other). Deck-wide/spanning objects stay shared (extended across the new frame) rather than cloned, so they remain a single continuous object
 - **FrameMove → FrameMovePlace**: relocate the current slide. In FrameMove, ←/→ scroll the deck to a target slide; Enter opens FrameMovePlace, where Enter drops the moved slide *after* the target and `b` drops it *before* (`state::move_frame` remaps object ranges through the new frame ordering)
 - **Settings**: edit the output frame size (width × height in cells); ↑↓/Tab switch field, Enter apply, Esc cancel
-- **AddObject**: choose object type from list. After Enter, most types land in `EditProperties` (browse); `Label` and `List` jump straight into the centred multi-line text overlay (empty buffer) so you can type content immediately — Esc keeps the default text, Enter commits
+- **AddObject**: choose object type from the list (↑/↓ + Enter) or press its **quick-add shortcut** — one unique letter per type, shown as `[l] Label` and defined by `object_defaults::OBJECT_TYPE_KEYS` (`object_type_for_key` maps a keypress to the type). Either path runs the shared `commit_add_object`. After committing, most types land in `EditProperties` (browse); `Group`/`Art` enter their member/library pickers; `Label` and `List` jump straight into the centred multi-line text overlay (empty buffer) so you can type content immediately — Esc keeps the default text, Enter commits
 - **SelectObject**: pick object visible on current frame
 - **SelectedObject**: move (arrows), `r` → resize mode, `e` → edit props, `d` delete; Shift+arrows also grow
 - **ResizeObject**: arrow-key resize (←→ width, ↑↓ height) — a terminal-robust path since many terminals capture Shift+↑/↓ for scrollback; Enter/Esc exit
@@ -251,8 +251,8 @@ targets the pure, deterministic core):
 Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
 `engine/objects/wrap.rs`, `editor/textedit.rs`, `editor/object_defaults.rs`,
 `editor/state.rs` — frame copy/blank-insert/move/delete, `player/mod.rs` —
-`loop_next` bounce/wrap stepping). The suite totals 121 tests (83 integration +
-38 inline); `TESTS.md` is the authoritative per-test list.
+`loop_next` bounce/wrap stepping). The suite totals 122 tests (83 integration +
+39 inline); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the
