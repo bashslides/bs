@@ -1678,4 +1678,45 @@ mod tests {
         set_coordinate(&mut label, "x", y).unwrap();
         assert_eq!(get_coord(&label, "x").unwrap().evaluate(0), 7);
     }
+
+    #[test]
+    fn command_properties_roundtrip() {
+        let mut o = vec![obj(
+            r#"{"type":"command","position":{"x":{"fixed":0},"y":{"fixed":0}},
+                "width":10,"height":4,"command":"echo","args":["hi"],
+                "frames":{"start":0,"end":2}}"#,
+        )];
+        assert_props_roundtrip(&mut o, 0);
+    }
+
+    #[test]
+    fn list_properties_roundtrip() {
+        let mut o = vec![obj(
+            r#"{"type":"list","text":"a\nb","position":{"x":{"fixed":1},"y":{"fixed":1}},
+                "ordered":true,"bullet":"*","spacing":2,"frames":{"start":0,"end":2}}"#,
+        )];
+        assert_props_roundtrip(&mut o, 0);
+    }
+
+    #[test]
+    fn resize_group_scales_members_with_fractional_precision() {
+        // Members span x = 0..4 (bbox width 4). Anchored on the left, growing
+        // the width to 6 scales by 1.5, so the second member's origin (x=1) and
+        // size (w=3) become the fractional 1.5 and 4.5.
+        let mut o = vec![
+            obj(r#"{"type":"label","text":"A","position":{"x":{"fixed":0},"y":{"fixed":0}},
+                    "width":1,"height":1,"frames":{"start":0,"end":2}}"#),
+            obj(r#"{"type":"label","text":"B","position":{"x":{"fixed":1},"y":{"fixed":0}},
+                    "width":3,"height":1,"frames":{"start":0,"end":2}}"#),
+            obj(r#"{"type":"group","members":[0,1],"frames":{"start":0,"end":2}}"#),
+        ];
+        let (_, _, gw, _) = group_bounds(&o, 2);
+        assert_eq!(gw, 4.0);
+
+        resize_group(&mut o, 2, 2, 0, true, true);
+
+        assert_eq!(object_origin_x_f(&o[0]), 0.0, "left-anchored member stays put");
+        assert_eq!(object_origin_x_f(&o[1]), 1.5);
+        assert_eq!(object_dim_x_f(&o[1]), 4.5);
+    }
 }

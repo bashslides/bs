@@ -5,6 +5,10 @@
 //! reconstruct a plain-character grid so assertions read like the terminal
 //! output a viewer would see.
 
+// This module is compiled separately into every integration-test binary; not
+// every binary uses every helper, so per-binary "unused" warnings are expected.
+#![allow(dead_code)]
+
 use bs::engine::{source::SourcePresentation, Engine};
 use bs::renderer::Renderer;
 use bs::types::{PlayablePresentation, TerminalContract};

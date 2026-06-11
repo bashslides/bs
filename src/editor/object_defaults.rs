@@ -157,3 +157,17 @@ pub fn create_default(type_index: usize, current_frame: usize) -> SceneObject {
         _ => unreachable!(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor::state::scene_object_type_name;
+
+    #[test]
+    fn create_default_covers_every_object_type() {
+        for (i, name) in OBJECT_TYPES.iter().enumerate() {
+            let obj = create_default(i, 0);
+            assert_eq!(scene_object_type_name(&obj), *name, "index {i} ({name})");
+        }
+    }
+}

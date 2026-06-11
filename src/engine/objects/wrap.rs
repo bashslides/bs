@@ -90,3 +90,27 @@ pub fn indexed_to_chars(line: &str, grid: Vec<Vec<Option<usize>>>) -> Vec<Vec<ch
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_word_longer_than_the_width_is_hard_broken() {
+        // No spaces to break on, so the word is split at the width boundary.
+        let chars = indexed_to_chars("abcdef", wrap_line_indexed(0, "abcdef", 3, 0));
+        assert_eq!(chars.len(), 2);
+        assert_eq!(chars[0], vec!['a', 'b', 'c']);
+        assert_eq!(chars[1], vec!['d', 'e', 'f']);
+    }
+
+    #[test]
+    fn continuation_indent_is_clamped_below_the_width() {
+        // indent (5) >= width (2): continuation rows clamp the indent to w-1 so
+        // at least one column is always available for text.
+        let chars = indexed_to_chars("abcd", wrap_line_indexed(0, "abcd", 2, 5));
+        assert_eq!(chars[0], vec!['a', 'b']);
+        assert_eq!(chars[1], vec![' ', 'c']);
+        assert_eq!(chars[2], vec![' ', 'd']);
+    }
+}

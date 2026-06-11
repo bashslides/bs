@@ -2,7 +2,15 @@
 //! custom), and indentation of wrapped continuation rows under the item text.
 
 mod common;
+use bs::types::{Color, Frame, NamedColor, PlayablePresentation};
 use common::{char_at, frame_lines, render_json};
+
+fn cell_bg(p: &PlayablePresentation, x: usize, y: usize) -> Option<Color> {
+    match &p.frames[0] {
+        Frame::Full { cells } => cells[y][x].style.bg.clone(),
+        _ => panic!("frame 0 must be Full"),
+    }
+}
 
 /// One frame holding a single list object.
 fn list_json(extra_fields: &str, w: u16, h: u16) -> String {
@@ -95,4 +103,54 @@ fn trailing_blank_line_does_not_render_a_dangling_bullet() {
 
     assert!(lines[0].starts_with("- Only"), "{:?}", lines[0]);
     assert!(lines[1].trim().is_empty(), "row 1 should be empty, got {:?}", lines[1]);
+}
+
+#[test]
+fn ordered_multi_digit_markers_align_continuation_rows() {
+    // 10 items: the 10th's marker is "10. " (4 wide), and a wrapped row 11
+    // continues indented by that width — verifying multi-digit alignment.
+    let json = list_json(
+        r#", "text": "1\n2\n3\n4\n5\n6\n7\n8\n9\nlong wrapped item", "ordered": true, "spacing": 0, "width": { "fixed": 10 }"#,
+        10,
+        14,
+    );
+    let p = render_json(&json);
+
+    // First nine items are single rows numbered 1..9.
+    assert_eq!(char_at(&p, 0, 0, 0), '1');
+    assert_eq!(char_at(&p, 0, 0, 8), '9');
+    // The 10th item's marker "10. " occupies rows 9.. and its text starts at col 4.
+    assert_eq!(char_at(&p, 0, 0, 9), '1');
+    assert_eq!(char_at(&p, 0, 1, 9), '0');
+    assert_eq!(char_at(&p, 0, 2, 9), '.');
+    assert_eq!(char_at(&p, 0, 4, 9), 'l', "item text starts after '10. '");
+    // Continuation rows are indented to column 4 (under the text, not the marker).
+    assert_eq!(char_at(&p, 0, 3, 10), ' ');
+    assert_eq!(char_at(&p, 0, 4, 10), 'w', "wrapped continuation aligns under the text");
+}
+
+#[test]
+fn explicit_height_clips_extra_items() {
+    let json = list_json(r#", "text": "a\nb\nc", "spacing": 0, "height": { "fixed": 2 }"#, 40, 4);
+    let p = render_json(&json);
+    let lines = frame_lines(&p, 0);
+
+    assert!(lines[0].starts_with("- a"), "{:?}", lines[0]);
+    assert!(lines[1].starts_with("- b"), "{:?}", lines[1]);
+    assert!(lines[2].trim().is_empty(), "third item clipped by height: {:?}", lines[2]);
+}
+
+#[test]
+fn background_fills_the_wrap_width() {
+    // With a width and a background, the row is filled across the full width.
+    let json = list_json(
+        r#", "text": "a", "width": { "fixed": 4 }, "style": { "bg": "blue" }"#,
+        4,
+        1,
+    );
+    let p = render_json(&json);
+
+    assert_eq!(char_at(&p, 0, 2, 0), 'a', "'- a' across the row");
+    let blue = Some(Color::Named(NamedColor::Blue));
+    assert_eq!(cell_bg(&p, 3, 0), blue, "trailing cell is background-filled");
 }

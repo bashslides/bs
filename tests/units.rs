@@ -26,6 +26,21 @@ fn animated_coordinate_interpolates_linearly() {
 }
 
 #[test]
+fn animated_coordinate_supports_a_decreasing_ramp() {
+    // from > to: the value ramps downward across the window.
+    let c = Coordinate::Animated {
+        from: 10,
+        to: 0,
+        start_frame: 0,
+        end_frame: 10,
+    };
+    assert_eq!(c.evaluate(0), 10);
+    assert_eq!(c.evaluate(2), 8);
+    assert_eq!(c.evaluate(5), 5);
+    assert_eq!(c.evaluate(10), 0);
+}
+
+#[test]
 fn animated_coordinate_clamps_outside_its_window() {
     let c = Coordinate::Animated {
         from: 2,
