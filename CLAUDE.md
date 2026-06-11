@@ -75,7 +75,7 @@ stay on the slide and move on with the arrow keys.
 | `src/editor/config.rs` | `KeyBindings` — all bindings configurable via `~/.config/bs/editor.json` |
 | `src/editor/input.rs` | All key event handling. Property browse/edit/dropdown flows (object + table cell-style) share helpers: `TextEdit` (text fields), `dropdown_key`/`DropdownKey` (list nav), and the `ep_*` `Mode::EditProperties` constructors |
 | `src/editor/textedit.rs` | `TextEdit` — reusable text-buffer + cursor used by every text field (property values, the multi-line overlay, cell-style values); translates key events into edits (insert/delete/arrows/home-end/newline) |
-| `src/editor/panel.rs` | Left panel (Add Object), right panel (Properties incl. `Bool` checkboxes + colour swatches), object selection overlay, and the centred multi-line text-editing overlay (`render_text_overlay`) |
+| `src/editor/panel.rs` | Left panel (Add Object), right panel (Properties incl. `Bool` checkboxes + colour swatches), object selection overlay, and the centred multi-line text-editing overlay (`render_text_overlay`). Every text field draws its caret through one shared helper, `draw_caret_line` (see "Text caret convention" below) |
 | `src/editor/properties.rs` | `Editable` trait — one impl per object type holds its property list, setter, coordinate + geometry accessors; generic dispatch (`get_properties`, `set_property`, …) is type-agnostic. `PropertyKind::Bool` flags toggle in place (Space/Enter) |
 | `src/editor/preview.rs` | Canvas preview using Engine+Renderer |
 | `src/editor/timeline.rs` | Frame bar and status line |
@@ -98,6 +98,28 @@ Normal ──a──→ AddObject ──Enter──→ Normal (object added)
 - **ResizeObject**: arrow-key resize (←→ width, ↑↓ height) — a terminal-robust path since many terminals capture Shift+↑/↓ for scrollback; Enter/Esc exit
 - **EditProperties**: edit typed properties; color fields show dropdown; text fields support multi-line (Alt-Enter = newline); property list scrolls vertically
 - **AnimateProperty**: set from/to/start_frame/end_frame for coordinate animation
+
+## Text caret convention
+
+The editor separates two distinct concepts that used to look alike:
+
+- **Reverse video = "this row/field is active/selected."** Used for selected
+  list rows, the highlighted property row, the active input field, and the
+  timeline's current frame. Unchanged.
+- **Underline = the text insertion caret.** It marks the gap *before* the char
+  at that column — the next keystroke lands there and pushes the rest right
+  (insert-before; never overwrite). At end-of-text it underlines the trailing
+  append slot. Drawn only via `panel.rs::draw_caret_line(stdout, x, y, display,
+  caret, reverse, width)`, which rasterizes one pre-composed line and composes
+  the two attributes (an active field still shows its caret).
+
+The text-edit model (`editor/textedit.rs::TextEdit`) is a gap buffer (cursor is a
+char index in `0..=len`, `insert_char` inserts at the cursor and advances) — the
+underline render just makes the picture match that model. `TextEdit` stays
+render-agnostic by design; callers lay out the line (prefix, horizontal scroll)
+and pass `display` + the caret column to `draw_caret_line`. Short single-line
+dialogs (load-art-file, table column number) don't horizontally scroll, so a
+caret past `width` scrolls off — acceptable since those fields are short.
 
 ## Key Data Structures
 
@@ -170,8 +192,21 @@ targets the pure, deterministic core):
 | `tests/pipeline.rs` | End-to-end: label placement, full-vs-diff frames, animation moving + clearing cells, z-order, exclusive frame ranges, off-grid clipping |
 | `tests/table.rs` | Table layout math, `normalize_cells`, add/remove column rescaling, border/borderless/header rendering, height padding, `col_pixel_range` |
 | `tests/art.rs` | `Art` object: per-line placement, positioning, and space-transparency |
-| `tests/list.rs` | `List` object: ordered/unordered markers, custom bullet, default vs custom inter-item spacing, and indentation of wrapped continuation rows |
+| `tests/list.rs` | `List` object: ordered/unordered markers, custom bullet, default vs custom inter-item spacing, wrapped-row indentation, multi-digit alignment, height clip, background fill |
 | `tests/command.rs` | `Command` object: compiled `CommandRegion` spec, the placeholder box drawn into the static frame, and `player::layout_output` (ANSI-strip + tail + clip). The spawn/timeout run-loop is TUI and stays manual |
+| `tests/label.rs` | `Label`: `framed` border, `frame_style`, background fill + height pad, height clip, width wrap |
+| `tests/arrow.rs` | `Arrow`: horizontal/vertical/leftward body + auto head, diagonal L-routing, head-disabled, zero-length point |
+| `tests/hline.rs` | `HLine`: span (end-exclusive) and custom draw char |
+| `tests/header.rs` | `Header`: glyph fill, custom fill char, inter-glyph spacing |
+| `tests/rect.rs` | `Rect`: border + blank interior, title on the top edge |
+| `tests/group.rs` | `Group`: members render independently / group emits nothing; group frame range doesn't gate members |
+| `tests/engine.rs` | `Engine::compile`: one scene per frame, empty deck, object outside `frame_count` |
+| `tests/renderer.rs` | Renderer + `grid_at`: equal-z-order source order, clamp past end, out-of-bounds diff skip |
+
+Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
+`engine/objects/wrap.rs`, `editor/textedit.rs`, `editor/object_defaults.rs`).
+The suite totals 95 tests (72 integration + 23 inline); `TESTS.md` is the
+authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the
@@ -205,11 +240,18 @@ Recent maintainability work (from a code review):
 - Frame replay is unified in `PlayablePresentation::grid_at` (`types.rs`); the
   player (`rebuild_grid`), the editor preview, and the test harness
   (`frame_lines`) all go through it instead of re-implementing diff replay.
+- Text-caret rendering is unified in `panel.rs::draw_caret_line`; all nine text
+  fields (Settings, load-art-file, AnimateProperty, table add/remove-column,
+  table cell content + cell-style, the property-panel inline editor, and the
+  `render_text_overlay` text box) call it instead of each open-coding a caret.
+  This replaced three divergent styles (reverse-video block, a spliced `█`
+  glyph, a bold char on a reversed line). See "Text caret convention" below.
 
 Outstanding maintainability work (from a code review; not yet done):
 
 - The `Mode` FSM (~16 variants, some with 7–15 fields) grows with every object type.
-- `panel.rs::render_right_panel` is one ~900-line function covering 12 modes,
-  with the list/text-field/dropdown render patterns duplicated inline.
+- `panel.rs::render_right_panel` is one ~900-line function covering 12 modes.
+  The caret rendering is now shared (`draw_caret_line`), but the list-row and
+  dropdown render patterns are still duplicated inline.
 - The nine `Editable` impls repeat near-identical `set()` arms and geometry
   accessors for the common x/y/width/height/style/frame fields.
