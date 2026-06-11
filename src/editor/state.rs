@@ -217,42 +217,51 @@ impl EditorState {
             .objects
             .iter()
             .enumerate()
-            .filter(|(_, obj)| {
-                let range = scene_object_frame_range(obj);
-                range.contains(self.current_frame)
+            .filter(|(i, _)| {
+                // Auto groups derive their span from their members, so go through
+                // the presentation's effective-range helper rather than the raw
+                // (possibly absent) stored range.
+                self.source
+                    .effective_frame_range(*i)
+                    .contains(self.current_frame)
             })
             .map(|(i, _)| i)
             .collect()
     }
 }
 
-pub fn scene_object_frame_range(obj: &SceneObject) -> &FrameRange {
+/// The object's stored frame range. A `Group` with an *auto* range has none
+/// (`None`); its effective span is derived via
+/// `SourcePresentation::effective_frame_range`.
+pub fn scene_object_frame_range(obj: &SceneObject) -> Option<&FrameRange> {
     match obj {
-        SceneObject::Label(l) => &l.frames,
-        SceneObject::HLine(h) => &h.frames,
-        SceneObject::Rect(r) => &r.frames,
-        SceneObject::Header(h) => &h.frames,
-        SceneObject::Group(g) => &g.frames,
-        SceneObject::Arrow(a) => &a.frames,
-        SceneObject::Table(t) => &t.frames,
-        SceneObject::Art(a) => &a.frames,
-        SceneObject::Command(c) => &c.frames,
-        SceneObject::List(l) => &l.frames,
+        SceneObject::Label(l) => Some(&l.frames),
+        SceneObject::HLine(h) => Some(&h.frames),
+        SceneObject::Rect(r) => Some(&r.frames),
+        SceneObject::Header(h) => Some(&h.frames),
+        SceneObject::Group(g) => g.frames.as_ref(),
+        SceneObject::Arrow(a) => Some(&a.frames),
+        SceneObject::Table(t) => Some(&t.frames),
+        SceneObject::Art(a) => Some(&a.frames),
+        SceneObject::Command(c) => Some(&c.frames),
+        SceneObject::List(l) => Some(&l.frames),
     }
 }
 
-pub fn scene_object_frame_range_mut(obj: &mut SceneObject) -> &mut FrameRange {
+/// Mutable access to the object's stored frame range. Returns `None` for an
+/// *auto* group (no stored range to mutate).
+pub fn scene_object_frame_range_mut(obj: &mut SceneObject) -> Option<&mut FrameRange> {
     match obj {
-        SceneObject::Label(l) => &mut l.frames,
-        SceneObject::HLine(h) => &mut h.frames,
-        SceneObject::Rect(r) => &mut r.frames,
-        SceneObject::Header(h) => &mut h.frames,
-        SceneObject::Group(g) => &mut g.frames,
-        SceneObject::Arrow(a) => &mut a.frames,
-        SceneObject::Table(t) => &mut t.frames,
-        SceneObject::Art(a) => &mut a.frames,
-        SceneObject::Command(c) => &mut c.frames,
-        SceneObject::List(l) => &mut l.frames,
+        SceneObject::Label(l) => Some(&mut l.frames),
+        SceneObject::HLine(h) => Some(&mut h.frames),
+        SceneObject::Rect(r) => Some(&mut r.frames),
+        SceneObject::Header(h) => Some(&mut h.frames),
+        SceneObject::Group(g) => g.frames.as_mut(),
+        SceneObject::Arrow(a) => Some(&mut a.frames),
+        SceneObject::Table(t) => Some(&mut t.frames),
+        SceneObject::Art(a) => Some(&mut a.frames),
+        SceneObject::Command(c) => Some(&mut c.frames),
+        SceneObject::List(l) => Some(&mut l.frames),
     }
 }
 
@@ -316,12 +325,14 @@ fn scene_object_coordinates_mut(obj: &mut SceneObject) -> Vec<&mut Coordinate> {
 pub fn adjust_frames_after_insert(source: &mut SourcePresentation, inserted_after: usize) {
     source.frame_count += 1;
     for obj in &mut source.objects {
-        let fr = scene_object_frame_range_mut(obj);
-        if fr.end > inserted_after {
-            fr.end += 1;
-        }
-        if fr.start > inserted_after {
-            fr.start += 1;
+        // Auto groups have no stored range to shift; their members shift instead.
+        if let Some(fr) = scene_object_frame_range_mut(obj) {
+            if fr.end > inserted_after {
+                fr.end += 1;
+            }
+            if fr.start > inserted_after {
+                fr.start += 1;
+            }
         }
         for coord in scene_object_coordinates_mut(obj) {
             if let Coordinate::Animated {
@@ -345,18 +356,19 @@ pub fn adjust_frames_after_insert(source: &mut SourcePresentation, inserted_afte
 pub fn adjust_frames_after_delete(source: &mut SourcePresentation, deleted: usize) {
     source.frame_count -= 1;
     for obj in &mut source.objects {
-        let fr = scene_object_frame_range_mut(obj);
-        if fr.start > deleted {
-            fr.start -= 1;
-        }
-        if fr.end > deleted {
-            fr.end -= 1;
+        if let Some(fr) = scene_object_frame_range_mut(obj) {
+            if fr.start > deleted {
+                fr.start -= 1;
+            }
+            if fr.end > deleted {
+                fr.end -= 1;
+            }
         }
     }
-    // Remove objects whose frame range collapsed
+    // Remove objects whose frame range collapsed. Auto groups (no stored range)
+    // are kept — their visibility follows their members, which are pruned here.
     source.objects.retain(|obj| {
-        let fr = scene_object_frame_range(obj);
-        fr.start < fr.end
+        scene_object_frame_range(obj).map_or(true, |fr| fr.start < fr.end)
     });
     for obj in &mut source.objects {
         for coord in scene_object_coordinates_mut(obj) {

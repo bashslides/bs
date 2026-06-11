@@ -78,7 +78,8 @@ pub fn create_default(type_index: usize, current_frame: usize) -> SceneObject {
         }),
         4 => SceneObject::Group(Group {
             members: vec![],
-            frames,
+            // Auto range by default (derived from members; none here).
+            frames: None,
             z_order: 0,
         }),
         5 => SceneObject::Arrow(Arrow {

@@ -33,7 +33,98 @@ pub enum SceneObject {
     List(List),
 }
 
+impl SceneObject {
+    /// The object's own declared frame range. A `Group` with an *auto* range
+    /// (`frames = None`) has no declared range and returns `None`; every other
+    /// object (and an explicit-range group) returns `Some`.
+    pub fn declared_frame_range(&self) -> Option<FrameRange> {
+        match self {
+            SceneObject::Group(g) => g.frames.clone(),
+            SceneObject::Label(l) => Some(l.frames.clone()),
+            SceneObject::HLine(h) => Some(h.frames.clone()),
+            SceneObject::Rect(r) => Some(r.frames.clone()),
+            SceneObject::Header(h) => Some(h.frames.clone()),
+            SceneObject::Arrow(a) => Some(a.frames.clone()),
+            SceneObject::Table(t) => Some(t.frames.clone()),
+            SceneObject::Art(a) => Some(a.frames.clone()),
+            SceneObject::Command(c) => Some(c.frames.clone()),
+            SceneObject::List(l) => Some(l.frames.clone()),
+        }
+    }
+
+    /// Overwrite the object's frame range. On a `Group` this sets an explicit
+    /// range (`Some`); on every other type it replaces `frames`.
+    pub fn set_frame_range(&mut self, r: FrameRange) {
+        match self {
+            SceneObject::Group(g) => g.frames = Some(r),
+            SceneObject::Label(l) => l.frames = r,
+            SceneObject::HLine(h) => h.frames = r,
+            SceneObject::Rect(rc) => rc.frames = r,
+            SceneObject::Header(h) => h.frames = r,
+            SceneObject::Arrow(a) => a.frames = r,
+            SceneObject::Table(t) => t.frames = r,
+            SceneObject::Art(a) => a.frames = r,
+            SceneObject::Command(c) => c.frames = r,
+            SceneObject::List(l) => l.frames = r,
+        }
+    }
+}
+
 impl SourcePresentation {
+    /// Effective frame range of object `i` — the range used to decide where it
+    /// is visible. For most objects this is their declared range; for an *auto*
+    /// group it is the union of its members' declared ranges. An empty/auto
+    /// group with no usable member ranges yields an empty range (`0..0`).
+    pub fn effective_frame_range(&self, i: usize) -> FrameRange {
+        match self.objects.get(i) {
+            Some(SceneObject::Group(g)) if g.frames.is_none() => self.group_derived_range(g),
+            Some(o) => o
+                .declared_frame_range()
+                .unwrap_or(FrameRange { start: 0, end: 0 }),
+            None => FrameRange { start: 0, end: 0 },
+        }
+    }
+
+    /// Union of a group's members' declared ranges. Nested auto-groups (a group
+    /// whose own range is itself auto) contribute nothing — kept non-recursive
+    /// so a cyclic/self-referential member list can never loop.
+    fn group_derived_range(&self, g: &Group) -> FrameRange {
+        let mut start = usize::MAX;
+        let mut end = 0usize;
+        for &m in &g.members {
+            if let Some(r) = self.objects.get(m).and_then(|o| o.declared_frame_range()) {
+                start = start.min(r.start);
+                end = end.max(r.end);
+            }
+        }
+        if start == usize::MAX {
+            FrameRange { start: 0, end: 0 }
+        } else {
+            FrameRange { start, end }
+        }
+    }
+
+    /// Per-object frame-range override imposed by an explicit group range.
+    /// `out[i] = Some(range)` means object `i` is a member of a group whose
+    /// range is explicit, so it must render on `range` instead of its own.
+    /// `None` means the object keeps its own range. Auto groups impose nothing.
+    /// If an object belongs to several explicit groups, the last one wins.
+    pub fn member_overrides(&self) -> Vec<Option<FrameRange>> {
+        let mut out = vec![None; self.objects.len()];
+        for obj in &self.objects {
+            if let SceneObject::Group(g) = obj {
+                if let Some(range) = &g.frames {
+                    for &m in &g.members {
+                        if m < out.len() {
+                            out[m] = Some(range.clone());
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Collect the runtime command specs from all `Command` objects, evaluated
     /// at each command's first active frame. These travel as a sidecar on the
     /// `PlayablePresentation` because they cannot be baked into static frames.

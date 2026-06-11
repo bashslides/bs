@@ -59,6 +59,26 @@ the result with a green `✓` (exit 0) or red `✗` (non-zero / timeout / spawn
 failure) on the top edge. Navigation does not branch on exit status — you always
 stay on the slide and move on with the arrow keys.
 
+**`Group` frame range — auto vs. explicit override.** `Group.frames` is an
+`Option<FrameRange>`. A group is a logical container whose members are ordinary
+top-level objects that render themselves.
+
+- `None` (*auto*, the default for newly created groups): the group has no range
+  of its own; members render on their own ranges. The group's effective span is
+  the **union** of its members' ranges (`SourcePresentation::effective_frame_range`),
+  and the props panel shows blank first/last-frame fields.
+- `Some(range)` (*explicit*): the range **overrides** every member — at compile
+  time each member is gated on the group's range instead of its own (can widen or
+  narrow it). `Engine::compile` applies this via `SourcePresentation::member_overrides`
+  (clone the member, substitute its `frames`, then resolve). The props panel shows
+  the values plus a `PropertyKind::Note` warning.
+
+In the editor: entering a first/last-frame value materialises an explicit range
+(seeded from the derived union); blanking either field reverts to auto. Because
+the stored range is now optional, `state::scene_object_frame_range[_mut]` return
+`Option<&[mut] FrameRange>` (None for an auto group) and frame insert/delete skip
+auto groups (their members shift instead).
+
 ## Module Map
 
 | Path | Role |
@@ -76,7 +96,7 @@ stay on the slide and move on with the arrow keys.
 | `src/editor/input.rs` | All key event handling. Property browse/edit/dropdown flows (object + table cell-style) share helpers: `TextEdit` (text fields), `dropdown_key`/`DropdownKey` (list nav), and the `ep_*` `Mode::EditProperties` constructors |
 | `src/editor/textedit.rs` | `TextEdit` — reusable text-buffer + cursor used by every text field (property values, the multi-line overlay, cell-style values); translates key events into edits (insert/delete/arrows/home-end/newline) |
 | `src/editor/panel.rs` | Left panel (Add Object), right panel (Properties incl. `Bool` checkboxes + colour swatches), object selection overlay, and the centred multi-line text-editing overlay (`render_text_overlay`). Every text field draws its caret through one shared helper, `draw_caret_line` (see "Text caret convention" below) |
-| `src/editor/properties.rs` | `Editable` trait — one impl per object type holds its property list, setter, coordinate + geometry accessors; generic dispatch (`get_properties`, `set_property`, …) is type-agnostic. `PropertyKind::Bool` flags toggle in place (Space/Enter) |
+| `src/editor/properties.rs` | `Editable` trait — one impl per object type holds its property list, setter, coordinate + geometry accessors; generic dispatch (`get_properties`, `set_property`, …) is type-agnostic. `PropertyKind::Bool` flags toggle in place (Space/Enter); `PropertyKind::Note` renders a non-editable free-form warning line (the whole `value`, no `name:`) — the mechanism for surfacing per-object warnings in the panel |
 | `src/editor/preview.rs` | Canvas preview using Engine+Renderer |
 | `src/editor/timeline.rs` | Frame bar and status line |
 | `src/editor/menubar.rs` | Context-sensitive menu bar |
@@ -199,13 +219,13 @@ targets the pure, deterministic core):
 | `tests/hline.rs` | `HLine`: span (end-exclusive) and custom draw char |
 | `tests/header.rs` | `Header`: glyph fill, custom fill char, inter-glyph spacing |
 | `tests/rect.rs` | `Rect`: border + blank interior, title on the top edge |
-| `tests/group.rs` | `Group`: members render independently / group emits nothing; group frame range doesn't gate members |
+| `tests/group.rs` | `Group`: members render independently / group emits nothing; auto range doesn't gate members; explicit range overrides members (narrows + widens) |
 | `tests/engine.rs` | `Engine::compile`: one scene per frame, empty deck, object outside `frame_count` |
 | `tests/renderer.rs` | Renderer + `grid_at`: equal-z-order source order, clamp past end, out-of-bounds diff skip |
 
 Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
 `engine/objects/wrap.rs`, `editor/textedit.rs`, `editor/object_defaults.rs`).
-The suite totals 95 tests (72 integration + 23 inline); `TESTS.md` is the
+The suite totals 98 tests (74 integration + 24 inline); `TESTS.md` is the
 authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and

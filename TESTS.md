@@ -1,7 +1,7 @@
 # Test overview
 
 A list of the test cases in this repository, grouped by area. The suite has
-95 tests: 72 integration tests under `tests/` and 23 inline unit tests in
+98 tests: 74 integration tests under `tests/` and 24 inline unit tests in
 `src/`.
 
 Integration tests follow one pattern: author a presentation in the JSON source
@@ -142,7 +142,9 @@ reconstructed character grid (some also assert on cell styles).
 | Test | Verifies |
 |------|----------|
 | `group_members_render_independently_and_the_group_adds_nothing` | Members render independently; the group emits no cells |
-| `group_frame_range_does_not_gate_its_members` | A group's frame range does not gate its members |
+| `auto_group_does_not_gate_its_members` | An auto group (no `frames`) lets members render on their own ranges |
+| `explicit_group_range_narrows_member_frames` | An explicit group range overrides (narrows) a member's range |
+| `explicit_group_range_widens_member_frames` | An explicit group range overrides (widens) a member's range |
 
 ### Command object — `tests/command.rs`
 
@@ -167,7 +169,8 @@ reconstructed character grid (some also assert on cell styles).
 | `arrow_properties_roundtrip` | `Arrow` properties round-trip through get/set |
 | `art_properties_roundtrip` | `Art` properties round-trip through get/set |
 | `table_properties_roundtrip` | `Table` properties round-trip through get/set |
-| `group_properties_roundtrip_and_bounds` | `Group` properties round-trip and bounds compute |
+| `group_properties_roundtrip_and_bounds` | `Group` properties round-trip and bounds compute; explicit range shows values + override note |
+| `auto_group_shows_blank_frames_and_no_note` | An auto group shows blank first/last frame and no override note |
 | `command_properties_roundtrip` | `Command` properties round-trip through get/set |
 | `list_properties_roundtrip` | `List` properties round-trip through get/set |
 | `unknown_property_is_rejected` | An unknown property name is rejected |

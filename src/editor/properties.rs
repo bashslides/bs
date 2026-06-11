@@ -1,7 +1,8 @@
 use anyhow::{bail, Result};
 
 use crate::engine::source::{
-    Arrow, Art, Command, Coordinate, Group, HLine, Header, Label, List, Rect, SceneObject, Table,
+    Arrow, Art, Command, Coordinate, FrameRange, Group, HLine, Header, Label, List, Rect,
+    SceneObject, Table,
 };
 use crate::types::{Color, NamedColor};
 
@@ -16,6 +17,10 @@ pub enum PropertyKind {
     GroupMember,
     /// Computed / read-only display field; cannot be edited.
     ReadOnly,
+    /// Free-form informational/warning line (the `value` is the whole message;
+    /// `name` is ignored in rendering). Non-editable, like [`ReadOnly`], but
+    /// drawn as a standalone note rather than a `name: value` field.
+    Note,
     /// Dropdown for arrow head character selection.
     HeadChar,
     /// Dropdown for arrow body character selection.
@@ -963,15 +968,28 @@ impl Editable for Arrow {
 impl Editable for Group {
     fn properties(&self, ctx: &PropContext) -> Vec<Property> {
         let (gx, gy, gw, gh) = group_bounds(ctx.objects, ctx.index);
+        // Auto range (`None`) shows blank frame fields; an explicit range shows
+        // its values and a warning that it overrides the members' own ranges.
+        let (first_frame, last_frame) = match &self.frames {
+            Some(fr) => (fr.start.to_string(), fr.end.to_string()),
+            None => (String::new(), String::new()),
+        };
         let mut props = vec![
             Property { name: "x",      value: fmt_f64(gx), kind: PropertyKind::ReadOnly },
             Property { name: "y",      value: fmt_f64(gy), kind: PropertyKind::ReadOnly },
             Property { name: "width",  value: fmt_f64(gw), kind: PropertyKind::ReadOnly },
             Property { name: "height", value: fmt_f64(gh), kind: PropertyKind::ReadOnly },
-            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Text },
-            Property { name: "last_frame",  value: self.frames.end.to_string(),   kind: PropertyKind::Text },
-            Property { name: "z_order",     value: self.z_order.to_string(),      kind: PropertyKind::Text },
+            Property { name: "first_frame", value: first_frame, kind: PropertyKind::Text },
+            Property { name: "last_frame",  value: last_frame,  kind: PropertyKind::Text },
+            Property { name: "z_order",     value: self.z_order.to_string(), kind: PropertyKind::Text },
         ];
+        if self.frames.is_some() {
+            props.push(Property {
+                name: "note",
+                value: "! explicit range overrides member frames (blank = auto)".into(),
+                kind: PropertyKind::Note,
+            });
+        }
         for &member_idx in &self.members {
             props.push(Property {
                 name: "member",
@@ -983,10 +1001,25 @@ impl Editable for Group {
     }
 
     fn set(&mut self, name: &str, value: &str) -> Result<()> {
+        // Materialising an explicit range from "auto" is normally seeded with the
+        // derived union by the caller (`apply_property`); the `None` arms here are
+        // a defensive fallback that produces a single-slide range.
         match name {
-            "first_frame" => self.frames.start = value.parse()?,
-            "last_frame"  => self.frames.end   = value.parse()?,
-            "z_order"     => self.z_order      = value.parse()?,
+            "first_frame" => {
+                let v: usize = value.parse()?;
+                match &mut self.frames {
+                    Some(fr) => fr.start = v,
+                    None => self.frames = Some(FrameRange { start: v, end: v + 1 }),
+                }
+            }
+            "last_frame" => {
+                let v: usize = value.parse()?;
+                match &mut self.frames {
+                    Some(fr) => fr.end = v,
+                    None => self.frames = Some(FrameRange { start: v.saturating_sub(1), end: v }),
+                }
+            }
+            "z_order" => self.z_order = value.parse()?,
             _ => bail!("Unknown property: {name}"),
         }
         Ok(())
@@ -1571,7 +1604,10 @@ mod tests {
         let props = get_properties(objects, idx);
         assert!(!props.is_empty());
         for p in props {
-            if matches!(p.kind, PropertyKind::ReadOnly | PropertyKind::GroupMember) {
+            if matches!(
+                p.kind,
+                PropertyKind::ReadOnly | PropertyKind::GroupMember | PropertyKind::Note
+            ) {
                 continue;
             }
             let r = set_property(&mut objects[idx], p.name, &p.value);
@@ -1657,6 +1693,26 @@ mod tests {
         assert_eq!(x.value, "4");
         let w = props.iter().find(|p| p.name == "width").unwrap();
         assert_eq!(w.value, "6");
+        // An explicit range shows its values and the override warning note.
+        let ff = props.iter().find(|p| p.name == "first_frame").unwrap();
+        assert_eq!(ff.value, "1", "0-based start 0 shown 1-based");
+        assert!(props.iter().any(|p| p.kind == PropertyKind::Note));
+    }
+
+    #[test]
+    fn auto_group_shows_blank_frames_and_no_note() {
+        // A group with no `frames` field is auto: blank first/last frame, no note.
+        let o = vec![
+            obj(r#"{"type":"label","text":"Hi","position":{"x":{"fixed":0},"y":{"fixed":0}},
+                    "frames":{"start":0,"end":2}}"#),
+            obj(r#"{"type":"group","members":[0]}"#),
+        ];
+        let props = get_properties(&o, 1);
+        let ff = props.iter().find(|p| p.name == "first_frame").unwrap();
+        let lf = props.iter().find(|p| p.name == "last_frame").unwrap();
+        assert_eq!(ff.value, "");
+        assert_eq!(lf.value, "");
+        assert!(!props.iter().any(|p| p.kind == PropertyKind::Note));
     }
 
     #[test]

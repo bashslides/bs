@@ -11,23 +11,42 @@ pub mod source;
 
 use crate::types::ResolvedScene;
 use objects::Resolve;
-use source::SourcePresentation;
+use source::{FrameRange, SourcePresentation};
 
 pub struct Engine;
 
 impl Engine {
     /// Compile a source presentation into resolved scenes, one per frame.
     pub fn compile(source: &SourcePresentation) -> Vec<ResolvedScene> {
+        // A group with an explicit range overrides its members' frame ranges;
+        // compute that mapping once and reuse it for every frame.
+        let overrides = source.member_overrides();
         (0..source.frame_count)
-            .map(|frame| Self::resolve_frame(source, frame))
+            .map(|frame| Self::resolve_frame(source, frame, &overrides))
             .collect()
     }
 
-    fn resolve_frame(source: &SourcePresentation, frame: usize) -> ResolvedScene {
+    fn resolve_frame(
+        source: &SourcePresentation,
+        frame: usize,
+        overrides: &[Option<FrameRange>],
+    ) -> ResolvedScene {
         let mut ops = Vec::new();
 
-        for obj in &source.objects {
-            obj.resolve(frame, &mut ops);
+        for (i, obj) in source.objects.iter().enumerate() {
+            match overrides.get(i).and_then(|o| o.as_ref()) {
+                // Member of an explicit-range group: render on the group's range
+                // (a clone carries the substituted range through the object's own
+                // self-gating) instead of the member's own range.
+                Some(range) => {
+                    if range.contains(frame) {
+                        let mut member = obj.clone();
+                        member.set_frame_range(range.clone());
+                        member.resolve(frame, &mut ops);
+                    }
+                }
+                None => obj.resolve(frame, &mut ops),
+            }
         }
 
         ResolvedScene {

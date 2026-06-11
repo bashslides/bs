@@ -775,6 +775,9 @@ pub fn render_right_panel(
                 } else if prop.kind == PropertyKind::Bool {
                     let mark = if prop.value.trim() == "true" { "x" } else { " " };
                     format!("[{}] {}", mark, prop.name).chars().take(max_width).collect()
+                } else if prop.kind == PropertyKind::Note {
+                    // Free-form note: the value is the whole line (no `name:`).
+                    prop.value.chars().take(max_width).collect()
                 } else {
                     format!("{}: {}", prop.name, fmt_val(&prop.value))
                         .chars().take(max_width).collect()
@@ -782,7 +785,7 @@ pub fn render_right_panel(
             };
 
             if i == selected_prop {
-                if prop.kind == PropertyKind::ReadOnly {
+                if matches!(prop.kind, PropertyKind::ReadOnly | PropertyKind::Note) {
                     // ReadOnly: show selected but dimmed (not editable)
                     let display: String = fmt_prop_display(prop);
                     queue!(
@@ -807,8 +810,8 @@ pub fn render_right_panel(
                     )?;
                 }
                 selected_screen_y = Some(screen_y);
-            } else if prop.kind == PropertyKind::ReadOnly {
-                // Non-selected ReadOnly: always dimmed
+            } else if matches!(prop.kind, PropertyKind::ReadOnly | PropertyKind::Note) {
+                // Non-selected ReadOnly / Note: always dimmed
                 let display = fmt_prop_display(prop);
                 queue!(
                     stdout,

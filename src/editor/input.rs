@@ -3,7 +3,7 @@ use crossterm::terminal;
 
 use crate::engine::objects::table::{table_add_column, table_remove_column};
 use crate::engine::objects::Group;
-use crate::engine::source::{Coordinate, FrameRange, SceneObject};
+use crate::engine::source::{Coordinate, SceneObject};
 use crate::types::Style;
 use super::config::matches_binding;
 use super::object_defaults;
@@ -190,6 +190,29 @@ fn follow_panel_scroll(selected_row: usize, panel_scroll: usize, term_h: usize) 
 /// Apply a property edit and report it on the status line. Shared by the toggle,
 /// dropdown, and text-entry paths so they format success/errors identically.
 fn apply_property(state: &mut EditorState, object_index: usize, name: &str, value: &str) {
+    // A group's frame range is optional ("auto", derived from members). Editing
+    // first_frame/last_frame transitions it:
+    //   * blank value  -> revert to auto (no override of member ranges)
+    //   * any value    -> materialise an explicit range (seeded from the derived
+    //                     union) that then overrides member ranges
+    if matches!(state.source.objects.get(object_index), Some(SceneObject::Group(_)))
+        && (name == "first_frame" || name == "last_frame")
+    {
+        if value.trim().is_empty() {
+            if let SceneObject::Group(g) = &mut state.source.objects[object_index] {
+                g.frames = None;
+            }
+            state.dirty = true;
+            state.status_message = Some("Group range: auto (from members)".into());
+            return;
+        }
+        let derived = state.source.effective_frame_range(object_index);
+        if let SceneObject::Group(g) = &mut state.source.objects[object_index] {
+            if g.frames.is_none() {
+                g.frames = Some(derived);
+            }
+        }
+    }
     match properties::set_property(&mut state.source.objects[object_index], name, value) {
         Ok(()) => {
             state.dirty = true;
@@ -589,10 +612,9 @@ fn handle_select_group_members(state: &mut EditorState, key: KeyEvent) -> Action
     if matches_binding(&bindings.confirm, &key) {
         let group = SceneObject::Group(Group {
             members,
-            frames: FrameRange {
-                start: state.current_frame,
-                end: state.source.frame_count,
-            },
+            // Auto by default: the group's span follows its members' ranges
+            // until the user sets an explicit range in the properties panel.
+            frames: None,
             z_order: 0,
         });
         state.source.objects.push(group);
@@ -1052,8 +1074,8 @@ fn handle_edit_properties(state: &mut EditorState, key: KeyEvent) -> Action {
         }
     }
 
-    // ReadOnly property: block editing keys; allow navigation to fall through.
-    if prop_kind == PropertyKind::ReadOnly {
+    // ReadOnly / Note properties: block editing keys; allow navigation through.
+    if matches!(prop_kind, PropertyKind::ReadOnly | PropertyKind::Note) {
         if matches_binding(&bindings.confirm, &key)
             || matches_binding(&bindings.animate, &key)
             || matches_binding(&bindings.delete_object, &key)
@@ -1501,17 +1523,20 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
                 Ok(()) => {
                     state.dirty = true;
                     // Extend the object's visibility range to cover the animation.
+                    // (Groups have no coordinates to animate, so `fr` is always
+                    // present on this path.)
                     if start_frame < end_frame {
-                        let fr = super::state::scene_object_frame_range_mut(
+                        if let Some(fr) = super::state::scene_object_frame_range_mut(
                             &mut state.source.objects[object_index],
-                        );
-                        if start_frame < fr.start {
-                            fr.start = start_frame;
-                        }
-                        // frames.end is exclusive, so the object must be visible
-                        // through end_frame inclusive.
-                        if end_frame + 1 > fr.end {
-                            fr.end = end_frame + 1;
+                        ) {
+                            if start_frame < fr.start {
+                                fr.start = start_frame;
+                            }
+                            // frames.end is exclusive, so the object must be
+                            // visible through end_frame inclusive.
+                            if end_frame + 1 > fr.end {
+                                fr.end = end_frame + 1;
+                            }
                         }
                     }
                     state.status_message = Some(format!("Animated {property_name}"));

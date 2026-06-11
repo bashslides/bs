@@ -9,7 +9,16 @@ use super::Resolve;
 pub struct Group {
     /// Indices into `SourcePresentation::objects`.
     pub members: Vec<usize>,
-    pub frames: FrameRange,
+    /// Frame range of the group.
+    ///
+    /// * `None` — *auto*: the group has no range of its own; its members render
+    ///   on their own frame ranges, and the group's effective span is the union
+    ///   of its members' ranges (see [`SourcePresentation::effective_frame_range`]).
+    /// * `Some(range)` — *explicit*: the range **overrides** every member, which
+    ///   then renders on `range` instead of its own
+    ///   (see [`SourcePresentation::member_overrides`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frames: Option<FrameRange>,
     #[serde(default)]
     pub z_order: i32,
 }
