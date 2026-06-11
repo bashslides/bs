@@ -357,11 +357,14 @@ pub fn render_right_panel(
         draw_header(stdout, &title)?;
 
         let field_names = ["from", "to", "start", "end"];
+        // `start`/`end` are shown 1-based to match the property panel's
+        // first_frame/last_frame (an animation through 0-based `end_frame` reads
+        // as slide `end_frame + 1`). `from`/`to` are coordinate values, shown raw.
         let field_values = [
             from.to_string(),
             to.to_string(),
-            start_frame.to_string(),
-            end_frame.to_string(),
+            (start_frame + 1).to_string(),
+            (end_frame + 1).to_string(),
         ];
 
         for i in 0..4usize {

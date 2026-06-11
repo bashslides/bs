@@ -251,8 +251,8 @@ targets the pure, deterministic core):
 Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
 `engine/objects/wrap.rs`, `editor/textedit.rs`, `editor/object_defaults.rs`,
 `editor/state.rs` — frame copy/blank-insert/move/delete, `player/mod.rs` —
-`loop_next` bounce/wrap stepping). The suite totals 122 tests (83 integration +
-39 inline); `TESTS.md` is the authoritative per-test list.
+`loop_next` bounce/wrap stepping). The suite totals 123 tests (83 integration +
+40 inline); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the

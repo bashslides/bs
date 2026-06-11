@@ -343,6 +343,27 @@ fn scene_object_coordinates_mut(obj: &mut SceneObject) -> Vec<&mut Coordinate> {
     }
 }
 
+/// The union of every animated coordinate's window on `obj`, as an exclusive
+/// `[start, end)` frame range — i.e. `[min start_frame, max end_frame + 1)`
+/// (an animation reaches its destination *on* `end_frame`, so the exclusive end
+/// is one past it). Returns `None` when the object has no animated coordinate.
+///
+/// Used to keep an object's visible range in lock-step with its animation(s):
+/// applying or editing an animation recomputes the range from this span, so it
+/// both grows to cover a longer animation and shrinks when one is shortened
+/// (no frames left visible past the animation's new end).
+pub fn scene_object_animation_span(obj: &mut SceneObject) -> Option<(usize, usize)> {
+    let mut lo = usize::MAX;
+    let mut hi = 0usize;
+    for coord in scene_object_coordinates_mut(obj) {
+        if let Coordinate::Animated { start_frame, end_frame, .. } = coord {
+            lo = lo.min(*start_frame);
+            hi = hi.max(*end_frame + 1);
+        }
+    }
+    (lo != usize::MAX).then_some((lo, hi))
+}
+
 /// Insert a *blank* frame just after `inserted_after`: objects local to the
 /// source frame do not extend into the new one, so it starts empty. This is the
 /// "make room" primitive shared by the editor's *add blank frame* action and by
@@ -728,6 +749,26 @@ mod tests {
         let mut p = pres(3, vec![label(0, 3)]);
         move_frame(&mut p, 0, 2, false);
         assert_eq!(range(&p.objects[0]), (0, 3));
+    }
+
+    #[test]
+    fn animation_span_unions_animated_coordinates_and_makes_end_exclusive() {
+        // x animated over frames 5..=10 → exclusive span [5, 11).
+        let mut obj = create_default(0, 0); // Label, all Fixed
+        if let SceneObject::Label(l) = &mut obj {
+            l.position.x = Coordinate::Animated { from: 0, to: 9, start_frame: 5, end_frame: 10 };
+        }
+        assert_eq!(scene_object_animation_span(&mut obj), Some((5, 11)));
+
+        // A second animation starting earlier widens the union's start only.
+        if let SceneObject::Label(l) = &mut obj {
+            l.position.y = Coordinate::Animated { from: 0, to: 3, start_frame: 2, end_frame: 8 };
+        }
+        assert_eq!(scene_object_animation_span(&mut obj), Some((2, 11)));
+
+        // No animated coordinate → no span (range is left untouched on apply).
+        let mut plain = create_default(0, 0);
+        assert_eq!(scene_object_animation_span(&mut plain), None);
     }
 
     #[test]

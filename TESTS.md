@@ -244,6 +244,7 @@ reconstructed character grid (some also assert on cell styles).
 | `move_frame_relocates_before_target` | Moving a frame before a target remaps ranges and returns the new index |
 | `move_frame_keeps_a_whole_deck_object_spanning_the_whole_deck` | A whole-deck object still spans the whole deck after a move |
 | `move_frame_is_a_noop_onto_itself` | Moving a frame relative to itself is a no-op |
+| `animation_span_unions_animated_coordinates_and_makes_end_exclusive` | `scene_object_animation_span` unions every animated coordinate's window into an exclusive `[start, end)`; `None` when nothing is animated |
 
 ### Art library — `src/art_library.rs`
 

@@ -1566,12 +1566,14 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
                         Ok(v) => { new_to = v; None }
                         Err(e) => Some(format!("Invalid number: {e}")),
                     },
-                    2 => match buf.parse::<usize>() {
-                        Ok(v) => { new_start = v; None }
+                    // `start`/`end` are entered 1-based (matching first_frame/
+                    // last_frame); store them 0-based.
+                    2 => match buf.trim().parse::<usize>() {
+                        Ok(v) => { new_start = v.saturating_sub(1); None }
                         Err(e) => Some(format!("Invalid number: {e}")),
                     },
-                    3 => match buf.parse::<usize>() {
-                        Ok(v) => { new_end = v; None }
+                    3 => match buf.trim().parse::<usize>() {
+                        Ok(v) => { new_end = v.saturating_sub(1); None }
                         Err(e) => Some(format!("Invalid number: {e}")),
                     },
                     _ => None,
@@ -1658,12 +1660,13 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
             return Action::Redraw;
         }
         KeyCode::Enter => {
-            // Start editing the selected field
+            // Start editing the selected field. `start`/`end` are 1-based in the
+            // UI (see the commit handler and panel), so seed them as such.
             let init = match selected_field {
                 0 => from.to_string(),
                 1 => to.to_string(),
-                2 => start_frame.to_string(),
-                _ => end_frame.to_string(),
+                2 => (start_frame + 1).to_string(),
+                _ => (end_frame + 1).to_string(),
             };
             let new_cursor = init.chars().count();
             state.mode = Mode::AnimateProperty {
@@ -1683,21 +1686,22 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
             match properties::set_coordinate(&mut state.source.objects[object_index], property_name, coord) {
                 Ok(()) => {
                     state.dirty = true;
-                    // Extend the object's visibility range to cover the animation.
-                    // (Groups have no coordinates to animate, so `fr` is always
-                    // present on this path.)
-                    if start_frame < end_frame {
+                    // Keep the object's visible range in lock-step with its
+                    // animation window(s): the union of every animated
+                    // coordinate's span. Recomputed on each apply so the range
+                    // grows for a longer animation AND shrinks when one is
+                    // shortened — no "zombie" frames lingering past the new end.
+                    // (Groups have no coordinates, so this path never runs for
+                    // them; an object whose last animation was just cleared keeps
+                    // its current range.)
+                    if let Some((lo, hi)) = super::state::scene_object_animation_span(
+                        &mut state.source.objects[object_index],
+                    ) {
                         if let Some(fr) = super::state::scene_object_frame_range_mut(
                             &mut state.source.objects[object_index],
                         ) {
-                            if start_frame < fr.start {
-                                fr.start = start_frame;
-                            }
-                            // frames.end is exclusive, so the object must be
-                            // visible through end_frame inclusive.
-                            if end_frame + 1 > fr.end {
-                                fr.end = end_frame + 1;
-                            }
+                            fr.start = lo;
+                            fr.end = hi;
                         }
                     }
                     state.status_message = Some(format!("Animated {property_name}"));

@@ -1353,8 +1353,10 @@ pub fn set_coordinate(obj: &mut SceneObject, name: &str, coord: Coordinate) -> R
 pub fn format_coordinate(coord: &Coordinate) -> String {
     match coord {
         Coordinate::Fixed(v) => fmt_f64(*v),
+        // Frames shown 1-based (f1 = first slide) to match the Animate panel and
+        // the first_frame/last_frame property fields.
         Coordinate::Animated { from, to, start_frame, end_frame } =>
-            format!("{from}->{to} (f{start_frame}..f{end_frame})"),
+            format!("{from}->{to} (f{}..f{})", start_frame + 1, end_frame + 1),
     }
 }
 
