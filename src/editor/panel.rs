@@ -307,12 +307,16 @@ pub fn render_right_panel(
     if let Mode::SelectGroupMembers { selected, members } = &state.mode {
         let selected = *selected;
         draw_header(stdout, "Add Group")?;
-        for (i, obj) in state.source.objects.iter().enumerate() {
-            let y = cy + (i + 2) as u16;
+        // Only the current slide's objects are groupable; `selected` and the
+        // [+]/[ ] markers are keyed off the real object index in `visible`.
+        let visible = state.objects_on_current_frame();
+        for (vi, &obj_idx) in visible.iter().enumerate() {
+            let y = cy + (vi + 2) as u16;
             if y >= cy + layout.canvas_height {
                 break;
             }
-            let is_member = members.contains(&i);
+            let obj = &state.source.objects[obj_idx];
+            let is_member = members.contains(&obj_idx);
             let check = if is_member { "[+]" } else { "[ ]" };
             let summary = scene_object_summary(obj);
             let text: String = format!("{} {}", check, summary)
@@ -320,7 +324,7 @@ pub fn render_right_panel(
                 .take(max_width)
                 .collect();
             queue!(stdout, cursor::MoveTo(panel_x + 2, y))?;
-            if i == selected {
+            if vi == selected {
                 queue!(
                     stdout,
                     style::SetAttribute(style::Attribute::Reverse),

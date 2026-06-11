@@ -43,11 +43,8 @@ fn focus_indices(state: &EditorState) -> Option<Vec<usize>> {
             })
         }
         Mode::SelectGroupMembers { selected, .. } => {
-            if *selected < state.source.objects.len() {
-                Some(vec![*selected])
-            } else {
-                None
-            }
+            let visible = state.objects_on_current_frame();
+            visible.get(*selected).copied().map(|i| vec![i])
         }
         // Table modes: focus the table object (rendering is overridden separately)
         Mode::TableEditCellProps { object_index, .. }

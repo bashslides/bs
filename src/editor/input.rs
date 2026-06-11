@@ -505,9 +505,9 @@ fn handle_add_object(state: &mut EditorState, key: KeyEvent) -> Action {
     }
     if matches_binding(&bindings.confirm, &key) {
         if object_defaults::OBJECT_TYPES[selected] == "Group" {
-            // Group needs member selection before it can be created
-            if state.source.objects.is_empty() {
-                state.status_message = Some("No objects to group".into());
+            // Group members are chosen from the objects on the current slide.
+            if state.objects_on_current_frame().is_empty() {
+                state.status_message = Some("No objects on this slide to group".into());
                 state.mode = Mode::Normal;
             } else {
                 state.mode = Mode::SelectGroupMembers { selected: 0, members: Vec::new() };
@@ -548,11 +548,16 @@ fn handle_select_group_members(state: &mut EditorState, key: KeyEvent) -> Action
         _ => return Action::Continue,
     };
 
-    let total = state.source.objects.len();
+    // Only objects on the current slide can be grouped. `selected` indexes into
+    // this visible list; `members` stores the real `source.objects` indices it
+    // maps to (so the created `Group.members` stay valid).
+    let visible = state.objects_on_current_frame();
+    let total = visible.len();
     if total == 0 {
         state.mode = Mode::Normal;
         return Action::Redraw;
     }
+    let selected = selected.min(total - 1);
 
     if matches_binding(&bindings.cancel, &key) {
         state.mode = Mode::Normal;
@@ -570,11 +575,12 @@ fn handle_select_group_members(state: &mut EditorState, key: KeyEvent) -> Action
     }
     // Space: toggle membership of the highlighted object
     if key.code == KeyCode::Char(' ') {
+        let obj_idx = visible[selected];
         let mut new_members = members;
-        if let Some(pos) = new_members.iter().position(|&m| m == selected) {
+        if let Some(pos) = new_members.iter().position(|&m| m == obj_idx) {
             new_members.remove(pos);
         } else {
-            new_members.push(selected);
+            new_members.push(obj_idx);
         }
         state.mode = Mode::SelectGroupMembers { selected, members: new_members };
         return Action::Redraw;
