@@ -16,7 +16,7 @@ pub struct Layout {
 }
 
 impl Layout {
-    pub fn compute(term_width: u16, term_height: u16, mode: &Mode) -> Self {
+    pub fn compute(term_width: u16, term_height: u16, mode: &Mode, fullscreen: bool) -> Self {
         let right = match mode {
             Mode::EditProperties { .. }
             | Mode::AnimateProperty { .. }
@@ -29,11 +29,17 @@ impl Layout {
             | Mode::Settings { .. } => RIGHT_PANEL_WIDTH,
             _ => 0,
         };
-        let timeline_h: u16 = 2;
+        // Fullscreen ("no bars") mode hides the menu bar and timeline, handing
+        // their rows to the canvas.
+        let timeline_h: u16 = if fullscreen { 0 } else { 2 };
         // SelectedObject has more key hints, so reserve 2 lines.
-        let menu_h: u16 = match mode {
-            Mode::SelectedObject { .. } | Mode::ResizeObject { .. } => 2,
-            _ => 1,
+        let menu_h: u16 = if fullscreen {
+            0
+        } else {
+            match mode {
+                Mode::SelectedObject { .. } | Mode::ResizeObject { .. } => 2,
+                _ => 1,
+            }
         };
         Layout {
             right_panel_width: right,

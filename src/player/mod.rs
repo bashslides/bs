@@ -16,7 +16,7 @@ use crossterm::{cursor, event, execute, queue, style, terminal};
 use crate::menubar::print_menu_item;
 use crate::types::{Cell, Color, CommandRegion, Frame, NamedColor, PlayablePresentation, Style};
 
-/// Rows reserved above the canvas for the menu bar.
+/// Rows reserved above the canvas for the menu bar (when not in fullscreen).
 const CANVAS_OFFSET: u16 = 1;
 
 /// A binary currently executing for the active frame. The child runs with piped
@@ -97,9 +97,7 @@ impl Player {
 
     fn run_loop(&mut self, stdout: &mut io::Stdout) -> Result<()> {
         self.apply_frame(0)?;
-        self.render_menubar(stdout)?;
-        self.render_full(stdout)?;
-        self.render_status(stdout)?;
+        self.redraw_all(stdout)?;
         self.maybe_start_command(stdout)?;
 
         loop {
@@ -124,9 +122,19 @@ impl Player {
                     use event::KeyCode::*;
                     match key.code {
                         // Quit also stops any running binary.
-                        Char('q') | Esc => {
+                        Char('q') => {
                             self.kill_running();
                             break;
+                        }
+                        // Esc leaves fullscreen first; otherwise it quits.
+                        Esc => {
+                            if self.fullscreen {
+                                self.fullscreen = false;
+                                self.redraw_all(stdout)?;
+                            } else {
+                                self.kill_running();
+                                break;
+                            }
                         }
                         // Navigation always interrupts a running binary and
                         // moves on — a slow command can never trap the deck.
@@ -137,22 +145,17 @@ impl Player {
                             let last = self.presentation.frames.len().saturating_sub(1);
                             self.nav_to(last, stdout)?;
                         }
+                        // Toggle "no bars" fullscreen: hide the menu/status bars
+                        // and give the canvas the whole screen.
                         Char('f') => {
                             self.fullscreen = !self.fullscreen;
-                            if self.fullscreen {
-                                stdout.write_all(b"\x1b[10;1t")?;
-                            } else {
-                                stdout.write_all(b"\x1b[10;0t")?;
-                            }
-                            stdout.flush()?;
+                            self.redraw_all(stdout)?;
                         }
                         _ => {}
                     }
                 }
                 event::Event::Resize(_, _) => {
-                    self.render_menubar(stdout)?;
-                    self.render_full(stdout)?;
-                    self.render_status(stdout)?;
+                    self.redraw_all(stdout)?;
                 }
                 _ => {}
             }
@@ -243,6 +246,30 @@ impl Player {
     // Terminal output
     // -----------------------------------------------------------------------
 
+    /// Rows reserved above the canvas: one for the menu bar, or none in
+    /// fullscreen ("no bars") mode where the canvas owns the whole screen.
+    fn canvas_offset(&self) -> u16 {
+        if self.fullscreen {
+            0
+        } else {
+            CANVAS_OFFSET
+        }
+    }
+
+    /// Clear and repaint everything for the current fullscreen state: the menu
+    /// and status bars are drawn only when not in fullscreen.
+    fn redraw_all(&self, stdout: &mut io::Stdout) -> Result<()> {
+        queue!(stdout, terminal::Clear(terminal::ClearType::All))?;
+        if !self.fullscreen {
+            self.render_menubar(stdout)?;
+        }
+        self.render_full(stdout)?;
+        if !self.fullscreen {
+            self.render_status(stdout)?;
+        }
+        Ok(())
+    }
+
     fn render_menubar(&self, stdout: &mut io::Stdout) -> Result<()> {
         let items: &[&str] = &[
             "[←] prev",
@@ -270,8 +297,9 @@ impl Player {
     }
 
     fn render_full(&self, stdout: &mut io::Stdout) -> Result<()> {
+        let offset = self.canvas_offset();
         for (y, row) in self.grid.iter().enumerate() {
-            queue!(stdout, cursor::MoveTo(0, y as u16 + CANVAS_OFFSET))?;
+            queue!(stdout, cursor::MoveTo(0, y as u16 + offset))?;
             for cell in row {
                 let cs = to_content_style(&cell.style);
                 queue!(
@@ -291,7 +319,7 @@ impl Player {
                     let cs = to_content_style(&change.cell.style);
                     queue!(
                         stdout,
-                        cursor::MoveTo(change.x, change.y + CANVAS_OFFSET),
+                        cursor::MoveTo(change.x, change.y + self.canvas_offset()),
                         style::PrintStyledContent(style::StyledContent::new(cs, change.cell.ch)),
                     )?;
                 }
@@ -306,7 +334,7 @@ impl Player {
     }
 
     fn render_status(&self, stdout: &mut io::Stdout) -> Result<()> {
-        let status_y = self.presentation.contract.height + CANVAS_OFFSET;
+        let status_y = self.presentation.contract.height + self.canvas_offset();
         let (_, term_h) = terminal::size()?;
         if status_y >= term_h {
             return Ok(()); // No room for status bar.
@@ -529,7 +557,7 @@ impl Player {
                 break;
             }
             let gw = self.grid[gy].len();
-            queue!(stdout, cursor::MoveTo(x, y + row + CANVAS_OFFSET))?;
+            queue!(stdout, cursor::MoveTo(x, y + row + self.canvas_offset()))?;
             for col in 0..w {
                 let gx = (x + col) as usize;
                 if gx >= gw {

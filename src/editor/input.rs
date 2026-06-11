@@ -57,10 +57,15 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
     // Global shortcut: works from any mode *except* while a text field is being
     // typed into — otherwise a plain-letter binding (e.g. "f") would be swallowed
     // by the fullscreen toggle instead of inserting the character.
-    if !mode_accepts_text(&state.mode)
-        && matches_binding(&state.config.key_bindings.fullscreen, &key)
-    {
-        return Action::ToggleFullscreen;
+    if !mode_accepts_text(&state.mode) {
+        if matches_binding(&state.config.key_bindings.fullscreen, &key) {
+            return Action::ToggleFullscreen;
+        }
+        // While in fullscreen, Esc leaves "no bars" mode (instead of its usual
+        // per-mode cancel) so the user can always get the bars back.
+        if state.fullscreen && key.code == KeyCode::Esc {
+            return Action::ToggleFullscreen;
+        }
     }
 
     match &state.mode {

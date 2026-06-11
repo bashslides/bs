@@ -170,6 +170,8 @@ pub struct EditorState {
     pub status_message: Option<String>,
     /// Set during a blink animation to suppress the highlight on the selected object.
     pub blink_hidden: bool,
+    /// "No bars" mode: hide the menu bar and timeline so the canvas fills the screen.
+    pub fullscreen: bool,
 }
 
 impl EditorState {
@@ -196,6 +198,7 @@ impl EditorState {
             dirty: false,
             status_message: None,
             blink_hidden: false,
+            fullscreen: false,
         })
     }
 

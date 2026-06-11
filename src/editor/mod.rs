@@ -25,13 +25,12 @@ use ui::Layout;
 
 pub struct Editor {
     state: EditorState,
-    fullscreen: bool,
 }
 
 impl Editor {
     pub fn open(path: &str) -> Result<Self> {
         let state = EditorState::open(path)?;
-        Ok(Editor { state, fullscreen: false })
+        Ok(Editor { state })
     }
 
     pub fn run(&mut self) -> Result<()> {
@@ -87,13 +86,7 @@ impl Editor {
                     self.full_redraw(stdout)?;
                 }
                 Action::ToggleFullscreen => {
-                    self.fullscreen = !self.fullscreen;
-                    if self.fullscreen {
-                        stdout.write_all(b"\x1b[10;1t")?;
-                    } else {
-                        stdout.write_all(b"\x1b[10;0t")?;
-                    }
-                    stdout.flush()?;
+                    self.state.fullscreen = !self.state.fullscreen;
                     self.full_redraw(stdout)?;
                 }
                 Action::Quit => {
@@ -137,12 +130,15 @@ impl Editor {
 
     fn full_redraw(&self, stdout: &mut io::Stdout) -> Result<()> {
         let (term_w, term_h) = terminal::size()?;
-        let layout = Layout::compute(term_w, term_h, &self.state.mode);
+        let layout = Layout::compute(term_w, term_h, &self.state.mode, self.state.fullscreen);
 
         execute!(stdout, terminal::Clear(terminal::ClearType::All))?;
 
-        // Draw menu bar
-        menubar::render_menubar(stdout, &layout, &self.state)?;
+        // In fullscreen ("no bars") mode the menu bar and timeline are hidden so
+        // the canvas fills the whole screen.
+        if !self.state.fullscreen {
+            menubar::render_menubar(stdout, &layout, &self.state)?;
+        }
 
         // Draw canvas
         preview::render_canvas_production(stdout, &layout, &self.state)?;
@@ -150,8 +146,9 @@ impl Editor {
         // Draw right panel (handles AddObject, SelectObject, Confirm, EditProperties, AnimateProperty)
         panel::render_right_panel(stdout, &layout, &self.state)?;
 
-        // Draw timeline
-        timeline::render_timeline(stdout, &layout, &self.state)?;
+        if !self.state.fullscreen {
+            timeline::render_timeline(stdout, &layout, &self.state)?;
+        }
 
         stdout.flush()?;
         Ok(())
