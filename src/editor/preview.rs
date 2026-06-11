@@ -92,58 +92,49 @@ pub fn render_canvas_production(
         }
     }
 
-    // Draw a dim border showing the presentation area boundary
+    // Draw a dim outline *around* the active (presentation) area. The frame sits
+    // in the ring just outside the content, so the presentation is inset by one
+    // cell — otherwise the painted cells below would cover the border. When the
+    // outline wouldn't fit in the canvas, skip it and paint at the origin.
     let pres_w = state.source.width;
     let pres_h = state.source.height;
     let cx = layout.canvas_x;
     let cy = layout.canvas_y;
 
-    if pres_w <= layout.canvas_width && pres_h <= layout.canvas_height {
-        queue!(stdout, style::SetAttribute(style::Attribute::Dim))?;
+    let draw_border =
+        pres_w + 2 <= layout.canvas_width && pres_h + 2 <= layout.canvas_height;
+    // Origin where presentation content is painted (inset when framed).
+    let (ox, oy) = if draw_border { (cx + 1, cy + 1) } else { (cx, cy) };
 
+    if draw_border {
+        let left = cx;
+        let right = cx + pres_w + 1;
+        let top = cy;
+        let bottom = cy + pres_h + 1;
+
+        queue!(stdout, style::SetAttribute(style::Attribute::Dim))?;
         // Top/bottom edges
-        for x in 0..pres_w {
-            queue!(
-                stdout,
-                cursor::MoveTo(cx + x, cy),
-                style::Print("\u{2500}"),
-            )?;
-            if pres_h > 1 {
-                queue!(
-                    stdout,
-                    cursor::MoveTo(cx + x, cy + pres_h - 1),
-                    style::Print("\u{2500}"),
-                )?;
-            }
+        for x in left..=right {
+            queue!(stdout, cursor::MoveTo(x, top), style::Print("\u{2500}"))?;
+            queue!(stdout, cursor::MoveTo(x, bottom), style::Print("\u{2500}"))?;
         }
         // Left/right edges
-        for y in 0..pres_h {
-            queue!(
-                stdout,
-                cursor::MoveTo(cx, cy + y),
-                style::Print("\u{2502}"),
-            )?;
-            if pres_w > 1 {
-                queue!(
-                    stdout,
-                    cursor::MoveTo(cx + pres_w - 1, cy + y),
-                    style::Print("\u{2502}"),
-                )?;
-            }
+        for y in top..=bottom {
+            queue!(stdout, cursor::MoveTo(left, y), style::Print("\u{2502}"))?;
+            queue!(stdout, cursor::MoveTo(right, y), style::Print("\u{2502}"))?;
         }
         // Corners
         queue!(
             stdout,
-            cursor::MoveTo(cx, cy),
+            cursor::MoveTo(left, top),
             style::Print("\u{250c}"),
-            cursor::MoveTo(cx + pres_w - 1, cy),
+            cursor::MoveTo(right, top),
             style::Print("\u{2510}"),
-            cursor::MoveTo(cx, cy + pres_h - 1),
+            cursor::MoveTo(left, bottom),
             style::Print("\u{2514}"),
-            cursor::MoveTo(cx + pres_w - 1, cy + pres_h - 1),
+            cursor::MoveTo(right, bottom),
             style::Print("\u{2518}"),
         )?;
-
         queue!(stdout, style::SetAttribute(style::Attribute::Reset))?;
     }
 
@@ -309,14 +300,14 @@ pub fn render_canvas_production(
         }
     }
 
-    // Paint cells within the canvas at the layout offset
+    // Paint cells within the canvas at the (possibly inset) content origin.
     for (y, row) in grid.iter().enumerate() {
-        let sy = cy + y as u16;
+        let sy = oy + y as u16;
         if sy >= cy + layout.canvas_height {
             break;
         }
         for (x, cell) in row.iter().enumerate() {
-            let sx = cx + x as u16;
+            let sx = ox + x as u16;
             if sx >= cx + layout.canvas_width {
                 break;
             }
