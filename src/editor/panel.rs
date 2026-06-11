@@ -24,6 +24,52 @@ fn draw_color_swatch(stdout: &mut io::Stdout, x: u16, y: u16, value: &str) -> an
     Ok(())
 }
 
+/// Draw one already-laid-out text line at `(x, y)`, rendering exactly `width`
+/// cells (padding short lines with spaces, ignoring overflow). This is the
+/// single place every editor text field paints its caret, so the convention
+/// can't drift between widgets:
+///
+/// * `reverse` paints the whole line in reverse video — the "this field/row is
+///   active" affordance, the same meaning reverse carries for selected list
+///   rows.
+/// * `caret` is the column of the **insertion point**: the gap *before* the
+///   character at that column. It is marked with an underline, never a block or
+///   an inserted glyph, so it reads as "the next character lands here, pushing
+///   the rest right" rather than as a selected or overwritten character. Pass
+///   the text's char count for the append slot at the very end; pass `None` for
+///   no caret.
+///
+/// The two attributes are orthogonal and compose, so an active field still
+/// shows its caret. `display` is expected to be pre-composed by the caller
+/// (prefixes, horizontal scroll already applied); this helper only rasterizes.
+fn draw_caret_line(
+    stdout: &mut io::Stdout,
+    x: u16,
+    y: u16,
+    display: &str,
+    caret: Option<usize>,
+    reverse: bool,
+    width: usize,
+) -> anyhow::Result<()> {
+    let chars: Vec<char> = display.chars().collect();
+    queue!(stdout, cursor::MoveTo(x, y))?;
+    for col in 0..width {
+        let ch = chars.get(col).copied().unwrap_or(' ');
+        let is_caret = caret == Some(col);
+        if reverse {
+            queue!(stdout, style::SetAttribute(style::Attribute::Reverse))?;
+        }
+        if is_caret {
+            queue!(stdout, style::SetAttribute(style::Attribute::Underlined))?;
+        }
+        queue!(stdout, style::Print(ch))?;
+        if reverse || is_caret {
+            queue!(stdout, style::SetAttribute(style::Attribute::Reset))?;
+        }
+    }
+    Ok(())
+}
+
 pub fn render_right_panel(
     stdout: &mut io::Stdout,
     layout: &Layout,
@@ -128,14 +174,8 @@ pub fn render_right_panel(
                 style::SetAttribute(style::Attribute::Reset))?;
         }
         if cy + 3 < cy + layout.canvas_height {
-            let before: String = buf.chars().take(cursor).collect();
-            let after_str: String = buf.chars().skip(cursor).collect();
-            let display = format!("{}\u{2588}{}", before, after_str);
-            let display: String = display.chars().take(max_width).collect();
-            queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 3),
-                style::SetAttribute(style::Attribute::Reverse),
-                style::Print(format!("{:<width$}", display, width = max_width)),
-                style::SetAttribute(style::Attribute::Reset))?;
+            let caret = cursor.min(buf.chars().count());
+            draw_caret_line(stdout, panel_x + 2, cy + 3, buf, Some(caret), true, max_width)?;
         }
         if cy + 5 < cy + layout.canvas_height {
             let hint: String = "Enter = load   Esc = back".chars().take(max_width).collect();
@@ -171,25 +211,10 @@ pub fn render_right_panel(
 
             let vx = panel_x + 2 + prefix.chars().count() as u16;
             if selected {
-                // Block cursor: invert the character at the caret (or a trailing
-                // blank when the caret is at the end / the field is empty).
+                // Active field: underline caret marks where the next digit lands.
                 let cur = (*cursor).min(buf.chars().count());
-                let mut col = 0u16;
-                for (ci, ch) in buf.chars().enumerate() {
-                    queue!(stdout, cursor::MoveTo(vx + col, y))?;
-                    if ci == cur {
-                        queue!(stdout, style::SetAttribute(style::Attribute::Reverse),
-                            style::Print(ch), style::SetAttribute(style::Attribute::Reset))?;
-                    } else {
-                        queue!(stdout, style::Print(ch))?;
-                    }
-                    col += 1;
-                }
-                if cur >= buf.chars().count() {
-                    queue!(stdout, cursor::MoveTo(vx + col, y),
-                        style::SetAttribute(style::Attribute::Reverse),
-                        style::Print(' '), style::SetAttribute(style::Attribute::Reset))?;
-                }
+                let field_w = max_width.saturating_sub(prefix.chars().count()).max(1);
+                draw_caret_line(stdout, vx, y, buf, Some(cur), false, field_w)?;
             } else {
                 let val: String = buf.chars().take(max_width).collect();
                 queue!(stdout, cursor::MoveTo(vx, y), style::Print(val))?;
@@ -337,39 +362,29 @@ pub fn render_right_panel(
             if y >= cy + layout.canvas_height {
                 break;
             }
-            queue!(stdout, cursor::MoveTo(panel_x + 2, y))?;
-
-            let display: String = if i == selected_field {
+            let (display, caret): (String, Option<usize>) = if i == selected_field {
                 if let Some(buf) = editing {
                     let cur = cursor.min(buf.chars().count());
-                    let before: String = buf.chars().take(cur).collect();
-                    let after: String = buf.chars().skip(cur).collect();
-                    format!("{}: {}\u{2588}{}", field_names[i], before, after)
-                        .chars()
-                        .take(max_width)
-                        .collect()
+                    let prefix = format!("{}: ", field_names[i]);
+                    let plen = prefix.chars().count();
+                    let display: String =
+                        format!("{prefix}{buf}").chars().take(max_width).collect();
+                    (display, Some(plen + cur))
                 } else {
-                    format!("{}: {}", field_names[i], field_values[i])
-                        .chars()
-                        .take(max_width)
-                        .collect()
+                    let display: String = format!("{}: {}", field_names[i], field_values[i])
+                        .chars().take(max_width).collect();
+                    (display, None)
                 }
             } else {
-                format!("{}: {}", field_names[i], field_values[i])
-                    .chars()
-                    .take(max_width)
-                    .collect()
+                let display: String = format!("{}: {}", field_names[i], field_values[i])
+                    .chars().take(max_width).collect();
+                (display, None)
             };
 
             if i == selected_field {
-                queue!(
-                    stdout,
-                    style::SetAttribute(style::Attribute::Reverse),
-                    style::Print(format!("{:<width$}", display, width = max_width)),
-                    style::SetAttribute(style::Attribute::Reset),
-                )?;
+                draw_caret_line(stdout, panel_x + 2, y, &display, caret, true, max_width)?;
             } else {
-                queue!(stdout, style::Print(display))?;
+                queue!(stdout, cursor::MoveTo(panel_x + 2, y), style::Print(display))?;
             }
         }
 
@@ -415,14 +430,8 @@ pub fn render_right_panel(
         }
         // Value field
         if cy + 3 < cy + layout.canvas_height {
-            let before: String = buf.chars().take(cursor).collect();
-            let after_str: String = buf.chars().skip(cursor).collect();
-            let display = format!("{}\u{2588}{}", before, after_str);
-            let display: String = display.chars().take(max_width).collect();
-            queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 3),
-                style::SetAttribute(style::Attribute::Reverse),
-                style::Print(format!("{:<width$}", display, width = max_width)),
-                style::SetAttribute(style::Attribute::Reset))?;
+            let caret = cursor.min(buf.chars().count());
+            draw_caret_line(stdout, panel_x + 2, cy + 3, buf, Some(caret), true, max_width)?;
         }
         // Column list
         if let Some(SceneObject::Table(t)) = state.source.objects.get(object_index) {
@@ -457,14 +466,8 @@ pub fn render_right_panel(
                 style::SetAttribute(style::Attribute::Reset))?;
         }
         if cy + 3 < cy + layout.canvas_height {
-            let before: String = buf.chars().take(cursor).collect();
-            let after_str: String = buf.chars().skip(cursor).collect();
-            let display = format!("{}\u{2588}{}", before, after_str);
-            let display: String = display.chars().take(max_width).collect();
-            queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 3),
-                style::SetAttribute(style::Attribute::Reverse),
-                style::Print(format!("{:<width$}", display, width = max_width)),
-                style::SetAttribute(style::Attribute::Reset))?;
+            let caret = cursor.min(buf.chars().count());
+            draw_caret_line(stdout, panel_x + 2, cy + 3, buf, Some(caret), true, max_width)?;
         }
         if let Some(SceneObject::Table(t)) = state.source.objects.get(object_index) {
             for (i, w) in t.col_widths.iter().enumerate() {
@@ -540,35 +543,21 @@ pub fn render_right_panel(
                         style::Print(hint),
                         style::SetAttribute(style::Attribute::Reset))?;
                 }
-                // Show content with a block cursor: the character at `cursor` is
-                // drawn inverted; a caret with no glyph (end of a line, or the
-                // trailing append slot) is shown as an inverted blank.
+                // Show content with the underline insertion caret on the line
+                // that holds it (`base..=base+line_len` covers that line's text
+                // plus the append slot just past its end / the newline boundary).
                 let cursor_pos = (*cursor).min(buf.chars().count());
                 let mut base = 0usize;
                 let mut screen_y = cy + 3u16;
                 for line in buf.split('\n') {
                     if screen_y >= cy + layout.canvas_height { break; }
                     let line_len = line.chars().count();
-                    for (ci, ch) in line.chars().enumerate() {
-                        if ci >= max_width { break; }
-                        let gx = panel_x + 2 + ci as u16;
-                        queue!(stdout, cursor::MoveTo(gx, screen_y))?;
-                        if base + ci == cursor_pos {
-                            queue!(stdout, style::SetAttribute(style::Attribute::Reverse),
-                                style::Print(ch), style::SetAttribute(style::Attribute::Reset))?;
-                        } else {
-                            queue!(stdout, style::Print(ch))?;
-                        }
-                    }
-                    // Caret at the slot just past this line's last char (a newline
-                    // boundary, or the final end of the buffer).
-                    if cursor_pos == base + line_len && line_len < max_width {
-                        let gx = panel_x + 2 + line_len as u16;
-                        queue!(stdout, cursor::MoveTo(gx, screen_y),
-                            style::SetAttribute(style::Attribute::Reverse),
-                            style::Print(' '),
-                            style::SetAttribute(style::Attribute::Reset))?;
-                    }
+                    let caret = if cursor_pos >= base && cursor_pos <= base + line_len {
+                        Some(cursor_pos - base)
+                    } else {
+                        None
+                    };
+                    draw_caret_line(stdout, panel_x + 2, screen_y, line, caret, false, max_width)?;
                     base += line_len + 1; // +1 for the newline
                     screen_y += 1;
                 }
@@ -618,26 +607,23 @@ pub fn render_right_panel(
                     if y >= cy + layout.canvas_height { break; }
                     queue!(stdout, cursor::MoveTo(panel_x + 2, y))?;
 
-                    let val = if i == selected_prop {
+                    let (val, caret): (String, Option<usize>) = if i == selected_prop {
                         if let Some(ev) = editing_value {
                             let cur = cursor.min(ev.chars().count());
-                            let before: String = ev.chars().take(cur).collect();
-                            let after: String = ev.chars().skip(cur).collect();
-                            format!("{}: {}\u{2588}{}", name, before, after)
+                            let prefix = format!("{name}: ");
+                            let plen = prefix.chars().count();
+                            (format!("{prefix}{ev}"), Some(plen + cur))
                         } else if dropdown.is_some() {
-                            format!("{}: \u{25bc} {}", name, prop_values[i])
+                            (format!("{}: \u{25bc} {}", name, prop_values[i]), None)
                         } else {
-                            label(name, &prop_values[i])
+                            (label(name, &prop_values[i]), None)
                         }
                     } else {
-                        label(name, &prop_values[i])
+                        (label(name, &prop_values[i]), None)
                     };
                     let display: String = val.chars().take(max_width).collect();
                     if i == selected_prop {
-                        queue!(stdout,
-                            style::SetAttribute(style::Attribute::Reverse),
-                            style::Print(format!("{:<width$}", display, width = max_width)),
-                            style::SetAttribute(style::Attribute::Reset))?;
+                        draw_caret_line(stdout, panel_x + 2, y, &display, caret, true, max_width)?;
                         sel_screen_y = Some(y);
                     } else {
                         queue!(stdout, style::Print(display))?;
@@ -754,33 +740,10 @@ pub fn render_right_panel(
                             .take(horiz_w)
                             .collect();
 
-                        queue!(stdout, cursor::MoveTo(panel_x + 2, screen_y))?;
-
-                        if line_idx == cursor_line_idx {
-                            let cursor_pos = cursor_col_in_line.saturating_sub(line_scroll);
-                            let before: String = display_line.chars().take(cursor_pos).collect();
-                            let cursor_ch = display_line.chars().nth(cursor_pos).unwrap_or(' ');
-                            let after: String = display_line.chars().skip(cursor_pos + 1).collect();
-                            queue!(
-                                stdout,
-                                style::SetAttribute(style::Attribute::Reverse),
-                                style::Print(format!("{}{}", prefix, before)),
-                                style::SetAttribute(style::Attribute::Reset),
-                                style::SetAttribute(style::Attribute::Bold),
-                                style::Print(cursor_ch),
-                                style::SetAttribute(style::Attribute::Reset),
-                                style::SetAttribute(style::Attribute::Reverse),
-                                style::Print(&after),
-                                style::SetAttribute(style::Attribute::Reset),
-                            )?;
-                        } else {
-                            queue!(
-                                stdout,
-                                style::SetAttribute(style::Attribute::Reverse),
-                                style::Print(format!("{}{}", prefix, display_line)),
-                                style::SetAttribute(style::Attribute::Reset),
-                            )?;
-                        }
+                        let display = format!("{prefix}{display_line}");
+                        let caret = (line_idx == cursor_line_idx)
+                            .then(|| prefix_len + cursor_col_in_line.saturating_sub(line_scroll));
+                        draw_caret_line(stdout, panel_x + 2, screen_y, &display, caret, true, max_width)?;
 
                         if line_idx == 0 { selected_screen_y = Some(screen_y); }
                         screen_y += 1;
@@ -905,8 +868,8 @@ pub fn render_right_panel(
 
 /// Draw the centred multi-line text-editing overlay over the canvas. Active only
 /// while editing a `Text` property's value; a no-op otherwise. The interior
-/// shows `\n`-delimited lines with a block cursor, scrolling vertically and
-/// (per cursor line) horizontally so the caret is always visible.
+/// shows `\n`-delimited lines with the underline insertion caret, scrolling
+/// vertically and (per cursor line) horizontally so the caret is always visible.
 pub fn render_text_overlay(
     stdout: &mut io::Stdout,
     layout: &Layout,
@@ -969,25 +932,15 @@ pub fn render_text_overlay(
 
     for row in 0..inner_h {
         let y = by + 1 + row as u16;
-        queue!(stdout, cursor::MoveTo(bx, y), style::Print("\u{2502}"))?;
         let li = v_off + row;
         let chars: Vec<char> = lines.get(li).copied().unwrap_or("").chars().collect();
         let line_h_off = if li == cur_line { h_off } else { 0 };
-        for col in 0..inner_w {
-            let ci = line_h_off + col;
-            let ch = chars.get(ci).copied().unwrap_or(' ');
-            if li == cur_line && ci == cur_col {
-                queue!(
-                    stdout,
-                    style::SetAttribute(style::Attribute::Reverse),
-                    style::Print(ch),
-                    style::SetAttribute(style::Attribute::Reset),
-                )?;
-            } else {
-                queue!(stdout, style::Print(ch))?;
-            }
-        }
-        queue!(stdout, style::Print("\u{2502}"))?;
+        let window: String =
+            (0..inner_w).map(|col| chars.get(line_h_off + col).copied().unwrap_or(' ')).collect();
+        let caret = (li == cur_line).then(|| cur_col - line_h_off);
+        queue!(stdout, cursor::MoveTo(bx, y), style::Print("\u{2502}"))?;
+        draw_caret_line(stdout, bx + 1, y, &window, caret, false, inner_w)?;
+        queue!(stdout, cursor::MoveTo(bx + 1 + inner_w as u16, y), style::Print("\u{2502}"))?;
     }
 
     Ok(())
