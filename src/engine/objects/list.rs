@@ -68,7 +68,7 @@ impl List {
 }
 
 impl Resolve for List {
-    fn resolve(&self, frame: usize, ops: &mut Vec<DrawOp>) {
+    fn resolve(&self, frame: usize, _canvas_width: u16, ops: &mut Vec<DrawOp>) {
         if !self.frames.contains(frame) {
             return;
         }

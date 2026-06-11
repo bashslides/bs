@@ -57,23 +57,27 @@ use crate::types::DrawOp;
 use super::source::SceneObject;
 
 /// Resolve an object for a given frame into concrete `DrawOp`s.
+///
+/// `canvas_width` is the width (in cells) of the output frame. Most objects
+/// ignore it; `Header` uses it to word-wrap its large glyphs onto the next
+/// line when the text would overflow the canvas.
 pub trait Resolve {
-    fn resolve(&self, frame: usize, ops: &mut Vec<DrawOp>);
+    fn resolve(&self, frame: usize, canvas_width: u16, ops: &mut Vec<DrawOp>);
 }
 
 impl Resolve for SceneObject {
-    fn resolve(&self, frame: usize, ops: &mut Vec<DrawOp>) {
+    fn resolve(&self, frame: usize, canvas_width: u16, ops: &mut Vec<DrawOp>) {
         match self {
-            SceneObject::Label(o) => o.resolve(frame, ops),
-            SceneObject::HLine(o) => o.resolve(frame, ops),
-            SceneObject::Rect(o) => o.resolve(frame, ops),
-            SceneObject::Header(o) => o.resolve(frame, ops),
-            SceneObject::Group(o) => o.resolve(frame, ops),
-            SceneObject::Arrow(o) => o.resolve(frame, ops),
-            SceneObject::Table(o) => o.resolve(frame, ops),
-            SceneObject::Art(o) => o.resolve(frame, ops),
-            SceneObject::Command(o) => o.resolve(frame, ops),
-            SceneObject::List(o) => o.resolve(frame, ops),
+            SceneObject::Label(o) => o.resolve(frame, canvas_width, ops),
+            SceneObject::HLine(o) => o.resolve(frame, canvas_width, ops),
+            SceneObject::Rect(o) => o.resolve(frame, canvas_width, ops),
+            SceneObject::Header(o) => o.resolve(frame, canvas_width, ops),
+            SceneObject::Group(o) => o.resolve(frame, canvas_width, ops),
+            SceneObject::Arrow(o) => o.resolve(frame, canvas_width, ops),
+            SceneObject::Table(o) => o.resolve(frame, canvas_width, ops),
+            SceneObject::Art(o) => o.resolve(frame, canvas_width, ops),
+            SceneObject::Command(o) => o.resolve(frame, canvas_width, ops),
+            SceneObject::List(o) => o.resolve(frame, canvas_width, ops),
         }
     }
 }

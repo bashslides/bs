@@ -42,10 +42,10 @@ impl Engine {
                     if range.contains(frame) {
                         let mut member = obj.clone();
                         member.set_frame_range(range.clone());
-                        member.resolve(frame, &mut ops);
+                        member.resolve(frame, source.width, &mut ops);
                     }
                 }
-                None => obj.resolve(frame, &mut ops),
+                None => obj.resolve(frame, source.width, &mut ops),
             }
         }
 

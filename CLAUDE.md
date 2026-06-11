@@ -217,7 +217,7 @@ targets the pure, deterministic core):
 | `tests/label.rs` | `Label`: `framed` border, `frame_style`, background fill + height pad, height clip, width wrap |
 | `tests/arrow.rs` | `Arrow`: horizontal/vertical/leftward body + auto head, diagonal L-routing, head-disabled, zero-length point |
 | `tests/hline.rs` | `HLine`: span (end-exclusive) and custom draw char |
-| `tests/header.rs` | `Header`: glyph fill, custom fill char, inter-glyph spacing |
+| `tests/header.rs` | `Header`: glyph fill, custom fill char, inter-glyph spacing, canvas-width word wrap |
 | `tests/rect.rs` | `Rect`: border + blank interior, title on the top edge |
 | `tests/group.rs` | `Group`: members render independently / group emits nothing; auto range doesn't gate members; explicit range overrides members (narrows + widens) |
 | `tests/engine.rs` | `Engine::compile`: one scene per frame, empty deck, object outside `frame_count` |
@@ -225,7 +225,7 @@ targets the pure, deterministic core):
 
 Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
 `engine/objects/wrap.rs`, `editor/textedit.rs`, `editor/object_defaults.rs`).
-The suite totals 98 tests (74 integration + 24 inline); `TESTS.md` is the
+The suite totals 99 tests (75 integration + 24 inline); `TESTS.md` is the
 authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and

@@ -24,7 +24,7 @@ pub struct Group {
 }
 
 impl Resolve for Group {
-    fn resolve(&self, _frame: usize, _ops: &mut Vec<DrawOp>) {
+    fn resolve(&self, _frame: usize, _canvas_width: u16, _ops: &mut Vec<DrawOp>) {
         // Groups emit no DrawOps; their members render independently.
     }
 }

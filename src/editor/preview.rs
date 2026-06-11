@@ -210,13 +210,13 @@ pub fn render_canvas_production(
                                     );
                                 }
                             } else {
-                                obj.resolve(frame, &mut ops);
+                                obj.resolve(frame, state.source.width, &mut ops);
                             }
                         } else {
-                            obj.resolve(frame, &mut ops);
+                            obj.resolve(frame, state.source.width, &mut ops);
                         }
                     } else {
-                        obj.resolve(frame, &mut ops);
+                        obj.resolve(frame, state.source.width, &mut ops);
                     }
 
                     if focused.contains(&i) {

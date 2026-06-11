@@ -309,7 +309,7 @@ impl Table {
 // ---------------------------------------------------------------------------
 
 impl Resolve for Table {
-    fn resolve(&self, frame: usize, ops: &mut Vec<DrawOp>) {
+    fn resolve(&self, frame: usize, _canvas_width: u16, ops: &mut Vec<DrawOp>) {
         self.resolve_internal(frame, None, &[], false, false, None, ops);
     }
 }

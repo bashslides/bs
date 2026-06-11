@@ -129,6 +129,7 @@ reconstructed character grid (some also assert on cell styles).
 | `glyph_is_filled_with_the_default_block_character` | Glyphs are filled with the default block character |
 | `custom_fill_character_is_used` | A custom fill character is used |
 | `glyphs_are_spaced_one_column_apart` | Glyphs are spaced one column apart |
+| `text_word_wraps_when_too_wide_for_the_canvas` | Header word-wraps onto the next glyph line when too wide for the canvas, breaking on word boundaries |
 
 ### Rect object — `tests/rect.rs`
 
