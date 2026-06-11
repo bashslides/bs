@@ -158,6 +158,8 @@ Mode::EditProperties {
 
 ## Tests
 
+See `TESTS.md` for a per-file list of every test case.
+
 Integration tests live in `tests/` (the editor/TUI is not unit-tested; coverage
 targets the pure, deterministic core):
 
