@@ -337,29 +337,20 @@ fn scene_object_coordinates_mut(obj: &mut SceneObject) -> Vec<&mut Coordinate> {
     }
 }
 
-/// Insert a frame just after `inserted_after`, *duplicating* that frame's
-/// content: an object whose range ends exactly at the boundary is extended so
-/// the new frame looks identical to the source frame.
-pub fn adjust_frames_after_insert(source: &mut SourcePresentation, inserted_after: usize) {
-    insert_frame(source, inserted_after, false);
-}
-
 /// Insert a *blank* frame just after `inserted_after`: objects local to the
-/// source frame do not extend into the new one, so it starts empty.
+/// source frame do not extend into the new one, so it starts empty. This is the
+/// "make room" primitive shared by the editor's *add blank frame* action and by
+/// [`copy_frame`] (which then deep-clones the source frame's objects onto it).
 ///
-/// (Objects spanning *past* the source frame still cover the new frame — a
+/// Objects spanning *past* the source frame still cover the new frame — a
 /// contiguous range can't skip a single interior frame — so deck-wide
-/// backgrounds remain visible, matching the existing range-based model.)
+/// backgrounds remain visible, matching the range-based frame model.
 pub fn insert_blank_frame(source: &mut SourcePresentation, inserted_after: usize) {
-    insert_frame(source, inserted_after, true);
-}
-
-/// Shared frame-insertion logic. The only difference between duplicate and
-/// blank is the end-shift threshold: a range ending exactly at the new frame
-/// position is extended for a duplicate but left alone for a blank insert.
-fn insert_frame(source: &mut SourcePresentation, inserted_after: usize, blank: bool) {
     source.frame_count += 1;
-    let end_threshold = if blank { inserted_after + 1 } else { inserted_after };
+    // A range ending exactly at the new frame position is left alone (the
+    // source frame's object does not bleed into the blank one); only ranges
+    // that genuinely span past it are stretched to stay contiguous.
+    let end_threshold = inserted_after + 1;
     for obj in &mut source.objects {
         // Auto groups have no stored range to shift; their members shift instead.
         if let Some(fr) = scene_object_frame_range_mut(obj) {
@@ -382,6 +373,58 @@ fn insert_frame(source: &mut SourcePresentation, inserted_after: usize, blank: b
                 }
                 if *end_frame > inserted_after {
                     *end_frame += 1;
+                }
+            }
+        }
+    }
+}
+
+/// Copy (duplicate) the frame at `current`, inserting an independent copy
+/// immediately after it. Every object shown on `current` also appears on the
+/// new frame, but as a **deep, independent clone** — editing the copy never
+/// changes the original (and vice versa).
+///
+/// Objects that already span *past* `current` (e.g. a deck-wide background)
+/// stay shared: they are extended across the new frame rather than cloned, so
+/// they remain a single continuous object. Only per-slide objects — those that
+/// the blank insert would not otherwise carry onto the new frame — are cloned.
+pub fn copy_frame(source: &mut SourcePresentation, current: usize) {
+    let new_frame = current + 1;
+    // Objects visible on the source frame are the clone candidates.
+    let visible: Vec<usize> = (0..source.objects.len())
+        .filter(|&i| source.effective_frame_range(i).contains(current))
+        .collect();
+
+    // Make room for the new frame; spanning objects extend across it.
+    insert_blank_frame(source, current);
+
+    // Clone every visible object the blank insert did NOT carry onto the new
+    // frame, so the new frame gets its own independent copies.
+    let mut index_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for &i in &visible {
+        if source.effective_frame_range(i).contains(new_frame) {
+            continue; // already shared onto the new frame (kept continuous)
+        }
+        let mut clone = source.objects[i].clone();
+        // Plain objects (and explicit-range groups) land on the new frame only;
+        // an auto group has no stored range and stays auto (derived from its
+        // — also cloned — members).
+        if let Some(fr) = scene_object_frame_range_mut(&mut clone) {
+            fr.start = new_frame;
+            fr.end = new_frame + 1;
+        }
+        let new_index = source.objects.len();
+        source.objects.push(clone);
+        index_map.insert(i, new_index);
+    }
+
+    // Re-point cloned groups at their cloned members. A member that was not
+    // cloned (a shared spanning object) keeps referring to the original.
+    for &new_index in index_map.values() {
+        if let SceneObject::Group(g) = &mut source.objects[new_index] {
+            for m in &mut g.members {
+                if let Some(&mapped) = index_map.get(m) {
+                    *m = mapped;
                 }
             }
         }
@@ -466,9 +509,20 @@ pub fn adjust_frames_after_delete(source: &mut SourcePresentation, deleted: usiz
     }
     // Remove objects whose frame range collapsed. Auto groups (no stored range)
     // are kept — their visibility follows their members, which are pruned here.
-    source.objects.retain(|obj| {
-        scene_object_frame_range(obj).map_or(true, |fr| fr.start < fr.end)
-    });
+    // Each removal also fixes up group member indices (which reference positions
+    // in `objects`), so a surviving group can't end up pointing at the wrong
+    // object after the array shifts.
+    let mut i = 0;
+    while i < source.objects.len() {
+        let collapsed = scene_object_frame_range(&source.objects[i])
+            .is_some_and(|fr| fr.start >= fr.end);
+        if collapsed {
+            source.objects.remove(i);
+            adjust_group_members_after_delete(source, i);
+        } else {
+            i += 1;
+        }
+    }
     for obj in &mut source.objects {
         for coord in scene_object_coordinates_mut(obj) {
             if let Coordinate::Animated {
@@ -555,13 +609,64 @@ mod tests {
         (fr.start, fr.end)
     }
 
+    fn set_text(obj: &mut SceneObject, t: &str) {
+        if let SceneObject::Label(l) = obj {
+            l.text = t.into();
+        }
+    }
+    fn text(obj: &SceneObject) -> String {
+        match obj {
+            SceneObject::Label(l) => l.text.clone(),
+            _ => String::new(),
+        }
+    }
+    fn group(members: Vec<usize>) -> SceneObject {
+        let mut g = create_default(4, 0); // Group, auto range
+        if let SceneObject::Group(grp) = &mut g {
+            grp.members = members;
+        }
+        g
+    }
+
     #[test]
-    fn copy_frame_extends_a_single_frame_object_onto_the_new_frame() {
-        // Copy duplicates: an object local to the source frame appears on both.
+    fn copy_frame_clones_objects_independently() {
         let mut p = pres(1, vec![label(0, 1)]);
-        adjust_frames_after_insert(&mut p, 0);
+        copy_frame(&mut p, 0);
         assert_eq!(p.frame_count, 2);
-        assert_eq!(range(&p.objects[0]), (0, 2));
+        // A true copy — two distinct objects, not one shared span.
+        assert_eq!(p.objects.len(), 2);
+        assert_eq!(range(&p.objects[0]), (0, 1));
+        assert_eq!(range(&p.objects[1]), (1, 2));
+        // Editing the copy must not change the original.
+        set_text(&mut p.objects[1], "changed");
+        assert_eq!(text(&p.objects[0]), "New Label");
+        assert_eq!(text(&p.objects[1]), "changed");
+    }
+
+    #[test]
+    fn copy_frame_keeps_a_spanning_background_shared() {
+        // obj0 spans the whole 2-frame deck (a background); obj1 is local to
+        // frame 0. Copying frame 0 extends the background (still one object) and
+        // clones only the per-slide object.
+        let mut p = pres(2, vec![label(0, 2), label(0, 1)]);
+        copy_frame(&mut p, 0);
+        assert_eq!(p.objects.len(), 3);
+        assert_eq!(range(&p.objects[0]), (0, 3)); // background extended, not cloned
+        assert_eq!(range(&p.objects[1]), (0, 1)); // original local object
+        assert_eq!(range(&p.objects[2]), (1, 2)); // independent clone on new frame
+    }
+
+    #[test]
+    fn delete_frame_fixes_group_member_indices() {
+        // obj0 collapses on delete; the surviving group must follow the
+        // background as the array shifts down.
+        let mut p = pres(3, vec![label(2, 3), label(0, 3), group(vec![1])]);
+        adjust_frames_after_delete(&mut p, 2);
+        assert_eq!(p.objects.len(), 2);
+        match &p.objects[1] {
+            SceneObject::Group(g) => assert_eq!(g.members, vec![0]),
+            _ => panic!("expected a group at index 1"),
+        }
     }
 
     #[test]

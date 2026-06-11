@@ -211,9 +211,11 @@ reconstructed character grid (some also assert on cell styles).
 
 | Test | Verifies |
 |------|----------|
-| `copy_frame_extends_a_single_frame_object_onto_the_new_frame` | Copy (duplicate) extends a frame-local object so the new frame matches |
+| `copy_frame_clones_objects_independently` | Copy deep-clones the frame's objects; editing the copy doesn't change the original |
+| `copy_frame_keeps_a_spanning_background_shared` | A deck-wide/spanning object is extended (stays one object), not cloned |
 | `blank_frame_leaves_a_single_frame_object_behind` | Blank insert does not extend the source frame's object into the new frame |
 | `blank_frame_still_shifts_later_objects` | Objects on later frames slide forward past an inserted blank frame |
+| `delete_frame_fixes_group_member_indices` | Pruning a collapsed object on delete keeps surviving group member indices correct |
 | `move_frame_relocates_single_frame_objects_after_target` | Moving a frame after a target remaps single-frame object ranges |
 | `move_frame_relocates_before_target` | Moving a frame before a target remaps ranges and returns the new index |
 | `move_frame_keeps_a_whole_deck_object_spanning_the_whole_deck` | A whole-deck object still spans the whole deck after a move |

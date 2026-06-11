@@ -10,7 +10,7 @@ use super::object_defaults;
 use super::properties;
 use super::textedit::{TextAction, TextEdit};
 use super::state::{
-    adjust_frames_after_delete, adjust_frames_after_insert, adjust_group_members_after_delete,
+    adjust_frames_after_delete, adjust_group_members_after_delete, copy_frame,
     insert_blank_frame, move_frame, ConfirmAction, EditorState, Mode, TableCellSubState,
 };
 
@@ -509,7 +509,7 @@ fn handle_frame_menu(state: &mut EditorState, key: KeyEvent) -> Action {
         return Action::Redraw;
     }
     if matches_binding(&bindings.frame_copy, &key) {
-        adjust_frames_after_insert(&mut state.source, state.current_frame);
+        copy_frame(&mut state.source, state.current_frame);
         state.current_frame += 1;
         state.dirty = true;
         state.status_message = Some(format!("Copied → frame {}", state.current_frame + 1));
