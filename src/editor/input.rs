@@ -1244,7 +1244,8 @@ fn handle_edit_value(state: &mut EditorState, key: KeyEvent) -> Action {
     let props = properties::get_properties(&state.source.objects, object_index);
     let prop_name = props[selected_property].name;
     // `Text` values are edited in the wide overlay (which derives its own scroll
-    // from the cursor); everything else is a short field in the narrow panel.
+    // from the cursor); everything else (numbers, coordinates, …) is a short
+    // field edited in place in the narrow panel.
     let is_text = props[selected_property].kind == properties::PropertyKind::Text;
     let prefix0 = prop_name.chars().count() + 2;
 

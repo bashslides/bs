@@ -9,6 +9,10 @@ use crate::types::{Color, NamedColor};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PropertyKind {
     Text,
+    /// Plain numeric field (frame indices, z-order, counts, spacing, timeouts).
+    /// Edited in place in the narrow panel like a coordinate — never in the
+    /// centred multi-line overlay, which is reserved for free-form [`Text`].
+    Number,
     /// Boolean flag, rendered as a checkbox and flipped in place (no text entry).
     Bool,
     Color,
@@ -188,14 +192,14 @@ impl Editable for Command {
             Property { name: "height", value: format_coordinate(&self.height), kind: PropertyKind::Coordinate },
             Property { name: "border", value: self.border.to_string(), kind: PropertyKind::Bool },
             Property { name: "cwd", value: self.cwd.clone().unwrap_or_default(), kind: PropertyKind::Text },
-            Property { name: "timeout_secs", value: self.timeout_secs.map(|t| t.to_string()).unwrap_or_default(), kind: PropertyKind::Text },
+            Property { name: "timeout_secs", value: self.timeout_secs.map(|t| t.to_string()).unwrap_or_default(), kind: PropertyKind::Number },
             Property { name: "fg_color", value: format_opt_color(&self.style.fg), kind: PropertyKind::Color },
             Property { name: "bg_color", value: format_opt_color(&self.style.bg), kind: PropertyKind::Color },
             Property { name: "bold", value: self.style.bold.to_string(), kind: PropertyKind::Bool },
             Property { name: "dimmed", value: self.style.dim.to_string(), kind: PropertyKind::Bool },
-            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Text },
-            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Text },
-            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Text },
+            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Number },
+            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Number },
+            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Number },
         ]
     }
 
@@ -313,9 +317,9 @@ impl Editable for Label {
             Property { name: "bg_color", value: format_opt_color(&self.style.bg), kind: PropertyKind::Color },
             Property { name: "bold", value: self.style.bold.to_string(), kind: PropertyKind::Bool },
             Property { name: "dimmed", value: self.style.dim.to_string(), kind: PropertyKind::Bool },
-            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Text },
-            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Text },
-            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Text },
+            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Number },
+            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Number },
+            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Number },
         ]
     }
 
@@ -447,14 +451,14 @@ impl Editable for List {
             Property { name: "height", value: format_coordinate(&self.height), kind: PropertyKind::Coordinate },
             Property { name: "ordered", value: self.ordered.to_string(), kind: PropertyKind::Bool },
             Property { name: "bullet", value: self.bullet.clone(), kind: PropertyKind::Text },
-            Property { name: "spacing", value: self.spacing.to_string(), kind: PropertyKind::Text },
+            Property { name: "spacing", value: self.spacing.to_string(), kind: PropertyKind::Number },
             Property { name: "fg_color", value: format_opt_color(&self.style.fg), kind: PropertyKind::Color },
             Property { name: "bg_color", value: format_opt_color(&self.style.bg), kind: PropertyKind::Color },
             Property { name: "bold", value: self.style.bold.to_string(), kind: PropertyKind::Bool },
             Property { name: "dimmed", value: self.style.dim.to_string(), kind: PropertyKind::Bool },
-            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Text },
-            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Text },
-            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Text },
+            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Number },
+            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Number },
+            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Number },
         ]
     }
 
@@ -576,9 +580,9 @@ impl Editable for HLine {
             Property { name: "bg_color", value: format_opt_color(&self.style.bg), kind: PropertyKind::Color },
             Property { name: "bold", value: self.style.bold.to_string(), kind: PropertyKind::Bool },
             Property { name: "dimmed", value: self.style.dim.to_string(), kind: PropertyKind::Bool },
-            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Text },
-            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Text },
-            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Text },
+            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Number },
+            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Number },
+            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Number },
         ]
     }
 
@@ -682,9 +686,9 @@ impl Editable for Rect {
             Property { name: "bg_color", value: format_opt_color(&self.style.bg), kind: PropertyKind::Color },
             Property { name: "bold", value: self.style.bold.to_string(), kind: PropertyKind::Bool },
             Property { name: "dimmed", value: self.style.dim.to_string(), kind: PropertyKind::Bool },
-            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Text },
-            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Text },
-            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Text },
+            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Number },
+            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Number },
+            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Number },
         ]
     }
 
@@ -802,9 +806,9 @@ impl Editable for Header {
             Property { name: "bg_color", value: format_opt_color(&self.style.bg), kind: PropertyKind::Color },
             Property { name: "bold", value: self.style.bold.to_string(), kind: PropertyKind::Bool },
             Property { name: "dimmed", value: self.style.dim.to_string(), kind: PropertyKind::Bool },
-            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Text },
-            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Text },
-            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Text },
+            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Number },
+            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Number },
+            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Number },
         ]
     }
 
@@ -873,9 +877,9 @@ impl Editable for Arrow {
             Property { name: "bg_color", value: format_opt_color(&self.style.bg), kind: PropertyKind::Color },
             Property { name: "bold", value: self.style.bold.to_string(), kind: PropertyKind::Bool },
             Property { name: "dimmed", value: self.style.dim.to_string(), kind: PropertyKind::Bool },
-            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Text },
-            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Text },
-            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Text },
+            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Number },
+            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Number },
+            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Number },
         ]
     }
 
@@ -979,9 +983,9 @@ impl Editable for Group {
             Property { name: "y",      value: fmt_f64(gy), kind: PropertyKind::ReadOnly },
             Property { name: "width",  value: fmt_f64(gw), kind: PropertyKind::ReadOnly },
             Property { name: "height", value: fmt_f64(gh), kind: PropertyKind::ReadOnly },
-            Property { name: "first_frame", value: first_frame, kind: PropertyKind::Text },
-            Property { name: "last_frame",  value: last_frame,  kind: PropertyKind::Text },
-            Property { name: "z_order",     value: self.z_order.to_string(), kind: PropertyKind::Text },
+            Property { name: "first_frame", value: first_frame, kind: PropertyKind::Number },
+            Property { name: "last_frame",  value: last_frame,  kind: PropertyKind::Number },
+            Property { name: "z_order",     value: self.z_order.to_string(), kind: PropertyKind::Number },
         ];
         if self.frames.is_some() {
             props.push(Property {
@@ -1050,7 +1054,7 @@ impl Editable for Table {
             Property { name: "y",           value: format_coordinate(&self.position.y), kind: PropertyKind::Coordinate },
             Property { name: "width",       value: format_coordinate(&self.width),      kind: PropertyKind::Coordinate },
             Property { name: "height",      value: format_coordinate(&self.height),     kind: PropertyKind::Coordinate },
-            Property { name: "rows",        value: self.rows.to_string(),               kind: PropertyKind::Text },
+            Property { name: "rows",        value: self.rows.to_string(),               kind: PropertyKind::Number },
             Property { name: "cols",        value: self.col_widths.len().to_string(),   kind: PropertyKind::ReadOnly },
             Property { name: "header_bold", value: self.header_bold.to_string(),        kind: PropertyKind::Bool },
             Property { name: "borders",     value: self.borders.to_string(),            kind: PropertyKind::Bool },
@@ -1058,9 +1062,9 @@ impl Editable for Table {
             Property { name: "bg_color",    value: format_opt_color(&self.style.bg),    kind: PropertyKind::Color },
             Property { name: "bold",        value: self.style.bold.to_string(),         kind: PropertyKind::Bool },
             Property { name: "dimmed",      value: self.style.dim.to_string(),          kind: PropertyKind::Bool },
-            Property { name: "first_frame", value: self.frames.start.to_string(),       kind: PropertyKind::Text },
-            Property { name: "last_frame",  value: self.frames.end.to_string(),         kind: PropertyKind::Text },
-            Property { name: "z_order",     value: self.z_order.to_string(),            kind: PropertyKind::Text },
+            Property { name: "first_frame", value: self.frames.start.to_string(),       kind: PropertyKind::Number },
+            Property { name: "last_frame",  value: self.frames.end.to_string(),         kind: PropertyKind::Number },
+            Property { name: "z_order",     value: self.z_order.to_string(),            kind: PropertyKind::Number },
         ];
         // Per-column width properties.
         for (col_idx, &frac) in self.col_widths.iter().enumerate() {
@@ -1202,9 +1206,9 @@ impl Editable for Art {
             Property { name: "bg_color", value: format_opt_color(&self.style.bg), kind: PropertyKind::Color },
             Property { name: "bold", value: self.style.bold.to_string(), kind: PropertyKind::Bool },
             Property { name: "dimmed", value: self.style.dim.to_string(), kind: PropertyKind::Bool },
-            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Text },
-            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Text },
-            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Text },
+            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Number },
+            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Number },
+            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Number },
         ]
     }
 

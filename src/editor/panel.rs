@@ -718,7 +718,7 @@ pub fn render_right_panel(
         if i == selected_prop {
             // `Text` values are edited in the centred overlay (drawn separately),
             // so the panel just shows a preview row for them; other editable
-            // kinds (coordinate/colour/char) edit inline here.
+            // kinds (number/coordinate/colour/char) edit inline here.
             if let Some(buf) = editing.as_ref().filter(|_| prop.kind != PropertyKind::Text) {
                 // ── Multi-line editing: each \n-delimited segment on its own row ──
                 let (cursor_line_idx, cursor_col_in_line) = cursor_line_col(buf, cursor);
