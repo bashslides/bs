@@ -18,7 +18,7 @@ use anyhow::Result;
 use crossterm::event::{
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
-use crossterm::{cursor, event, execute, terminal};
+use crossterm::{cursor, event, execute, queue, terminal};
 
 use input::Action;
 use state::EditorState;
@@ -70,13 +70,22 @@ impl Editor {
     fn main_loop(&mut self, stdout: &mut io::Stdout) -> Result<()> {
         self.full_redraw(stdout)?;
 
+        // When input arrives faster than we can paint (e.g. holding an arrow key
+        // to scroll the property list), repainting once per event causes thrash.
+        // Instead, `Action::Redraw` only marks the screen dirty; we coalesce by
+        // deferring the actual paint until the pending-event queue has drained
+        // (see the `event::poll` check after the match). At normal typing speed
+        // the queue is empty between keys, so the redraw still happens immediately
+        // — there is no added latency, only burst coalescing.
+        let mut pending_redraw = false;
+
         loop {
             let event = event::read()?;
             let action = input::handle_event(&mut self.state, event);
 
             match action {
                 Action::Continue => {}
-                Action::Redraw => self.full_redraw(stdout)?,
+                Action::Redraw => pending_redraw = true,
                 Action::BlinkSelection => {
                     self.full_redraw(stdout)?;
                     thread::sleep(Duration::from_millis(100));
@@ -85,10 +94,12 @@ impl Editor {
                     thread::sleep(Duration::from_millis(100));
                     self.state.blink_hidden = false;
                     self.full_redraw(stdout)?;
+                    pending_redraw = false;
                 }
                 Action::ToggleFullscreen => {
                     self.state.fullscreen = !self.state.fullscreen;
                     self.full_redraw(stdout)?;
+                    pending_redraw = false;
                 }
                 Action::Quit => {
                     if self.state.dirty {
@@ -119,10 +130,21 @@ impl Editor {
                         }
                         self.state.status_message = None;
                         self.full_redraw(stdout)?;
+                        pending_redraw = false;
                     } else {
                         break;
                     }
                 }
+            }
+
+            // Coalesce deferred redraws: paint only once the input burst has
+            // drained. `event::poll(0)` is non-blocking, so between keystrokes at
+            // normal speed this fires immediately; only while events are already
+            // queued do we skip ahead and let the accumulated state changes batch
+            // into a single repaint.
+            if pending_redraw && !event::poll(Duration::from_secs(0))? {
+                self.full_redraw(stdout)?;
+                pending_redraw = false;
             }
         }
 
@@ -133,7 +155,11 @@ impl Editor {
         let (term_w, term_h) = terminal::size()?;
         let layout = Layout::compute(term_w, term_h, &self.state.mode, self.state.fullscreen);
 
-        execute!(stdout, terminal::Clear(terminal::ClearType::All))?;
+        // Queue the clear (don't `execute!`) so it is flushed together with the
+        // full repaint below in the single `flush()` at the end of this function.
+        // `execute!` would flush the blank screen on its own, producing a visible
+        // blank-then-paint flash on every keypress.
+        queue!(stdout, terminal::Clear(terminal::ClearType::All))?;
 
         // In fullscreen ("no bars") mode the menu bar and timeline are hidden so
         // the canvas fills the whole screen.
