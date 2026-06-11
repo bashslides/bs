@@ -22,24 +22,23 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "settin[g]s",
             "[Ctrl-s]ave",
             "[q]uit",
-            "[F2] full",
+            "[f]ull",
         ],
         Mode::Settings { .. } => vec![
             "[↑↓][Tab] field",
             "[0-9] edit",
             "[Enter] apply",
             "[Esc] cancel",
-            "[F2] full",
         ],
         Mode::AddObject { .. } => {
-            vec!["[↑][↓] type", "[Enter] add", "[Esc] cancel", "[F2] full"]
+            vec!["[↑][↓] type", "[Enter] add", "[Esc] cancel", "[f]ull"]
         }
         Mode::SelectObject { .. } => vec![
             "[↑][↓] select",
             "[Enter] pick",
             "[d]el",
             "[Esc] cancel",
-            "[F2] full",
+            "[f]ull",
         ],
         Mode::SelectedObject { .. } => vec![
             "[←→↑↓] move",
@@ -48,13 +47,13 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[e]dit props",
             "[d]el",
             "[Esc] back",
-            "[F2] full",
+            "[f]ull",
         ],
         Mode::ResizeObject { .. } => vec![
             "[←→] width",
             "[↑↓] height",
             "[Enter][Esc] done",
-            "[F2] full",
+            "[f]ull",
         ],
         // Browsing properties — action hint depends on the selected property type
         Mode::EditProperties { editing_value: None, object_index, selected_property, .. } => {
@@ -79,7 +78,7 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
                 items.push("[Alt-r] -col");
             }
             items.push("[Esc] back");
-            items.push("[F2] full");
+            items.push("[f]ull");
             items
         }
         // Editing a property value
@@ -88,7 +87,6 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[Alt+Enter] newline",
             "[Enter] apply",
             "[Esc] cancel",
-            "[F2] full",
         ],
         Mode::AnimateProperty { editing: None, .. } => vec![
             "[↑][↓] field",
@@ -96,13 +94,12 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[s]ave anim",
             "[x] →fixed",
             "[Esc] cancel",
-            "[F2] full",
+            "[f]ull",
         ],
         Mode::AnimateProperty { editing: Some(_), .. } => vec![
             "[←][→] cursor",
             "[Enter] apply",
             "[Esc] cancel",
-            "[F2] full",
         ],
         Mode::Confirm { .. } => vec![
             "[↑][↓] select",

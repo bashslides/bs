@@ -69,7 +69,7 @@ stay on the slide and move on with the arrow keys.
 | `src/engine/objects/` | Nine object types: `Label`, `HLine`, `Rect`, `Header`, `Group`, `Arrow`, `Table`, `Art`, `Command` — each implements `Resolve` |
 | `src/art_library.rs` | Built-in + user ASCII-art palette (`~/.config/bs/art/`, one file per piece); pieces are copied into self-contained `Art` objects when added |
 | `src/renderer/mod.rs` | Rasterizes DrawOps into cell grid; diffs frames |
-| `src/player/mod.rs` | Playback loop, keyboard nav (arrows, space, q, F11); runs `Command` objects (piped, async, timeout) and overlays output |
+| `src/player/mod.rs` | Playback loop, keyboard nav (arrows, space, q, f=fullscreen); runs `Command` objects (piped, async, timeout) and overlays output |
 | `src/editor/mod.rs` | Editor lifecycle, raw mode setup, main loop |
 | `src/editor/state.rs` | `EditorState`, `Mode` enum (~18 variants, incl. table sub-modes + art picker) |
 | `src/editor/config.rs` | `KeyBindings` — all bindings configurable via `~/.config/bs/editor.json` |

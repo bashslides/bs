@@ -22,6 +22,26 @@ pub enum Action {
     ToggleFullscreen,
 }
 
+/// Whether the current mode is actively capturing typed characters into a text
+/// buffer. When true, a plain-letter global shortcut (like fullscreen on "f")
+/// must yield to text input so the letter can be typed literally.
+fn mode_accepts_text(mode: &Mode) -> bool {
+    match mode {
+        Mode::EditProperties { editing_value, .. } => editing_value.is_some(),
+        Mode::AnimateProperty { editing, .. } => editing.is_some(),
+        Mode::Settings { .. }
+        | Mode::TableAddColumn { .. }
+        | Mode::TableRemoveColumn { .. }
+        | Mode::LoadArtFile { .. } => true,
+        Mode::TableEditCellProps { sub_state, .. } => match sub_state {
+            TableCellSubState::EditingContent { .. } => true,
+            TableCellSubState::EditingStyle { editing_value, .. } => editing_value.is_some(),
+            TableCellSubState::Selecting => false,
+        },
+        _ => false,
+    }
+}
+
 pub fn handle_event(state: &mut EditorState, event: Event) -> Action {
     match event {
         // Ignore key release/repeat events (only delivered when the terminal's
@@ -34,8 +54,12 @@ pub fn handle_event(state: &mut EditorState, event: Event) -> Action {
 }
 
 fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
-    // Global shortcut: works from any mode
-    if matches_binding(&state.config.key_bindings.fullscreen, &key) {
+    // Global shortcut: works from any mode *except* while a text field is being
+    // typed into — otherwise a plain-letter binding (e.g. "f") would be swallowed
+    // by the fullscreen toggle instead of inserting the character.
+    if !mode_accepts_text(&state.mode)
+        && matches_binding(&state.config.key_bindings.fullscreen, &key)
+    {
         return Action::ToggleFullscreen;
     }
 

@@ -137,7 +137,7 @@ impl Player {
                             let last = self.presentation.frames.len().saturating_sub(1);
                             self.nav_to(last, stdout)?;
                         }
-                        F(2) => {
+                        Char('f') => {
                             self.fullscreen = !self.fullscreen;
                             if self.fullscreen {
                                 stdout.write_all(b"\x1b[10;1t")?;
@@ -250,7 +250,7 @@ impl Player {
             "[Home] first",
             "[End] last",
             "[q][Esc] quit",
-            "[F2] full",
+            "[f]ull",
         ];
 
         queue!(
