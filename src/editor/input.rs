@@ -11,7 +11,7 @@ use super::properties;
 use super::textedit::{TextAction, TextEdit};
 use super::state::{
     adjust_frames_after_delete, adjust_frames_after_insert, adjust_group_members_after_delete,
-    ConfirmAction, EditorState, Mode, TableCellSubState,
+    insert_blank_frame, move_frame, ConfirmAction, EditorState, Mode, TableCellSubState,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +71,9 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
 
     match &state.mode {
         Mode::Normal => handle_normal(state, key),
+        Mode::FrameMenu => handle_frame_menu(state, key),
+        Mode::FrameMove { .. } => handle_frame_move(state, key),
+        Mode::FrameMovePlace { .. } => handle_frame_move_place(state, key),
         Mode::AddObject { .. } => handle_add_object(state, key),
         Mode::SelectObject { .. } => handle_select_object(state, key),
         Mode::SelectedObject { .. } => handle_selected_object(state, key),
@@ -479,22 +482,152 @@ fn handle_normal(state: &mut EditorState, key: KeyEvent) -> Action {
         state.status_message = None;
         return Action::Redraw;
     }
-    if matches_binding(&bindings.add_frame, &key) {
+    if matches_binding(&bindings.frame_menu, &key) {
+        state.mode = Mode::FrameMenu;
+        state.status_message = None;
+        return Action::Redraw;
+    }
+
+    Action::Continue
+}
+
+/// Frame operations sub-menu: add a blank frame, copy/delete the current
+/// frame, or start moving it.
+fn handle_frame_menu(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::Normal;
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.frame_add, &key) {
+        insert_blank_frame(&mut state.source, state.current_frame);
+        state.current_frame += 1;
+        state.dirty = true;
+        state.status_message = Some(format!("Added blank frame {}", state.current_frame + 1));
+        state.mode = Mode::Normal;
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.frame_copy, &key) {
         adjust_frames_after_insert(&mut state.source, state.current_frame);
         state.current_frame += 1;
         state.dirty = true;
-        state.status_message = Some(format!("Duplicated → frame {}", state.current_frame + 1));
+        state.status_message = Some(format!("Copied → frame {}", state.current_frame + 1));
+        state.mode = Mode::Normal;
         return Action::Redraw;
     }
-    if matches_binding(&bindings.remove_frame, &key) {
+    if matches_binding(&bindings.frame_delete, &key) {
         if state.source.frame_count > 1 {
             state.mode = Mode::Confirm {
                 message: format!("Delete frame {}?", state.current_frame + 1),
                 selected: 0,
                 action: ConfirmAction::DeleteFrame,
-                return_mode: Box::new(Mode::Normal),
+                return_mode: Box::new(Mode::FrameMenu),
             };
+        } else {
+            state.status_message = Some("Can't delete the only frame".into());
         }
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.frame_move, &key) {
+        if state.source.frame_count > 1 {
+            let from = state.current_frame;
+            state.mode = Mode::FrameMove { from };
+            state.status_message = Some(format!(
+                "Moving frame {} — ←/→ pick a slide, Enter to place",
+                from + 1
+            ));
+        } else {
+            state.status_message = Some("Only one frame to move".into());
+        }
+        return Action::Redraw;
+    }
+
+    Action::Continue
+}
+
+/// Scrolling the deck to choose where the moved slide should land.
+fn handle_frame_move(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+    let from = match &state.mode {
+        Mode::FrameMove { from } => *from,
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        // Cancel: drop back to the frame menu on the slide being moved.
+        state.current_frame = from;
+        state.mode = Mode::FrameMenu;
+        state.status_message = Some("Move cancelled".into());
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.next_frame, &key) {
+        let last = state.source.frame_count.saturating_sub(1);
+        if state.current_frame < last {
+            state.current_frame += 1;
+        }
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.prev_frame, &key) {
+        if state.current_frame > 0 {
+            state.current_frame -= 1;
+        }
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.confirm, &key) {
+        let target = state.current_frame;
+        if target == from {
+            state.status_message = Some("Pick a different slide (←/→)".into());
+            return Action::Redraw;
+        }
+        state.mode = Mode::FrameMovePlace { from, target };
+        state.status_message = Some(format!(
+            "Place moved slide [b]efore or [Enter] after slide {}?",
+            target + 1
+        ));
+        return Action::Redraw;
+    }
+
+    Action::Continue
+}
+
+/// Choosing whether the moved slide lands before or after the shown slide.
+fn handle_frame_move_place(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+    let (from, target) = match &state.mode {
+        Mode::FrameMovePlace { from, target } => (*from, *target),
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        // Back to scrolling; keep the cursor on the target slide.
+        state.mode = Mode::FrameMove { from };
+        state.status_message = Some(format!(
+            "Moving frame {} — ←/→ pick a slide, Enter to place",
+            from + 1
+        ));
+        return Action::Redraw;
+    }
+
+    let place = if matches_binding(&bindings.confirm, &key) {
+        Some(false) // after
+    } else if matches_binding(&bindings.frame_move_before, &key) {
+        Some(true) // before
+    } else {
+        None
+    };
+
+    if let Some(before) = place {
+        let new_index = move_frame(&mut state.source, from, target, before);
+        state.current_frame = new_index;
+        state.dirty = true;
+        state.status_message = Some(format!(
+            "Moved frame to position {} ({} slide {})",
+            new_index + 1,
+            if before { "before" } else { "after" },
+            target + 1
+        ));
+        state.mode = Mode::Normal;
         return Action::Redraw;
     }
 

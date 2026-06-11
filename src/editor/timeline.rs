@@ -51,6 +51,8 @@ pub fn render_timeline(
         Mode::TableAddColumn { .. } => "ADD COL",
         Mode::TableRemoveColumn { .. } => "REMOVE COL",
         Mode::TableEditCellProps { .. } => "EDIT CELLS",
+        Mode::FrameMenu => "FRAME",
+        Mode::FrameMove { .. } | Mode::FrameMovePlace { .. } => "MOVE FRAME",
     };
     let dirty_str = if state.dirty { " [modified]" } else { "" };
     // Replace newlines so a multi-line label value doesn't scroll the terminal.

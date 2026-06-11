@@ -17,12 +17,31 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[←][→] frame",
             "[a]dd",
             "[s]elect",
-            "[+] dup",
-            "[-] del",
+            "[f]rame",
             "settin[g]s",
             "[Ctrl-s]ave",
             "[q]uit",
-            "[f]ull",
+            "[F]ull",
+        ],
+        Mode::FrameMenu => vec![
+            "[a]dd blank",
+            "[c]opy",
+            "[d]elete",
+            "[m]ove",
+            "[Esc] back",
+            "[F]ull",
+        ],
+        Mode::FrameMove { .. } => vec![
+            "[←][→] pick slide",
+            "[Enter] place here",
+            "[Esc] cancel",
+            "[F]ull",
+        ],
+        Mode::FrameMovePlace { .. } => vec![
+            "[Enter] after",
+            "[b]efore",
+            "[Esc] cancel",
+            "[F]ull",
         ],
         Mode::Settings { .. } => vec![
             "[↑↓][Tab] field",
@@ -31,14 +50,14 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[Esc] cancel",
         ],
         Mode::AddObject { .. } => {
-            vec!["[↑][↓] type", "[Enter] add", "[Esc] cancel", "[f]ull"]
+            vec!["[↑][↓] type", "[Enter] add", "[Esc] cancel", "[F]ull"]
         }
         Mode::SelectObject { .. } => vec![
             "[↑][↓] select",
             "[Enter] pick",
             "[d]el",
             "[Esc] cancel",
-            "[f]ull",
+            "[F]ull",
         ],
         Mode::SelectedObject { .. } => vec![
             "[←→↑↓] move",
@@ -47,13 +66,13 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[e]dit props",
             "[d]el",
             "[Esc] back",
-            "[f]ull",
+            "[F]ull",
         ],
         Mode::ResizeObject { .. } => vec![
             "[←→] width",
             "[↑↓] height",
             "[Enter][Esc] done",
-            "[f]ull",
+            "[F]ull",
         ],
         // Browsing properties — action hint depends on the selected property type
         Mode::EditProperties { editing_value: None, object_index, selected_property, .. } => {
@@ -81,7 +100,7 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
                 items.push("[Alt-r] -col");
             }
             items.push("[Esc] back");
-            items.push("[f]ull");
+            items.push("[F]ull");
             items
         }
         // Editing a property value
@@ -97,7 +116,7 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[s]ave anim",
             "[x] →fixed",
             "[Esc] cancel",
-            "[f]ull",
+            "[F]ull",
         ],
         Mode::AnimateProperty { editing: Some(_), .. } => vec![
             "[←][→] cursor",

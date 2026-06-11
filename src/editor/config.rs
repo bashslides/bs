@@ -20,8 +20,7 @@ pub struct KeyBindings {
     pub cancel: String,
     pub move_up: String,
     pub move_down: String,
-    pub add_frame: String,
-    pub remove_frame: String,
+    #[serde(default = "default_fullscreen")]
     pub fullscreen: String,
     pub animate: String,
     pub insert_newline: String,
@@ -45,6 +44,25 @@ pub struct KeyBindings {
     /// Enter resize mode (arrow-key resize) from the selected-object menu.
     #[serde(default = "default_resize_object")]
     pub resize_object: String,
+    /// Open the frame operations sub-menu (add/copy/delete/move) from Normal.
+    #[serde(default = "default_frame_menu")]
+    pub frame_menu: String,
+    /// Within the frame sub-menu: add a blank frame.
+    #[serde(default = "default_frame_add")]
+    pub frame_add: String,
+    /// Within the frame sub-menu: copy (duplicate) the current frame.
+    #[serde(default = "default_frame_copy")]
+    pub frame_copy: String,
+    /// Within the frame sub-menu: delete the current frame.
+    #[serde(default = "default_frame_delete")]
+    pub frame_delete: String,
+    /// Within the frame sub-menu: move (relocate) the current frame.
+    #[serde(default = "default_frame_move")]
+    pub frame_move: String,
+    /// While placing a moved frame: drop it *before* the shown frame
+    /// (Enter drops it after).
+    #[serde(default = "default_frame_move_before")]
+    pub frame_move_before: String,
 }
 
 fn default_table_add_col_after() -> String { "Alt-a".into() }
@@ -55,6 +73,13 @@ fn default_table_add_list() -> String { "l".into() }
 fn default_table_edit_cell_style() -> String { "s".into() }
 fn default_open_settings() -> String { "g".into() }
 fn default_resize_object() -> String { "r".into() }
+fn default_fullscreen() -> String { "F".into() }
+fn default_frame_menu() -> String { "f".into() }
+fn default_frame_add() -> String { "a".into() }
+fn default_frame_copy() -> String { "c".into() }
+fn default_frame_delete() -> String { "d".into() }
+fn default_frame_move() -> String { "m".into() }
+fn default_frame_move_before() -> String { "b".into() }
 
 impl Default for EditorConfig {
     fn default() -> Self {
@@ -72,9 +97,7 @@ impl Default for EditorConfig {
                 cancel: "Esc".into(),
                 move_up: "Up".into(),
                 move_down: "Down".into(),
-                add_frame: "+".into(),
-                remove_frame: "-".into(),
-                fullscreen: "f".into(),
+                fullscreen: default_fullscreen(),
                 animate: "a".into(),
                 insert_newline: "Alt-Enter".into(),
                 table_add_col_after: default_table_add_col_after(),
@@ -85,6 +108,12 @@ impl Default for EditorConfig {
                 table_edit_cell_style: default_table_edit_cell_style(),
                 open_settings: default_open_settings(),
                 resize_object: default_resize_object(),
+                frame_menu: default_frame_menu(),
+                frame_add: default_frame_add(),
+                frame_copy: default_frame_copy(),
+                frame_delete: default_frame_delete(),
+                frame_move: default_frame_move(),
+                frame_move_before: default_frame_move_before(),
             },
         }
     }

@@ -207,6 +207,18 @@ reconstructed character grid (some also assert on cell styles).
 |------|----------|
 | `create_default_covers_every_object_type` | `create_default` builds the expected variant for every `OBJECT_TYPES` index |
 
+### Frame operations — `src/editor/state.rs`
+
+| Test | Verifies |
+|------|----------|
+| `copy_frame_extends_a_single_frame_object_onto_the_new_frame` | Copy (duplicate) extends a frame-local object so the new frame matches |
+| `blank_frame_leaves_a_single_frame_object_behind` | Blank insert does not extend the source frame's object into the new frame |
+| `blank_frame_still_shifts_later_objects` | Objects on later frames slide forward past an inserted blank frame |
+| `move_frame_relocates_single_frame_objects_after_target` | Moving a frame after a target remaps single-frame object ranges |
+| `move_frame_relocates_before_target` | Moving a frame before a target remaps ranges and returns the new index |
+| `move_frame_keeps_a_whole_deck_object_spanning_the_whole_deck` | A whole-deck object still spans the whole deck after a move |
+| `move_frame_is_a_noop_onto_itself` | Moving a frame relative to itself is a no-op |
+
 ### Art library — `src/art_library.rs`
 
 | Test | Verifies |

@@ -149,6 +149,22 @@ pub enum Mode {
         /// Text cursor within the selected field's buffer.
         cursor: usize,
     },
+    /// Frame operations sub-menu (opened with [f]rame from Normal): add a
+    /// blank frame, copy/delete the current frame, or move it.
+    FrameMenu,
+    /// Relocating the current slide. Left/Right scroll the deck to a target
+    /// slide (tracked by `current_frame`); Enter then opens `FrameMovePlace`.
+    FrameMove {
+        /// Original index of the slide being moved.
+        from: usize,
+    },
+    /// Choosing whether the moved slide lands before or after the shown slide.
+    FrameMovePlace {
+        /// Original index of the slide being moved.
+        from: usize,
+        /// Target slide (currently shown) the moved slide will sit next to.
+        target: usize,
+    },
     /// Navigating / selecting cells in a table to edit their properties.
     TableEditCellProps {
         object_index: usize,
@@ -321,13 +337,33 @@ fn scene_object_coordinates_mut(obj: &mut SceneObject) -> Vec<&mut Coordinate> {
     }
 }
 
-/// Adjust all frame indices after a frame has been inserted after `inserted_after`.
+/// Insert a frame just after `inserted_after`, *duplicating* that frame's
+/// content: an object whose range ends exactly at the boundary is extended so
+/// the new frame looks identical to the source frame.
 pub fn adjust_frames_after_insert(source: &mut SourcePresentation, inserted_after: usize) {
+    insert_frame(source, inserted_after, false);
+}
+
+/// Insert a *blank* frame just after `inserted_after`: objects local to the
+/// source frame do not extend into the new one, so it starts empty.
+///
+/// (Objects spanning *past* the source frame still cover the new frame — a
+/// contiguous range can't skip a single interior frame — so deck-wide
+/// backgrounds remain visible, matching the existing range-based model.)
+pub fn insert_blank_frame(source: &mut SourcePresentation, inserted_after: usize) {
+    insert_frame(source, inserted_after, true);
+}
+
+/// Shared frame-insertion logic. The only difference between duplicate and
+/// blank is the end-shift threshold: a range ending exactly at the new frame
+/// position is extended for a duplicate but left alone for a blank insert.
+fn insert_frame(source: &mut SourcePresentation, inserted_after: usize, blank: bool) {
     source.frame_count += 1;
+    let end_threshold = if blank { inserted_after + 1 } else { inserted_after };
     for obj in &mut source.objects {
         // Auto groups have no stored range to shift; their members shift instead.
         if let Some(fr) = scene_object_frame_range_mut(obj) {
-            if fr.end > inserted_after {
+            if fr.end > end_threshold {
                 fr.end += 1;
             }
             if fr.start > inserted_after {
@@ -350,6 +386,69 @@ pub fn adjust_frames_after_insert(source: &mut SourcePresentation, inserted_afte
             }
         }
     }
+}
+
+/// Reorder the deck so frame `from` sits immediately before (`before == true`)
+/// or after (`before == false`) frame `target`, and return the moved frame's
+/// new index.
+///
+/// Frames are implicit (defined by object ranges), so this is a permutation of
+/// frame indices. Each contiguous range is remapped to the contiguous hull of
+/// its members' new positions: exact when the move doesn't reorder frames
+/// *inside* the range (the common case — single-slide and whole-deck objects),
+/// and an inclusive approximation when a partial multi-frame span is torn by
+/// the move (the span then also covers the frames it was spread across).
+pub fn move_frame(
+    source: &mut SourcePresentation,
+    from: usize,
+    target: usize,
+    before: bool,
+) -> usize {
+    let n = source.frame_count;
+    if n <= 1 || from >= n || target >= n || from == target {
+        return from;
+    }
+    // Build the new ordering: order[new_index] = old_index.
+    let mut order: Vec<usize> = (0..n).filter(|&f| f != from).collect();
+    let target_pos = order.iter().position(|&f| f == target).unwrap_or(0);
+    let insert_at = if before { target_pos } else { target_pos + 1 };
+    order.insert(insert_at, from);
+
+    // Inverse map: pos[old_index] = new_index.
+    let mut pos = vec![0usize; n];
+    for (new_idx, &old) in order.iter().enumerate() {
+        pos[old] = new_idx;
+    }
+
+    for obj in &mut source.objects {
+        if let Some(fr) = scene_object_frame_range_mut(obj) {
+            if fr.start < fr.end {
+                let (mut lo, mut hi) = (usize::MAX, 0usize);
+                for f in fr.start..fr.end {
+                    let p = pos[f.min(n - 1)];
+                    lo = lo.min(p);
+                    hi = hi.max(p);
+                }
+                fr.start = lo;
+                fr.end = hi + 1;
+            }
+        }
+        for coord in scene_object_coordinates_mut(obj) {
+            if let Coordinate::Animated {
+                start_frame,
+                end_frame,
+                ..
+            } = coord
+            {
+                let a = pos[(*start_frame).min(n - 1)];
+                let b = pos[(*end_frame).min(n - 1)];
+                *start_frame = a.min(b);
+                *end_frame = a.max(b);
+            }
+        }
+    }
+
+    pos[from]
 }
 
 /// Adjust all frame indices after frame `deleted` has been removed.
@@ -429,5 +528,96 @@ pub fn scene_object_summary(obj: &SceneObject) -> String {
             let count = l.text.split('\n').filter(|s| !s.is_empty()).count();
             format!("List: {count} items ({kind})")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor::object_defaults::create_default;
+
+    /// A Label spanning frames `[start, end)`.
+    fn label(start: usize, end: usize) -> SceneObject {
+        let mut obj = create_default(0, 0);
+        if let Some(fr) = scene_object_frame_range_mut(&mut obj) {
+            fr.start = start;
+            fr.end = end;
+        }
+        obj
+    }
+
+    fn pres(frame_count: usize, objects: Vec<SceneObject>) -> SourcePresentation {
+        SourcePresentation { width: 80, height: 24, frame_count, objects }
+    }
+
+    fn range(obj: &SceneObject) -> (usize, usize) {
+        let fr = scene_object_frame_range(obj).unwrap();
+        (fr.start, fr.end)
+    }
+
+    #[test]
+    fn copy_frame_extends_a_single_frame_object_onto_the_new_frame() {
+        // Copy duplicates: an object local to the source frame appears on both.
+        let mut p = pres(1, vec![label(0, 1)]);
+        adjust_frames_after_insert(&mut p, 0);
+        assert_eq!(p.frame_count, 2);
+        assert_eq!(range(&p.objects[0]), (0, 2));
+    }
+
+    #[test]
+    fn blank_frame_leaves_a_single_frame_object_behind() {
+        // Blank insert does not extend the source frame's object into the new one.
+        let mut p = pres(1, vec![label(0, 1)]);
+        insert_blank_frame(&mut p, 0);
+        assert_eq!(p.frame_count, 2);
+        assert_eq!(range(&p.objects[0]), (0, 1));
+    }
+
+    #[test]
+    fn blank_frame_still_shifts_later_objects() {
+        // An object on a later frame slides forward to make room for the blank.
+        let mut p = pres(2, vec![label(0, 1), label(1, 2)]);
+        insert_blank_frame(&mut p, 0); // new blank frame at index 1
+        assert_eq!(p.frame_count, 3);
+        assert_eq!(range(&p.objects[0]), (0, 1)); // unchanged
+        assert_eq!(range(&p.objects[1]), (2, 3)); // shifted past the blank
+    }
+
+    #[test]
+    fn move_frame_relocates_single_frame_objects_after_target() {
+        // Deck 0,1,2,3 → move frame 0 to after frame 2 → order 1,2,0,3.
+        let mut p = pres(4, vec![label(0, 1), label(1, 2), label(2, 3), label(3, 4)]);
+        let new_index = move_frame(&mut p, 0, 2, false);
+        assert_eq!(new_index, 2);
+        assert_eq!(range(&p.objects[0]), (2, 3)); // old frame 0 → index 2
+        assert_eq!(range(&p.objects[1]), (0, 1)); // old frame 1 → index 0
+        assert_eq!(range(&p.objects[2]), (1, 2)); // old frame 2 → index 1
+        assert_eq!(range(&p.objects[3]), (3, 4)); // old frame 3 unchanged
+        assert_eq!(p.frame_count, 4); // move never changes the count
+    }
+
+    #[test]
+    fn move_frame_relocates_before_target() {
+        // Deck 0,1,2,3 → move frame 3 to before frame 1 → order 0,3,1,2.
+        let mut p = pres(4, vec![label(0, 1), label(1, 2), label(2, 3), label(3, 4)]);
+        let new_index = move_frame(&mut p, 3, 1, true);
+        assert_eq!(new_index, 1);
+        assert_eq!(range(&p.objects[3]), (1, 2)); // old frame 3 → index 1
+        assert_eq!(range(&p.objects[1]), (2, 3)); // old frame 1 → index 2
+    }
+
+    #[test]
+    fn move_frame_keeps_a_whole_deck_object_spanning_the_whole_deck() {
+        let mut p = pres(3, vec![label(0, 3)]);
+        move_frame(&mut p, 0, 2, false);
+        assert_eq!(range(&p.objects[0]), (0, 3));
+    }
+
+    #[test]
+    fn move_frame_is_a_noop_onto_itself() {
+        let mut p = pres(3, vec![label(0, 1)]);
+        let new_index = move_frame(&mut p, 1, 1, false);
+        assert_eq!(new_index, 1);
+        assert_eq!(range(&p.objects[0]), (0, 1));
     }
 }
