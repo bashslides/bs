@@ -120,3 +120,52 @@ reconstructed character grid.
 | Test | Verifies |
 |------|----------|
 | `builtins_are_present_and_named` | Built-in art pieces are present and named |
+
+## Missing test cases
+
+Tests that would fill obvious gaps, grouped by area. The final table lists parts
+that are intentionally not covered (TUI / runtime), so they are not mistaken for
+gaps.
+
+### Object rendering not yet covered
+
+| Object | Missing test |
+|--------|--------------|
+| `Arrow` | Rendering — horizontal / vertical / diagonal lines, head & body characters |
+| `HLine` | Rendering — span between endpoints, custom draw character |
+| `Header` | Rendering — text placement and fill character |
+| `Rect` | Rendering — border box and `title` |
+| `Group` | Rendering of members; fractional-coordinate member scaling |
+| `Label` | `framed` border + `frame_style`; background fill; height clip/pad; wrapped multi-line text |
+
+### Property round-trips not yet covered
+
+| Object | Missing test |
+|--------|--------------|
+| `Command` | Properties round-trip through get/set |
+| `List` | Properties round-trip through get/set |
+
+### Edge cases of covered behavior
+
+| Area | Missing test |
+|------|--------------|
+| `List` | Ordered list with ≥10 items (multi-digit marker alignment) |
+| `List` / `Label` | Explicit `height` clip/pad; background fill |
+| `grid_at` | Frame index past the last frame (clamp); out-of-bounds diff change skipped |
+| Animated coordinate | Decreasing ramp (`from` > `to`) |
+| Word-wrap | Single word longer than the width (hard break); width smaller than the continuation indent |
+
+### Engine & renderer
+
+| Area | Missing test |
+|------|--------------|
+| `Engine::compile` | Empty presentation (no objects); object whose frame range is entirely outside `frame_count` |
+| `Renderer` | Overlapping ops at equal z-order (draw order); empty / all-default frame |
+| `object_defaults::create_default` | Every `OBJECT_TYPES` index builds the expected variant |
+
+### Intentionally not covered (TUI / runtime)
+
+| Area | Reason |
+|------|--------|
+| `Command` run-loop | Spawn, piped I/O, timeout, ✓/✗ status — runs at play time in the TUI |
+| Editor | Mode FSM transitions, immediate-edit-on-add, panel rendering — interactive TUI |
