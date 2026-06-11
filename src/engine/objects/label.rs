@@ -47,64 +47,13 @@ fn list_continuation_indent(line: &str) -> usize {
 
 /// Wrap a single logical text line to a grid width using word-breaking.
 ///
-/// Wrapping only happens at space characters; the space at the break point is
-/// consumed so the next row never starts with an accidental leading space.
-/// When no space exists within the available width the line is hard-broken.
-/// List-item continuation rows (see `list_continuation_indent`) receive an
-/// indent prefix on every row after the first.
-///
-/// Returns one `Vec<char>` per visual row, each of length `w` (padded with
-/// spaces).  Empty lines return a single empty `Vec`.
+/// Delegates to the shared [`wrap`](super::wrap) helper, supplying the
+/// list-item continuation indent. Returns one `Vec<char>` per visual row, each
+/// of length `w` (padded with spaces); empty lines return a single empty `Vec`.
 fn wrap_text_line(line: &str, w: usize) -> Vec<Vec<char>> {
-    let chars: Vec<char> = line.chars().collect();
-    if chars.is_empty() {
-        return vec![Vec::new()];
-    }
     let indent = list_continuation_indent(line);
-    let mut rows: Vec<Vec<char>> = Vec::new();
-    let mut pos = 0usize;
-    let mut first = true;
-
-    while pos < chars.len() {
-        let col0 = if first { 0 } else { indent.min(w.saturating_sub(1)) };
-        first = false;
-        let avail = w - col0;
-
-        let remaining = &chars[pos..];
-        if remaining.len() <= avail {
-            // Everything fits on this row.
-            let mut row = vec![' '; w];
-            for (i, &ch) in remaining.iter().enumerate() {
-                row[col0 + i] = ch;
-            }
-            rows.push(row);
-            break;
-        }
-
-        // Find the last space within the available width for a soft break.
-        let chunk = &remaining[..avail];
-        let (row_len, advance) = match chunk.iter().rposition(|&c| c == ' ') {
-            Some(sp) => (sp, sp + 1), // break before space, skip the space
-            None     => (avail, avail), // hard break
-        };
-
-        let mut row = vec![' '; w];
-        for (i, &ch) in remaining[..row_len].iter().enumerate() {
-            row[col0 + i] = ch;
-        }
-        rows.push(row);
-        pos += advance;
-
-        // Skip any additional leading spaces so the next row starts on a word.
-        while pos < chars.len() && chars[pos] == ' ' {
-            pos += 1;
-        }
-    }
-
-    if rows.is_empty() {
-        rows.push(Vec::new());
-    }
-    rows
+    let indexed = super::wrap::wrap_line_indexed(0, line, w, indent);
+    super::wrap::indexed_to_chars(line, indexed)
 }
 
 fn default_label_width() -> Coordinate {

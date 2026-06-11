@@ -163,3 +163,39 @@ pub struct PlayablePresentation {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commands: Vec<CommandRegion>,
 }
+
+impl PlayablePresentation {
+    /// Reconstruct the full cell grid visible at `frame` by replaying the
+    /// initial `Frame::Full` plus every `Frame::Diff` up to and including it.
+    ///
+    /// This is the single source of truth for "what does frame N look like":
+    /// the player, the editor preview, and the test harness all go through it,
+    /// so they can never disagree about how diffs accumulate. `frame` is
+    /// clamped to the last available frame, and diff changes that fall outside
+    /// the contract's dimensions are skipped — a malformed diff degrades
+    /// gracefully instead of panicking.
+    pub fn grid_at(&self, frame: usize) -> Vec<Vec<Cell>> {
+        let w = self.contract.width as usize;
+        let h = self.contract.height as usize;
+        let mut grid = vec![vec![Cell::default(); w]; h];
+        if self.frames.is_empty() {
+            return grid;
+        }
+        let last = frame.min(self.frames.len() - 1);
+        for f in &self.frames[..=last] {
+            match f {
+                Frame::Full { cells } => grid = cells.clone(),
+                Frame::Diff { changes } => {
+                    for c in changes {
+                        let x = c.x as usize;
+                        let y = c.y as usize;
+                        if y < grid.len() && x < grid[0].len() {
+                            grid[y][x] = c.cell.clone();
+                        }
+                    }
+                }
+            }
+        }
+        grid
+    }
+}

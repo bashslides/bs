@@ -7,7 +7,7 @@
 
 use bs::engine::{source::SourcePresentation, Engine};
 use bs::renderer::Renderer;
-use bs::types::{Frame, PlayablePresentation, TerminalContract};
+use bs::types::{PlayablePresentation, TerminalContract};
 
 /// Parse a source presentation from JSON and run it through the real pipeline.
 ///
@@ -29,29 +29,9 @@ pub fn render_json(json: &str) -> PlayablePresentation {
 /// Returns one `String` per row (style is ignored — assert on the `Frame`
 /// directly when you need to check colors/attributes).
 pub fn frame_lines(p: &PlayablePresentation, frame_index: usize) -> Vec<String> {
-    let w = p.contract.width as usize;
-    let h = p.contract.height as usize;
-    let mut grid = vec![vec![' '; w]; h];
-
-    for frame in &p.frames[..=frame_index] {
-        match frame {
-            Frame::Full { cells } => {
-                for (y, row) in cells.iter().enumerate() {
-                    for (x, cell) in row.iter().enumerate() {
-                        grid[y][x] = cell.ch;
-                    }
-                }
-            }
-            Frame::Diff { changes } => {
-                for c in changes {
-                    grid[c.y as usize][c.x as usize] = c.cell.ch;
-                }
-            }
-        }
-    }
-
-    grid.into_iter()
-        .map(|row| row.into_iter().collect::<String>())
+    p.grid_at(frame_index)
+        .into_iter()
+        .map(|row| row.into_iter().map(|cell| cell.ch).collect::<String>())
         .collect()
 }
 

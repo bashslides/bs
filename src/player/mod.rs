@@ -233,12 +233,9 @@ impl Player {
     }
 
     fn rebuild_grid(&mut self, target: usize) -> Result<()> {
-        let w = self.presentation.contract.width as usize;
-        let h = self.presentation.contract.height as usize;
-        self.grid = vec![vec![Cell::default(); w]; h];
-        for i in 0..=target {
-            self.apply_frame(i)?;
-        }
+        // Full replay shares one implementation with the editor preview and the
+        // test harness (see `PlayablePresentation::grid_at`).
+        self.grid = self.presentation.grid_at(target);
         Ok(())
     }
 

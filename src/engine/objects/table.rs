@@ -6,61 +6,15 @@ use super::super::source::{Coordinate, FrameRange, Position, deserialize_coord_c
 use super::Resolve;
 
 // ---------------------------------------------------------------------------
-// Word-wrap helper (mirrors Label's logic, without list-continuation indent)
+// Word-wrap helpers
 // ---------------------------------------------------------------------------
-
-/// Word-wrap a single line into rows of `w` cells, where each cell carries the
-/// source character index (offset by `base`) it displays, or `None` for the
-/// padding that fills a short row. `wrap_text_line` is defined in terms of this
-/// so the visible glyphs and their source indices never drift apart.
-fn wrap_line_indexed(base: usize, line: &str, w: usize) -> Vec<Vec<Option<usize>>> {
-    let chars: Vec<char> = line.chars().collect();
-    if chars.is_empty() || w == 0 {
-        return vec![Vec::new()];
-    }
-    let mut rows: Vec<Vec<Option<usize>>> = Vec::new();
-    let mut pos = 0usize;
-    while pos < chars.len() {
-        let remaining = &chars[pos..];
-        if remaining.len() <= w {
-            let mut row = vec![None; w];
-            for i in 0..remaining.len() {
-                row[i] = Some(base + pos + i);
-            }
-            rows.push(row);
-            break;
-        }
-        let chunk = &remaining[..w];
-        let (row_len, advance) = match chunk.iter().rposition(|&c| c == ' ') {
-            Some(sp) => (sp, sp + 1),
-            None => (w, w),
-        };
-        let mut row = vec![None; w];
-        for i in 0..row_len {
-            row[i] = Some(base + pos + i);
-        }
-        rows.push(row);
-        pos += advance;
-        while pos < chars.len() && chars[pos] == ' ' {
-            pos += 1;
-        }
-    }
-    if rows.is_empty() {
-        rows.push(Vec::new());
-    }
-    rows
-}
+//
+// Table cells wrap with the shared `wrap` helper (no list-continuation indent),
+// so the cell wrap and the `Label` wrap can never diverge.
 
 fn wrap_text_line(line: &str, w: usize) -> Vec<Vec<char>> {
-    let chars: Vec<char> = line.chars().collect();
-    wrap_line_indexed(0, line, w)
-        .into_iter()
-        .map(|row| {
-            row.into_iter()
-                .map(|idx| idx.map(|i| chars[i]).unwrap_or(' '))
-                .collect()
-        })
-        .collect()
+    let indexed = super::wrap::wrap_line_indexed(0, line, w, 0);
+    super::wrap::indexed_to_chars(line, indexed)
 }
 
 fn wrap_cell_content(content: &str, w: usize) -> Vec<Vec<char>> {
@@ -87,7 +41,7 @@ fn wrap_cell_content_indexed(content: &str, w: usize) -> Vec<Vec<Option<usize>>>
     let mut result = Vec::new();
     let mut base = 0usize;
     for line in content.split('\n') {
-        result.extend(wrap_line_indexed(base, line, w));
+        result.extend(super::wrap::wrap_line_indexed(base, line, w, 0));
         base += line.chars().count() + 1; // +1 for the consumed '\n'
     }
     if result.is_empty() {

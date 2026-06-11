@@ -7,7 +7,7 @@ use crate::engine::Engine;
 use crate::engine::source::SceneObject;
 use crate::player::to_content_style;
 use crate::renderer::Renderer;
-use crate::types::{Color, Frame, NamedColor, ResolvedScene, Style, TerminalContract};
+use crate::types::{Color, NamedColor, ResolvedScene, Style, TerminalContract};
 
 use super::state::{EditorState, Mode, TableCellSubState};
 use super::ui::Layout;
@@ -278,27 +278,10 @@ pub fn render_canvas_production(
     };
     let presentation = Renderer::render(&scenes, contract);
 
-    // Build the cell grid by replaying frames 0..=current
-    let w = state.source.width as usize;
-    let h = state.source.height as usize;
-    let mut grid = vec![vec![crate::types::Cell::default(); w]; h];
-    let last_frame = state
-        .current_frame
-        .min(presentation.frames.len().saturating_sub(1));
-    for i in 0..=last_frame {
-        match &presentation.frames[i] {
-            Frame::Full { cells } => grid = cells.clone(),
-            Frame::Diff { changes } => {
-                for c in changes {
-                    let x = c.x as usize;
-                    let y = c.y as usize;
-                    if y < grid.len() && x < grid[0].len() {
-                        grid[y][x] = c.cell.clone();
-                    }
-                }
-            }
-        }
-    }
+    // Build the cell grid by replaying frames 0..=current. Shares one
+    // implementation with the player and the test harness so the WYSIWYG
+    // preview can never disagree with playback (see `grid_at`).
+    let grid = presentation.grid_at(state.current_frame);
 
     // Paint cells within the canvas at the (possibly inset) content origin.
     for (y, row) in grid.iter().enumerate() {

@@ -191,8 +191,22 @@ the shared `TextEdit` buffer (`textedit.rs`), dropdown navigation through
 `dropdown_key`, and `Mode::EditProperties` is built via the `ep_*` constructors
 (which also fixed browse-mode scroll not following the selection).
 
+Recent maintainability work (from a code review):
+
+- A "how to add an object type" checklist now lives in the module doc of
+  `src/engine/objects/mod.rs`, enumerating every touch site (the compiler only
+  catches some).
+- Word-wrap is no longer duplicated: `label.rs` and `table.rs` both call the
+  shared `engine::objects::wrap` helper (`wrap_line_indexed` + `indexed_to_chars`),
+  so the glyphs and their source indices can't drift.
+- Frame replay is unified in `PlayablePresentation::grid_at` (`types.rs`); the
+  player (`rebuild_grid`), the editor preview, and the test harness
+  (`frame_lines`) all go through it instead of re-implementing diff replay.
+
 Outstanding maintainability work (from a code review; not yet done):
 
 - The `Mode` FSM (~16 variants, some with 7–15 fields) grows with every object type.
-- No "how to add an object type" checklist exists; word-wrap is duplicated between
-  `label.rs` and `table.rs`.
+- `panel.rs::render_right_panel` is one ~900-line function covering 12 modes,
+  with the list/text-field/dropdown render patterns duplicated inline.
+- The nine `Editable` impls repeat near-identical `set()` arms and geometry
+  accessors for the common x/y/width/height/style/frame fields.
