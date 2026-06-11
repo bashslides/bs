@@ -6,9 +6,11 @@
 use serde::{Deserialize, Serialize};
 
 // Re-export object types so they remain accessible via `engine::source::*`.
-pub use super::objects::{Arrow, Art, Command, Group, HLine, Header, Label, List, Rect, Table};
+pub use super::objects::{
+    Arrow, Art, Command, Group, HLine, Header, Label, List, Loop, Rect, Table,
+};
 
-use crate::types::CommandRegion;
+use crate::types::{CommandRegion, LoopRegion};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourcePresentation {
@@ -31,6 +33,7 @@ pub enum SceneObject {
     Art(Art),
     Command(Command),
     List(List),
+    Loop(Loop),
 }
 
 impl SceneObject {
@@ -49,6 +52,7 @@ impl SceneObject {
             SceneObject::Art(a) => Some(a.frames.clone()),
             SceneObject::Command(c) => Some(c.frames.clone()),
             SceneObject::List(l) => Some(l.frames.clone()),
+            SceneObject::Loop(l) => Some(l.frames.clone()),
         }
     }
 
@@ -66,6 +70,7 @@ impl SceneObject {
             SceneObject::Art(a) => a.frames = r,
             SceneObject::Command(c) => c.frames = r,
             SceneObject::List(l) => l.frames = r,
+            SceneObject::Loop(l) => l.frames = r,
         }
     }
 }
@@ -136,6 +141,54 @@ impl SourcePresentation {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Collect the runtime loop specs from all `Loop` objects. Like the command
+    /// specs, these travel as a sidecar on the `PlayablePresentation` because a
+    /// loop is a play-time navigation behavior, not something bakeable into the
+    /// static frames.
+    pub fn loop_regions(&self) -> Vec<LoopRegion> {
+        self.objects
+            .iter()
+            .filter_map(|obj| match obj {
+                SceneObject::Loop(l) => Some(l.region()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Validate every `Loop` object's range: each must be non-empty, fit within
+    /// the deck, and be **disjoint** from every other loop (loops may neither
+    /// overlap nor nest). Returns an error describing the first problem found.
+    ///
+    /// Run both in the editor (to surface mistakes live) and at compile time (a
+    /// hard gate before a playable is written).
+    pub fn validate_loops(&self) -> Result<(), String> {
+        let mut seen: Vec<(usize, usize)> = Vec::new();
+        for obj in &self.objects {
+            let SceneObject::Loop(l) = obj else { continue };
+            let (s, e) = (l.frames.start, l.frames.end);
+            if s >= e {
+                return Err(format!("a loop has an empty range (frames {s}..{e})"));
+            }
+            if e > self.frame_count {
+                return Err(format!(
+                    "a loop range ({s}..{e}) extends past the {}-frame deck",
+                    self.frame_count
+                ));
+            }
+            // Disjoint check: two half-open ranges overlap iff each starts
+            // before the other ends.
+            for &(ps, pe) in &seen {
+                if s < pe && ps < e {
+                    return Err(format!(
+                        "loops may not overlap or nest, but frames {ps}..{pe} and {s}..{e} do"
+                    ));
+                }
+            }
+            seen.push((s, e));
+        }
+        Ok(())
     }
 }
 

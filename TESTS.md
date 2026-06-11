@@ -147,6 +147,19 @@ reconstructed character grid (some also assert on cell styles).
 | `explicit_group_range_narrows_member_frames` | An explicit group range overrides (narrows) a member's range |
 | `explicit_group_range_widens_member_frames` | An explicit group range overrides (widens) a member's range |
 
+### Loop object — `tests/looping.rs`
+
+| Test | Verifies |
+|------|----------|
+| `loop_regions_collects_specs_with_defaults` | A `loop` compiles to a `LoopRegion`; omitted fields default (500 / 0 / true) |
+| `loop_regions_carries_explicit_fields` | Explicit `delay_ms` / `count` / `bounce` pass through to the region |
+| `disjoint_loops_validate` | Side-by-side, non-touching loops pass `validate_loops` |
+| `overlapping_loops_are_rejected` | Partially crossing ranges (10..20 vs 15..25) are rejected |
+| `nested_loops_are_rejected` | A loop fully containing another is rejected (no nesting) |
+| `loop_past_end_of_deck_is_rejected` | A range extending past `frame_count` is rejected |
+| `empty_loop_range_is_rejected` | A zero-width range (`start == end`) is rejected |
+| `a_deck_with_no_loops_validates_and_emits_nothing` | No loops → validates and emits no regions |
+
 ### Command object — `tests/command.rs`
 
 | Test | Verifies |
@@ -174,9 +187,19 @@ reconstructed character grid (some also assert on cell styles).
 | `auto_group_shows_blank_frames_and_no_note` | An auto group shows blank first/last frame and no override note |
 | `command_properties_roundtrip` | `Command` properties round-trip through get/set |
 | `list_properties_roundtrip` | `List` properties round-trip through get/set |
+| `loop_properties_roundtrip` | `Loop` properties round-trip; editing `delay_ms`/`bounce` sticks |
 | `unknown_property_is_rejected` | An unknown property name is rejected |
 | `coordinate_get_set_roundtrips` | Coordinate get/set round-trips |
 | `resize_group_scales_members_with_fractional_precision` | `resize_group` scales members with fractional precision |
+
+### Loop stepping — `src/player/mod.rs`
+
+| Test | Verifies |
+|------|----------|
+| `non_bounce_wraps_to_start` | Forward sweep wraps to the start; each wrap is one completed pass |
+| `bounce_ping_pongs_without_duplicating_endpoints` | Bounce plays `5,6,7,8,7,6,5` (endpoints once per turn); one pass per round-trip |
+| `single_frame_range_completes_each_tick` | A one-frame loop stays put and counts a pass per tick |
+| `two_frame_bounce_alternates` | A two-frame bounce alternates `5,6,5,6` |
 
 ### Word-wrap — `src/engine/objects/wrap.rs`
 
@@ -234,4 +257,5 @@ These run only in the interactive TUI / at play time and are verified manually.
 | Area | Reason |
 |------|--------|
 | `Command` run-loop | Spawn, piped I/O, timeout, ✓/✗ status — runs at play time in the TUI |
+| `Loop` run-loop | Timer-based auto-advance, bounce playback, arrow-key break-out — play time in the TUI (the pure `loop_next` step fn is unit-tested) |
 | Editor | Mode FSM transitions, immediate-edit-on-add, panel rendering — interactive TUI |

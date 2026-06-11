@@ -1,8 +1,10 @@
 use crate::engine::source::*;
 use crate::types::Style;
 
-pub const OBJECT_TYPES: &[&str] =
-    &["Label", "HLine", "Rect", "Header", "Group", "Arrow", "Table", "Art", "Command", "List"];
+pub const OBJECT_TYPES: &[&str] = &[
+    "Label", "HLine", "Rect", "Header", "Group", "Arrow", "Table", "Art", "Command", "List",
+    "Loop",
+];
 
 /// Build an `Art` object embedding the given art text. Used by the editor's
 /// art-library picker (the index-based `create_default` path is never hit for
@@ -154,6 +156,14 @@ pub fn create_default(type_index: usize, current_frame: usize) -> SceneObject {
             style: Style::default(),
             frames,
             z_order: 0,
+        }),
+        10 => SceneObject::Loop(Loop {
+            // A new loop spans only the current slide; widen its range (and tune
+            // delay/count/bounce) in the properties panel.
+            frames,
+            delay_ms: 500,
+            count: 0,
+            bounce: true,
         }),
         _ => unreachable!(),
     }

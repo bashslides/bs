@@ -154,6 +154,29 @@ pub struct CommandRegion {
     pub style: Style,
 }
 
+/// A runtime loop region — the sidecar spec for a `Loop` object.
+///
+/// Like a `Command`, a `Loop` is a play-time behavior that cannot be baked into
+/// static frames: it draws nothing and instead tells the `Player` to
+/// auto-advance across `[start_frame, end_frame)` (end exclusive) on a timer
+/// until the presenter navigates out with an arrow key. The compiler emits this
+/// spec alongside the frames; the editor and renderer ignore it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoopRegion {
+    /// First frame of the loop (inclusive).
+    pub start_frame: usize,
+    /// One past the last frame of the loop (exclusive).
+    pub end_frame: usize,
+    /// Delay between auto-advanced frames, in milliseconds.
+    pub delay_ms: u64,
+    /// Number of times to play before moving on; `0` = loop forever.
+    #[serde(default)]
+    pub count: usize,
+    /// Play the range forward then backward (`5,6,7,8,7,6,…`) instead of
+    /// restarting (`5,6,7,8,5,6,…`).
+    pub bounce: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayablePresentation {
     pub contract: TerminalContract,
@@ -162,6 +185,8 @@ pub struct PlayablePresentation {
     pub markers: Vec<Marker>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commands: Vec<CommandRegion>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loops: Vec<LoopRegion>,
 }
 
 impl PlayablePresentation {

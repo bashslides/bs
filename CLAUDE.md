@@ -59,6 +59,21 @@ the result with a green `✓` (exit 0) or red `✗` (non-zero / timeout / spawn
 failure) on the top edge. Navigation does not branch on exit status — you always
 stay on the slide and move on with the arrow keys.
 
+**Runtime exception — `Loop` objects.** Also a play-time behavior that can't be
+baked into frames. A `Loop` draws **nothing** (like `Group`); its `frames` range
+*is* the loop range, and it emits a `LoopRegion` sidecar on `PlayablePresentation`.
+At play time the `Player` enters the loop when navigation lands inside its range
+and auto-advances on a timer (`delay_ms`, default 500). With `bounce` (default on)
+it ping-pongs forward then backward (`5,6,7,8,7,6,…`); otherwise it restarts
+(`5,6,7,8,5,6,…`). `count` plays before moving on (`0` = forever; a finite loop
+auto-continues just past its range). The presenter breaks out with the arrow keys:
+`→` jumps to the first frame *after* the loop, `←` to the first frame *before* it
+(Home/End/q also tear it down). Loops may **not overlap or nest** — `SourcePresentation::validate_loops`
+enforces disjoint ranges both live in the editor (status warning) and at compile
+time (hard error). The pure step function is `player::loop_next`. Loops are added
+through the normal **Add Object** menu, so they reuse property editing and frame
+insert/delete/move range-remapping for free.
+
 **`Group` frame range — auto vs. explicit override.** `Group.frames` is an
 `Option<FrameRange>`. A group is a logical container whose members are ordinary
 top-level objects that render themselves.
@@ -84,12 +99,12 @@ auto groups (their members shift instead).
 | Path | Role |
 |------|------|
 | `src/main.rs` | CLI entry point |
-| `src/types.rs` | Shared types: `Color`, `Style`, `Cell`, `DrawOp`, `Frame`, `PlayablePresentation`, `CommandRegion` |
-| `src/engine/source.rs` | `SourcePresentation` (+ `command_regions()`), `SceneObject`, `Coordinate` (Fixed/Animated), `FrameRange` |
-| `src/engine/objects/` | Ten object types: `Label`, `HLine`, `Rect`, `Header`, `Group`, `Arrow`, `Table`, `Art`, `Command`, `List` — each implements `Resolve`. See the module-doc checklist in `mod.rs` for every site a new type touches. `List` (ordered/unordered) shares `Label`'s text-editing UX and the shared `wrap` helper |
+| `src/types.rs` | Shared types: `Color`, `Style`, `Cell`, `DrawOp`, `Frame`, `PlayablePresentation`, `CommandRegion`, `LoopRegion` |
+| `src/engine/source.rs` | `SourcePresentation` (+ `command_regions()`, `loop_regions()`, `validate_loops()`), `SceneObject`, `Coordinate` (Fixed/Animated), `FrameRange` |
+| `src/engine/objects/` | Eleven object types: `Label`, `HLine`, `Rect`, `Header`, `Group`, `Arrow`, `Table`, `Art`, `Command`, `List`, `Loop` — each implements `Resolve`. See the module-doc checklist in `mod.rs` for every site a new type touches. `List` (ordered/unordered) shares `Label`'s text-editing UX and the shared `wrap` helper. `Loop` (like `Group`) draws nothing; its `frames` range is the loop range and it emits a `LoopRegion` sidecar |
 | `src/art_library.rs` | Built-in + user ASCII-art palette (`~/.config/bs/art/`, one file per piece); pieces are copied into self-contained `Art` objects when added |
 | `src/renderer/mod.rs` | Rasterizes DrawOps into cell grid; diffs frames |
-| `src/player/mod.rs` | Playback loop, keyboard nav (arrows, space, q, f=fullscreen); runs `Command` objects (piped, async, timeout) and overlays output |
+| `src/player/mod.rs` | Playback loop, keyboard nav (arrows, space, q, f=fullscreen); runs `Command` objects (piped, async, timeout) and overlays output; drives `Loop` regions (timer-based auto-advance + bounce + arrow-key break-out) via the pure `loop_next` step fn |
 | `src/editor/mod.rs` | Editor lifecycle, raw mode setup, main loop |
 | `src/editor/state.rs` | `EditorState`, `Mode` enum (~21 variants, incl. table sub-modes, art picker, frame sub-menu/move). Frame ops: `insert_blank_frame`, `copy_frame` (deep-clone duplicate), `move_frame`. Frame delete fixes group member indices as collapsed objects are pruned |
 | `src/editor/config.rs` | `KeyBindings` — all bindings configurable via `~/.config/bs/editor.json` |
@@ -192,6 +207,13 @@ Mode::EditProperties {
   `"magenta"`, `"cyan"`, `"white"` — the 8 `NamedColor`s only) or `{ "rgb": [r, g, b] }`
 - Many numeric fields (widths, heights, `hline` endpoints) accept either a bare
   number or a `Coordinate` object, via `deserialize_coord_compat`
+- A `loop` object has no geometry — just a range plus playback options
+  (`delay_ms` default 500, `count` default 0 = forever, `bounce` default true):
+
+  ```json
+  { "type": "loop", "frames": { "start": 4, "end": 8 },
+    "delay_ms": 500, "count": 0, "bounce": true }
+  ```
 
 ## Dependencies
 
@@ -222,13 +244,15 @@ targets the pure, deterministic core):
 | `tests/header.rs` | `Header`: glyph fill, custom fill char, inter-glyph spacing, canvas-width word wrap |
 | `tests/rect.rs` | `Rect`: border + blank interior, title on the top edge |
 | `tests/group.rs` | `Group`: members render independently / group emits nothing; auto range doesn't gate members; explicit range overrides members (narrows + widens) |
+| `tests/looping.rs` | `Loop`: compiled `LoopRegion` sidecar (defaults + explicit fields) and `validate_loops` (disjoint OK; overlap/nesting/past-end/empty rejected). The auto-advance run-loop is TUI; the pure `loop_next` step fn is tested inline in `player/mod.rs` |
 | `tests/engine.rs` | `Engine::compile`: one scene per frame, empty deck, object outside `frame_count` |
 | `tests/renderer.rs` | Renderer + `grid_at`: equal-z-order source order, clamp past end, out-of-bounds diff skip |
 
 Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
 `engine/objects/wrap.rs`, `editor/textedit.rs`, `editor/object_defaults.rs`,
-`editor/state.rs` — frame copy/blank-insert/move/delete). The suite totals 108
-tests (75 integration + 33 inline); `TESTS.md` is the authoritative per-test list.
+`editor/state.rs` — frame copy/blank-insert/move/delete, `player/mod.rs` —
+`loop_next` bounce/wrap stepping). The suite totals 121 tests (83 integration +
+38 inline); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the

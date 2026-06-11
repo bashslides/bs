@@ -261,6 +261,7 @@ pub fn scene_object_frame_range(obj: &SceneObject) -> Option<&FrameRange> {
         SceneObject::Art(a) => Some(&a.frames),
         SceneObject::Command(c) => Some(&c.frames),
         SceneObject::List(l) => Some(&l.frames),
+        SceneObject::Loop(l) => Some(&l.frames),
     }
 }
 
@@ -278,6 +279,7 @@ pub fn scene_object_frame_range_mut(obj: &mut SceneObject) -> Option<&mut FrameR
         SceneObject::Art(a) => Some(&mut a.frames),
         SceneObject::Command(c) => Some(&mut c.frames),
         SceneObject::List(l) => Some(&mut l.frames),
+        SceneObject::Loop(l) => Some(&mut l.frames),
     }
 }
 
@@ -293,6 +295,7 @@ pub fn scene_object_type_name(obj: &SceneObject) -> &'static str {
         SceneObject::Art(_) => "Art",
         SceneObject::Command(_) => "Command",
         SceneObject::List(_) => "List",
+        SceneObject::Loop(_) => "Loop",
     }
 }
 
@@ -334,6 +337,9 @@ fn scene_object_coordinates_mut(obj: &mut SceneObject) -> Vec<&mut Coordinate> {
             &mut l.width,
             &mut l.height,
         ],
+        // A loop has no coordinates (it draws nothing); its frame range still
+        // shifts via `scene_object_frame_range_mut` during frame insert/delete.
+        SceneObject::Loop(_) => vec![],
     }
 }
 
@@ -581,6 +587,12 @@ pub fn scene_object_summary(obj: &SceneObject) -> String {
             let kind = if l.ordered { "ordered" } else { "unordered" };
             let count = l.text.split('\n').filter(|s| !s.is_empty()).count();
             format!("List: {count} items ({kind})")
+        }
+        SceneObject::Loop(l) => {
+            let n = l.frames.end.saturating_sub(l.frames.start);
+            let times = if l.count == 0 { "∞".to_string() } else { format!("{}×", l.count) };
+            let mode = if l.bounce { "bounce" } else { "loop" };
+            format!("Loop: {n} frames {times} ({mode})")
         }
     }
 }

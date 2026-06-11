@@ -14,8 +14,9 @@
 //! 2. **`src/engine/objects/mod.rs`** (this file) — add `mod <new>;`, a
 //!    `pub use <new>::<New>;`, and an arm to `impl Resolve for SceneObject`.
 //! 3. **`src/engine/source.rs`** — add the `SceneObject` variant, extend the
-//!    `pub use super::objects::{…}` re-export, and (only if the object runs a
-//!    binary at play time, like `Command`) handle it in `command_regions()`.
+//!    `pub use super::objects::{…}` re-export, and (only if the object emits a
+//!    play-time sidecar, like `Command`'s `command_regions()` or `Loop`'s
+//!    `loop_regions()`) collect it there.
 //! 4. **`src/editor/properties.rs`** — `impl Editable for <New>`, plus an arm
 //!    in both `as_editable()` and `as_editable_mut()`.
 //! 5. **`src/editor/object_defaults.rs`** — add the display name to
@@ -37,6 +38,7 @@ mod header;
 mod hline;
 mod label;
 mod list;
+mod looping;
 mod rect;
 pub mod table;
 mod wrap;
@@ -49,6 +51,7 @@ pub use header::Header;
 pub use hline::HLine;
 pub use label::Label;
 pub use list::List;
+pub use looping::Loop;
 pub use rect::Rect;
 pub use table::Table;
 
@@ -78,6 +81,7 @@ impl Resolve for SceneObject {
             SceneObject::Art(o) => o.resolve(frame, canvas_width, ops),
             SceneObject::Command(o) => o.resolve(frame, canvas_width, ops),
             SceneObject::List(o) => o.resolve(frame, canvas_width, ops),
+            SceneObject::Loop(o) => o.resolve(frame, canvas_width, ops),
         }
     }
 }

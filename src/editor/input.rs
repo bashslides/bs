@@ -219,7 +219,12 @@ fn apply_property(state: &mut EditorState, object_index: usize, name: &str, valu
     match properties::set_property(&mut state.source.objects[object_index], name, value) {
         Ok(()) => {
             state.dirty = true;
-            state.status_message = Some(format!("Set {name} = {value}"));
+            // Surface a loop overlap/range error live (the compile step enforces
+            // it hard); otherwise confirm the edit.
+            state.status_message = Some(match state.source.validate_loops() {
+                Ok(()) => format!("Set {name} = {value}"),
+                Err(e) => format!("⚠ {e}"),
+            });
         }
         Err(e) => state.status_message = Some(format!("Error: {e}")),
     }
@@ -689,7 +694,12 @@ fn handle_add_object(state: &mut EditorState, key: KeyEvent) -> Action {
             } else {
                 ep_browse(new_index, 0, 0)
             };
-            state.status_message = Some(format!("Added {type_name}"));
+            // A freshly added loop can already collide with another loop on the
+            // same slide — flag it immediately rather than only at compile time.
+            state.status_message = Some(match state.source.validate_loops() {
+                Ok(()) => format!("Added {type_name}"),
+                Err(e) => format!("Added {type_name} — ⚠ {e}"),
+            });
         }
         return Action::Redraw;
     }

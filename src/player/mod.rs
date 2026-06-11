@@ -14,7 +14,9 @@ use anyhow::{bail, Result};
 use crossterm::{cursor, event, execute, queue, style, terminal};
 
 use crate::menubar::print_menu_item;
-use crate::types::{Cell, Color, CommandRegion, Frame, NamedColor, PlayablePresentation, Style};
+use crate::types::{
+    Cell, Color, CommandRegion, Frame, LoopRegion, NamedColor, PlayablePresentation, Style,
+};
 
 /// Rows reserved above the canvas for the menu bar (when not in fullscreen).
 const CANVAS_OFFSET: u16 = 1;
@@ -33,12 +35,25 @@ struct RunningCommand {
     out: Vec<u8>,
 }
 
+/// State for a loop that is currently auto-playing. A flat deck has at most one
+/// active loop at a time (loops never overlap or nest).
+struct LoopPlay {
+    region: LoopRegion,
+    /// Current sweep direction (only meaningful when `region.bounce`).
+    forward: bool,
+    /// Completed plays so far (used to stop after `region.count`).
+    iterations: usize,
+    /// When the next frame should be shown.
+    deadline: Instant,
+}
+
 pub struct Player {
     presentation: PlayablePresentation,
     current_frame: usize,
     grid: Vec<Vec<Cell>>,
     fullscreen: bool,
     running: Option<RunningCommand>,
+    loop_play: Option<LoopPlay>,
 }
 
 impl Player {
@@ -51,6 +66,7 @@ impl Player {
             grid: vec![vec![Cell::default(); w]; h],
             fullscreen: false,
             running: None,
+            loop_play: None,
         }
     }
 
@@ -99,6 +115,8 @@ impl Player {
         self.apply_frame(0)?;
         self.redraw_all(stdout)?;
         self.maybe_start_command(stdout)?;
+        // Frame 0 may itself sit inside a loop.
+        self.arm_loop(None);
 
         loop {
             // Drive any running command: drain output, repaint, finalize on exit.
@@ -107,13 +125,26 @@ impl Player {
             }
 
             // Poll briefly while a command runs so output streams in; otherwise
-            // wait longer (the loop is idle until the next keypress).
-            let poll = if self.running.is_some() {
+            // wait longer (the loop is idle until the next keypress). While a
+            // loop auto-plays, never wait past its next-frame deadline.
+            let mut poll = if self.running.is_some() {
                 Duration::from_millis(30)
             } else {
                 Duration::from_millis(200)
             };
+            if let Some(lp) = &self.loop_play {
+                poll = poll.min(lp.deadline.saturating_duration_since(Instant::now()));
+            }
+
             if !event::poll(poll)? {
+                // No key arrived — advance the loop if its delay has elapsed.
+                if self
+                    .loop_play
+                    .as_ref()
+                    .is_some_and(|lp| Instant::now() >= lp.deadline)
+                {
+                    self.loop_tick(stdout)?;
+                }
                 continue;
             }
 
@@ -137,13 +168,40 @@ impl Player {
                             }
                         }
                         // Navigation always interrupts a running binary and
-                        // moves on — a slow command can never trap the deck.
-                        Right | Char(' ') | Enter => self.nav_forward(stdout)?,
-                        Left => self.nav_back(stdout)?,
-                        Home => self.nav_to(0, stdout)?,
+                        // moves on — a slow command (or a loop) can never trap
+                        // the deck. Inside a loop, → breaks out to the first
+                        // frame after it and ← to the first frame before it.
+                        Right | Char(' ') | Enter => {
+                            if let Some(lp) = self.loop_play.take() {
+                                let last = self.presentation.frames.len().saturating_sub(1);
+                                let target = lp.region.end_frame.min(last);
+                                self.nav_to(target, stdout)?;
+                                self.arm_loop(Some(span(&lp.region)));
+                            } else {
+                                self.nav_forward(stdout)?;
+                                self.arm_loop(None);
+                            }
+                        }
+                        Left => {
+                            if let Some(lp) = self.loop_play.take() {
+                                let target = lp.region.start_frame.saturating_sub(1);
+                                self.nav_to(target, stdout)?;
+                                self.arm_loop(Some(span(&lp.region)));
+                            } else {
+                                self.nav_back(stdout)?;
+                                self.arm_loop(None);
+                            }
+                        }
+                        Home => {
+                            self.stop_loop();
+                            self.nav_to(0, stdout)?;
+                            self.arm_loop(None);
+                        }
                         End => {
+                            self.stop_loop();
                             let last = self.presentation.frames.len().saturating_sub(1);
                             self.nav_to(last, stdout)?;
+                            self.arm_loop(None);
                         }
                         // Toggle "no bars" fullscreen: hide the menu/status bars
                         // and give the canvas the whole screen.
@@ -161,6 +219,89 @@ impl Player {
             }
         }
 
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // Loop playback
+    // -----------------------------------------------------------------------
+
+    /// The loop region active on `frame`, if any.
+    fn loop_region_for(&self, frame: usize) -> Option<LoopRegion> {
+        self.presentation
+            .loops
+            .iter()
+            .find(|l| frame >= l.start_frame && frame < l.end_frame)
+            .cloned()
+    }
+
+    /// Begin auto-playing the loop on the current frame, if there is one and one
+    /// is not already running. `exclude` suppresses re-arming a specific span —
+    /// used right after a break-out so the loop we just left does not restart
+    /// when the break-out target lands back inside it (e.g. a loop pinned to the
+    /// deck's first or last frame).
+    fn arm_loop(&mut self, exclude: Option<(usize, usize)>) {
+        if self.loop_play.is_some() {
+            return;
+        }
+        if let Some(region) = self.loop_region_for(self.current_frame) {
+            if exclude == Some(span(&region)) {
+                return;
+            }
+            let deadline = Instant::now() + Duration::from_millis(region.delay_ms.max(1));
+            self.loop_play = Some(LoopPlay {
+                region,
+                forward: true,
+                iterations: 0,
+                deadline,
+            });
+        }
+    }
+
+    fn stop_loop(&mut self) {
+        self.loop_play = None;
+    }
+
+    /// Advance the active loop by one frame (called when its delay elapses).
+    fn loop_tick(&mut self, stdout: &mut io::Stdout) -> Result<()> {
+        let Some(lp) = self.loop_play.as_ref() else {
+            return Ok(());
+        };
+        let region = lp.region.clone();
+        let (next, next_forward, completed) = loop_next(
+            region.start_frame,
+            region.end_frame,
+            self.current_frame,
+            lp.forward,
+            region.bounce,
+        );
+        let iterations = lp.iterations + usize::from(completed);
+
+        // A finite loop that has played its full count stops and continues the
+        // deck just past the loop (an infinite loop, count 0, never gets here).
+        if region.count != 0 && iterations >= region.count {
+            self.stop_loop();
+            let last = self.presentation.frames.len().saturating_sub(1);
+            let target = region.end_frame.min(last);
+            self.nav_to(target, stdout)?;
+            self.arm_loop(Some(span(&region)));
+            return Ok(());
+        }
+
+        // Otherwise show the next loop frame. A loop step can jump backward
+        // (bounce / restart), so rebuild the grid from scratch rather than
+        // diffing — same path as `nav_back`.
+        self.kill_running();
+        self.current_frame = next;
+        self.rebuild_grid(next)?;
+        self.render_full(stdout)?;
+        self.render_status(stdout)?;
+        self.maybe_start_command(stdout)?;
+        if let Some(lp) = self.loop_play.as_mut() {
+            lp.forward = next_forward;
+            lp.iterations = iterations;
+            lp.deadline = Instant::now() + Duration::from_millis(region.delay_ms.max(1));
+        }
         Ok(())
     }
 
@@ -573,6 +714,57 @@ impl Player {
     }
 }
 
+/// The `(start, end)` span of a loop region, used as an identity key when
+/// suppressing an immediate re-arm after breaking out.
+fn span(r: &LoopRegion) -> (usize, usize) {
+    (r.start_frame, r.end_frame)
+}
+
+/// Compute the next frame of a loop given the current position and direction.
+///
+/// Returns `(next_frame, next_forward, completed_iteration)`:
+/// - **non-bounce**: plays `start..end` forward, then jumps back to `start`;
+///   each wrap to `start` counts as one completed iteration.
+/// - **bounce**: plays forward to `end-1`, then backward to `start` (a triangle
+///   wave, endpoints shown once per turn); returning to `start` completes one
+///   iteration.
+///
+/// A single-frame range (`end == start + 1`) has nowhere to move, so it stays
+/// put and completes an iteration on every tick.
+fn loop_next(
+    start: usize,
+    end: usize,
+    current: usize,
+    forward: bool,
+    bounce: bool,
+) -> (usize, bool, bool) {
+    let last = end.saturating_sub(1);
+    let (next, next_forward) = if !bounce {
+        // Forward sweep; wrap from the last frame back to the first.
+        if current < last {
+            (current + 1, true)
+        } else {
+            (start, true)
+        }
+    } else if last == start {
+        // Single-frame range: nowhere to move.
+        (start, true)
+    } else if forward {
+        if current < last {
+            (current + 1, true)
+        } else {
+            (last - 1, false) // turn around at the top
+        }
+    } else if current > start {
+        (current - 1, false)
+    } else {
+        (start + 1, true) // turn around at the bottom
+    };
+    // Landing back on the first frame (a wrap, or the bottom of a bounce) is one
+    // completed pass.
+    (next, next_forward, next == start)
+}
+
 /// Read a child pipe to EOF on a background thread, forwarding chunks. The
 /// thread exits on EOF, read error, or when the receiver is dropped.
 fn spawn_reader<R: Read + Send + 'static>(mut r: R, tx: Sender<Vec<u8>>) {
@@ -679,5 +871,63 @@ pub fn to_ct_color(c: &Color) -> style::Color {
             g: *g,
             b: *b,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::loop_next;
+
+    /// Replay a loop from `start` for `steps` ticks, collecting the frames shown
+    /// and how many iterations completed.
+    fn run(start: usize, end: usize, bounce: bool, steps: usize) -> (Vec<usize>, usize) {
+        let mut frame = start;
+        let mut forward = true;
+        let mut iters = 0;
+        let mut seq = vec![frame];
+        for _ in 0..steps {
+            let (next, nf, done) = loop_next(start, end, frame, forward, bounce);
+            frame = next;
+            forward = nf;
+            iters += usize::from(done);
+            seq.push(frame);
+        }
+        (seq, iters)
+    }
+
+    #[test]
+    fn non_bounce_wraps_to_start() {
+        // 5,6,7,8 then back to 5; each wrap is one completed iteration.
+        let (seq, iters) = run(5, 9, false, 5);
+        assert_eq!(seq, vec![5, 6, 7, 8, 5, 6]);
+        assert_eq!(iters, 1);
+    }
+
+    #[test]
+    fn bounce_ping_pongs_without_duplicating_endpoints() {
+        // 5,6,7,8,7,6,5,6,8… — endpoints shown once per turn; one iteration is a
+        // full there-and-back (return to start).
+        let (seq, iters) = run(5, 9, true, 6);
+        assert_eq!(seq, vec![5, 6, 7, 8, 7, 6, 5]);
+        assert_eq!(iters, 1);
+    }
+
+    #[test]
+    fn single_frame_range_completes_each_tick() {
+        // A one-frame loop has nowhere to go; it just counts ticks.
+        let (seq, iters) = run(3, 4, true, 3);
+        assert_eq!(seq, vec![3, 3, 3, 3]);
+        assert_eq!(iters, 3);
+        let (_, iters_nb) = run(3, 4, false, 2);
+        assert_eq!(iters_nb, 2);
+    }
+
+    #[test]
+    fn two_frame_bounce_alternates() {
+        // start..end = 5..7 → frames 5,6. Bounce: 5,6,5,6,… one iteration per
+        // return to start.
+        let (seq, iters) = run(5, 7, true, 4);
+        assert_eq!(seq, vec![5, 6, 5, 6, 5]);
+        assert_eq!(iters, 2);
     }
 }

@@ -50,6 +50,11 @@ fn compile(source_path: &str, output_path: &str) -> Result<()> {
     let source: SourcePresentation = serde_json::from_str(&source_json)
         .with_context(|| format!("Failed to parse {source_path}"))?;
 
+    // Hard gate: loop ranges must be well-formed and non-overlapping.
+    if let Err(e) = source.validate_loops() {
+        bail!("Invalid loops in {source_path}: {e}");
+    }
+
     let scenes = Engine::compile(&source);
     let contract = TerminalContract {
         width: source.width,
@@ -57,6 +62,7 @@ fn compile(source_path: &str, output_path: &str) -> Result<()> {
     };
     let mut presentation = Renderer::render(&scenes, contract);
     presentation.commands = source.command_regions();
+    presentation.loops = source.loop_regions();
 
     let output_json = serde_json::to_string_pretty(&presentation)?;
     fs::write(output_path, &output_json)
