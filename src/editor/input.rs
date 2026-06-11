@@ -524,14 +524,14 @@ fn handle_add_object(state: &mut EditorState, key: KeyEvent) -> Action {
             state.source.objects.push(obj);
             state.dirty = true;
             let new_index = state.source.objects.len() - 1;
-            state.mode = Mode::EditProperties {
-                object_index: new_index,
-                selected_property: 0,
-                editing_value: None,
-                cursor: 0,
-                scroll: 0,
-                panel_scroll: 0,
-                dropdown: None,
+            // Text-first objects (Label, List) jump straight into the centred
+            // multi-line text editor with an empty buffer, so the user can type
+            // content immediately instead of browsing properties first.
+            // Cancelling (Esc) leaves the object's default text intact.
+            state.mode = if type_name == "Label" || type_name == "List" {
+                ep_editing(new_index, 0, String::new(), 0, 0, 0)
+            } else {
+                ep_browse(new_index, 0, 0)
             };
             state.status_message = Some(format!("Added {type_name}"));
         }

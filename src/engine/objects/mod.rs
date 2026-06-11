@@ -36,6 +36,7 @@ mod group;
 mod header;
 mod hline;
 mod label;
+mod list;
 mod rect;
 pub mod table;
 mod wrap;
@@ -47,6 +48,7 @@ pub use group::Group;
 pub use header::Header;
 pub use hline::HLine;
 pub use label::Label;
+pub use list::List;
 pub use rect::Rect;
 pub use table::Table;
 
@@ -71,6 +73,7 @@ impl Resolve for SceneObject {
             SceneObject::Table(o) => o.resolve(frame, ops),
             SceneObject::Art(o) => o.resolve(frame, ops),
             SceneObject::Command(o) => o.resolve(frame, ops),
+            SceneObject::List(o) => o.resolve(frame, ops),
         }
     }
 }

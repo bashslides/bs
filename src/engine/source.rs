@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 // Re-export object types so they remain accessible via `engine::source::*`.
-pub use super::objects::{Arrow, Art, Command, Group, HLine, Header, Label, Rect, Table};
+pub use super::objects::{Arrow, Art, Command, Group, HLine, Header, Label, List, Rect, Table};
 
 use crate::types::CommandRegion;
 
@@ -30,6 +30,7 @@ pub enum SceneObject {
     Table(Table),
     Art(Art),
     Command(Command),
+    List(List),
 }
 
 impl SourcePresentation {

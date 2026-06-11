@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 
 use crate::engine::source::{
-    Arrow, Art, Command, Coordinate, Group, HLine, Header, Label, Rect, SceneObject, Table,
+    Arrow, Art, Command, Coordinate, Group, HLine, Header, Label, List, Rect, SceneObject, Table,
 };
 use crate::types::{Color, NamedColor};
 
@@ -153,6 +153,7 @@ fn as_editable(obj: &SceneObject) -> &dyn Editable {
         SceneObject::Table(o) => o,
         SceneObject::Art(o) => o,
         SceneObject::Command(o) => o,
+        SceneObject::List(o) => o,
     }
 }
 
@@ -167,6 +168,7 @@ fn as_editable_mut(obj: &mut SceneObject) -> &mut dyn Editable {
         SceneObject::Table(o) => o,
         SceneObject::Art(o) => o,
         SceneObject::Command(o) => o,
+        SceneObject::List(o) => o,
     }
 }
 
@@ -336,6 +338,134 @@ impl Editable for Label {
                     self.frame_style = None;
                 }
             }
+            "fg_color" => self.style.fg = parse_opt_color(value)?,
+            "bg_color" => self.style.bg = parse_opt_color(value)?,
+            "bold" => self.style.bold = parse_bool(value)?,
+            "dimmed" => self.style.dim = parse_bool(value)?,
+            "first_frame" => self.frames.start = value.parse()?,
+            "last_frame" => self.frames.end = value.parse()?,
+            "z_order" => self.z_order = value.parse()?,
+            _ => bail!("Unknown property: {name}"),
+        }
+        Ok(())
+    }
+
+    fn get_coord(&self, name: &str) -> Option<Coordinate> {
+        match name {
+            "x" => Some(self.position.x.clone()),
+            "y" => Some(self.position.y.clone()),
+            "width" => Some(self.width.clone()),
+            "height" => Some(self.height.clone()),
+            _ => None,
+        }
+    }
+
+    fn set_coord(&mut self, name: &str, coord: Coordinate) -> Result<()> {
+        match name {
+            "x" => self.position.x = coord,
+            "y" => self.position.y = coord,
+            "width" => self.width = coord,
+            "height" => self.height = coord,
+            _ => bail!("Unknown coordinate property: {name}"),
+        }
+        Ok(())
+    }
+
+    fn origin_x(&self) -> f64 { coord_val_f(&self.position.x) }
+    fn origin_y(&self) -> f64 { coord_val_f(&self.position.y) }
+    fn dim_x(&self) -> f64 { coord_val_f(&self.width) }
+    fn dim_y(&self) -> f64 { coord_val_f(&self.height) }
+    fn set_origin_x(&mut self, v: f64) { set_fixed(&mut self.position.x, v); }
+    fn set_origin_y(&mut self, v: f64) { set_fixed(&mut self.position.y, v); }
+    fn set_dim_x(&mut self, v: f64) { set_fixed(&mut self.width, v); }
+    fn set_dim_y(&mut self, v: f64) { set_fixed(&mut self.height, v); }
+
+    fn move_by(&mut self, dx: i32, dy: i32) {
+        adjust_coordinate(&mut self.position.x, dx);
+        adjust_coordinate(&mut self.position.y, dy);
+    }
+
+    fn resize_by(&mut self, dw: i32, dh: i32) {
+        if dw > 0 {
+            adjust_coordinate_add(&mut self.width, dw as f64);
+        } else if dw < 0 {
+            let delta = (-dw) as f64;
+            adjust_coordinate_add(&mut self.width, delta);
+            adjust_coordinate(&mut self.position.x, dw);
+        }
+        if dh > 0 {
+            adjust_coordinate_add(&mut self.height, dh as f64);
+        } else if dh < 0 {
+            let delta = (-dh) as f64;
+            adjust_coordinate_add(&mut self.height, delta);
+            adjust_coordinate(&mut self.position.y, dh);
+        }
+    }
+
+    fn shrink_by(&mut self, dw: i32, dh: i32) {
+        if dw > 0 {
+            if let Coordinate::Fixed(v) = &mut self.width {
+                *v = (*v - dw as f64).max(0.0);
+            }
+        } else if dw < 0 {
+            let delta = (-dw) as f64;
+            if coordinate_val(&self.width) > 0 {
+                if let Coordinate::Fixed(v) = &mut self.width {
+                    *v = (*v - delta).max(0.0);
+                }
+                adjust_coordinate(&mut self.position.x, -dw);
+            }
+        }
+        if dh > 0 {
+            if let Coordinate::Fixed(v) = &mut self.height {
+                *v = (*v - dh as f64).max(0.0);
+            }
+        } else if dh < 0 {
+            let delta = (-dh) as f64;
+            if coordinate_val(&self.height) > 0 {
+                if let Coordinate::Fixed(v) = &mut self.height {
+                    *v = (*v - delta).max(0.0);
+                }
+                adjust_coordinate(&mut self.position.y, -dh);
+            }
+        }
+    }
+}
+
+impl Editable for List {
+    fn properties(&self, _ctx: &PropContext) -> Vec<Property> {
+        vec![
+            Property { name: "text", value: self.text.clone(), kind: PropertyKind::Text },
+            Property { name: "x", value: format_coordinate(&self.position.x), kind: PropertyKind::Coordinate },
+            Property { name: "y", value: format_coordinate(&self.position.y), kind: PropertyKind::Coordinate },
+            Property { name: "width", value: format_coordinate(&self.width), kind: PropertyKind::Coordinate },
+            Property { name: "height", value: format_coordinate(&self.height), kind: PropertyKind::Coordinate },
+            Property { name: "ordered", value: self.ordered.to_string(), kind: PropertyKind::Bool },
+            Property { name: "bullet", value: self.bullet.clone(), kind: PropertyKind::Text },
+            Property { name: "spacing", value: self.spacing.to_string(), kind: PropertyKind::Text },
+            Property { name: "fg_color", value: format_opt_color(&self.style.fg), kind: PropertyKind::Color },
+            Property { name: "bg_color", value: format_opt_color(&self.style.bg), kind: PropertyKind::Color },
+            Property { name: "bold", value: self.style.bold.to_string(), kind: PropertyKind::Bool },
+            Property { name: "dimmed", value: self.style.dim.to_string(), kind: PropertyKind::Bool },
+            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Text },
+            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Text },
+            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Text },
+        ]
+    }
+
+    fn set(&mut self, name: &str, value: &str) -> Result<()> {
+        match name {
+            "text" => self.text = value.to_string(),
+            "x" => self.position.x = parse_coordinate(value)?,
+            "y" => self.position.y = parse_coordinate(value)?,
+            "width" => self.width = parse_coordinate(value)?,
+            "height" => self.height = parse_coordinate(value)?,
+            "ordered" => self.ordered = parse_bool(value)?,
+            "bullet" => {
+                // Keep a sane non-empty marker; fall back to "-" if cleared.
+                self.bullet = if value.is_empty() { "-".to_string() } else { value.to_string() };
+            }
+            "spacing" => self.spacing = value.trim().parse()?,
             "fg_color" => self.style.fg = parse_opt_color(value)?,
             "bg_color" => self.style.bg = parse_opt_color(value)?,
             "bold" => self.style.bold = parse_bool(value)?,

@@ -237,6 +237,7 @@ pub fn scene_object_frame_range(obj: &SceneObject) -> &FrameRange {
         SceneObject::Table(t) => &t.frames,
         SceneObject::Art(a) => &a.frames,
         SceneObject::Command(c) => &c.frames,
+        SceneObject::List(l) => &l.frames,
     }
 }
 
@@ -251,6 +252,7 @@ pub fn scene_object_frame_range_mut(obj: &mut SceneObject) -> &mut FrameRange {
         SceneObject::Table(t) => &mut t.frames,
         SceneObject::Art(a) => &mut a.frames,
         SceneObject::Command(c) => &mut c.frames,
+        SceneObject::List(l) => &mut l.frames,
     }
 }
 
@@ -265,6 +267,7 @@ pub fn scene_object_type_name(obj: &SceneObject) -> &'static str {
         SceneObject::Table(_) => "Table",
         SceneObject::Art(_) => "Art",
         SceneObject::Command(_) => "Command",
+        SceneObject::List(_) => "List",
     }
 }
 
@@ -299,6 +302,12 @@ fn scene_object_coordinates_mut(obj: &mut SceneObject) -> Vec<&mut Coordinate> {
             &mut c.position.y,
             &mut c.width,
             &mut c.height,
+        ],
+        SceneObject::List(l) => vec![
+            &mut l.position.x,
+            &mut l.position.y,
+            &mut l.width,
+            &mut l.height,
         ],
     }
 }
@@ -403,5 +412,10 @@ pub fn scene_object_summary(obj: &SceneObject) -> String {
             format!("Art: {name}")
         }
         SceneObject::Command(c) => format!("Command: {}", c.command),
+        SceneObject::List(l) => {
+            let kind = if l.ordered { "ordered" } else { "unordered" };
+            let count = l.text.split('\n').filter(|s| !s.is_empty()).count();
+            format!("List: {count} items ({kind})")
+        }
     }
 }
