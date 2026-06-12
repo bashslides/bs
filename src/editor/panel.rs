@@ -351,12 +351,12 @@ pub fn render_right_panel(
 
     // AnimateProperty panel
     if matches!(state.mode, Mode::AnimateProperty { .. }) {
-        let (property_name, selected_field, editing, cursor, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms) =
+        let (property_name, selected_field, editing, cursor, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames) =
             match &state.mode {
                 Mode::AnimateProperty {
                     property_name, selected_field, editing, cursor,
-                    from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, ..
-                } => (*property_name, *selected_field, editing, *cursor, *from, *to, *start_frame, *end_frame, *add_frames, *auto_play, *delay_ms),
+                    from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames, ..
+                } => (*property_name, *selected_field, editing, *cursor, *from, *to, *start_frame, *end_frame, *add_frames, *auto_play, *delay_ms, *gap_frames),
                 _ => unreachable!(),
             };
 
@@ -365,7 +365,7 @@ pub fn render_right_panel(
         draw_header(stdout, &title)?;
 
         let checkbox = |b: bool| if b { "[x]" } else { "[ ]" };
-        let field_names = ["from", "to", "start", "end", "add frames", "auto play", "delay ms"];
+        let field_names = ["from", "to", "start", "end", "add frames", "auto play", "delay ms", "gap frames"];
         // `start`/`end` are shown 1-based to match the property panel's
         // first_frame/last_frame (an animation through 0-based `end_frame` reads
         // as slide `end_frame + 1`). `from`/`to` are coordinate values, shown raw.
@@ -378,6 +378,7 @@ pub fn render_right_panel(
             checkbox(add_frames).to_string(),
             checkbox(auto_play).to_string(),
             delay_ms.to_string(),
+            gap_frames.to_string(),
         ];
 
         for i in 0..field_names.len() {

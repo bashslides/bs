@@ -154,15 +154,20 @@ Normal ──a──→ AddObject ──Enter──→ Normal (object added)
 - **SelectedObject**: move (arrows), `r` → resize mode, `e` → edit props, `d` delete; Shift+arrows also grow
 - **ResizeObject**: arrow-key resize (←→ width, ↑↓ height) — a terminal-robust path since many terminals capture Shift+↑/↓ for scrollback; Enter/Esc exit
 - **EditProperties**: edit typed properties; color fields show dropdown; text fields support multi-line (Alt-Enter = newline); property list scrolls vertically
-- **AnimateProperty**: seven fields — `from`/`to`/`start`/`end` (the coordinate
-  animation) plus `add frames`/`auto play` (toggles, Space/Enter) and `delay ms`.
-  `[s]` applies via `input::apply_animation`: optionally inserts the spanned
-  frames + shares the current frame's elements (`state::add_frames_and_share`),
+- **AnimateProperty**: eight fields — `from`/`to`/`start`/`end` (the coordinate
+  animation), `add frames`/`auto play` (toggles, Space/Enter), `delay ms`, and
+  `gap frames`. `[s]` applies via `input::apply_animation`: optionally inserts the
+  spanned frames + shares the current frame's elements (`state::add_frames_and_share`),
   sets the `Coordinate::Animated`, keeps the object's own range in lock-step
   (`scene_object_animation_span`), and creates/updates the `Animation` span
   entity (`state::upsert_animation`, reuse-by-span so X+Y stay one animation).
-  `[x]` reverts the coordinate to `Fixed`. Defaults: add-frames on, auto-play on,
-  500 ms. Re-animating a span reseeds its auto-play settings (`enter_animate`)
+  `gap frames` > 1 then strobes the element via `state::apply_gap`: it shows only
+  on every Nth frame of the span (single-frame samples at the interpolated
+  position, empty gaps between — a stop-motion look). Gap clones are independent
+  objects, so it runs only on a freshly-created span (same `!span_exists` guard as
+  add-frames). `[x]` reverts the coordinate to `Fixed`. Defaults: add-frames on,
+  auto-play on, 500 ms, gap 1 (off). Re-animating a span reseeds its auto-play
+  settings (`enter_animate`)
 
 ## Text caret convention
 
@@ -294,8 +299,8 @@ Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
 + `upsert_animation`, `player/mod.rs` — `loop_next` bounce/wrap stepping +
 `auto_advance_delay` min-over-overlap; copy/paste `expand_selection` +
 `clone_selection` + `link_siblings` + link-family delete maintenance). The suite
-totals 159 tests (95 integration
-+ 64 inline); `TESTS.md` is the authoritative per-test list.
+totals 161 tests (95 integration
++ 66 inline); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the

@@ -1858,8 +1858,8 @@ fn handle_dropdown(state: &mut EditorState, key: KeyEvent) -> Action {
 }
 
 /// Number of fields in the Animate sub-menu: from, to, start, end, add_frames,
-/// auto_play, delay_ms.
-const ANIM_FIELDS: usize = 7;
+/// auto_play, delay_ms, gap_frames.
+const ANIM_FIELDS: usize = 8;
 
 /// Build the `AnimateProperty` mode in one place (the variant has many fields).
 #[allow(clippy::too_many_arguments)]
@@ -1867,11 +1867,11 @@ fn anim_mode(
     object_index: usize, return_property: usize, property_name: &'static str,
     selected_field: usize, editing: Option<String>, cursor: usize,
     from: u16, to: u16, start_frame: usize, end_frame: usize,
-    add_frames: bool, auto_play: bool, delay_ms: u64,
+    add_frames: bool, auto_play: bool, delay_ms: u64, gap_frames: usize,
 ) -> Mode {
     Mode::AnimateProperty {
         object_index, return_property, property_name, selected_field, editing, cursor,
-        from, to, start_frame, end_frame, add_frames, auto_play, delay_ms,
+        from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames,
     }
 }
 
@@ -1901,21 +1901,21 @@ fn enter_animate(
         .unwrap_or((true, 500));
     anim_mode(
         object_index, return_property, property_name, 0, None, 0,
-        from, to, start_frame, end_frame, true, auto_play, delay_ms,
+        from, to, start_frame, end_frame, true, auto_play, delay_ms, 1,
     )
 }
 
 fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
     let (object_index, return_property, property_name, selected_field, editing, cursor,
-         mut from, mut to, mut start_frame, mut end_frame, mut add_frames, mut auto_play, mut delay_ms) =
+         mut from, mut to, mut start_frame, mut end_frame, mut add_frames, mut auto_play, mut delay_ms, mut gap_frames) =
         match &state.mode {
             Mode::AnimateProperty {
                 object_index, return_property, property_name, selected_field, editing, cursor,
-                from, to, start_frame, end_frame, add_frames, auto_play, delay_ms,
+                from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames,
             } => (
                 *object_index, *return_property, *property_name, *selected_field,
                 editing.clone(), *cursor, *from, *to, *start_frame, *end_frame,
-                *add_frames, *auto_play, *delay_ms,
+                *add_frames, *auto_play, *delay_ms, *gap_frames,
             ),
             _ => return Action::Continue,
         };
@@ -1930,30 +1930,32 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
                     1 => buf.parse::<u16>().map(|v| to = v).err().map(|e| format!("Invalid number: {e}")),
                     2 => buf.trim().parse::<usize>().map(|v| start_frame = v.saturating_sub(1)).err().map(|e| format!("Invalid number: {e}")),
                     3 => buf.trim().parse::<usize>().map(|v| end_frame = v.saturating_sub(1)).err().map(|e| format!("Invalid number: {e}")),
-                    _ => buf.trim().parse::<u64>().map(|v| delay_ms = v).err().map(|e| format!("Invalid number: {e}")),
+                    6 => buf.trim().parse::<u64>().map(|v| delay_ms = v).err().map(|e| format!("Invalid number: {e}")),
+                    // gap of 0 is meaningless; clamp to 1 (every frame).
+                    _ => buf.trim().parse::<usize>().map(|v| gap_frames = v.max(1)).err().map(|e| format!("Invalid number: {e}")),
                 };
                 if let Some(msg) = err {
                     state.status_message = Some(msg);
                 }
                 state.mode = anim_mode(object_index, return_property, property_name, selected_field,
-                    None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
+                    None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
                 return Action::Redraw;
             }
             KeyCode::Esc => {
                 state.mode = anim_mode(object_index, return_property, property_name, selected_field,
-                    None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
+                    None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
                 return Action::Redraw;
             }
             KeyCode::Left if key.modifiers == KeyModifiers::NONE => {
                 let new_cursor = cursor.saturating_sub(1);
                 state.mode = anim_mode(object_index, return_property, property_name, selected_field,
-                    Some(buf), new_cursor, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
+                    Some(buf), new_cursor, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
                 return Action::Redraw;
             }
             KeyCode::Right if key.modifiers == KeyModifiers::NONE => {
                 let new_cursor = (cursor + 1).min(buf.chars().count());
                 state.mode = anim_mode(object_index, return_property, property_name, selected_field,
-                    Some(buf), new_cursor, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
+                    Some(buf), new_cursor, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
                 return Action::Redraw;
             }
             KeyCode::Backspace => {
@@ -1962,7 +1964,7 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
                     let e = char_to_byte_idx(&buf, cursor);
                     buf.drain(s..e);
                     state.mode = anim_mode(object_index, return_property, property_name, selected_field,
-                        Some(buf), cursor - 1, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
+                        Some(buf), cursor - 1, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
                     return Action::Redraw;
                 }
             }
@@ -1970,7 +1972,7 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
                 let byte_idx = char_to_byte_idx(&buf, cursor);
                 buf.insert(byte_idx, c);
                 state.mode = anim_mode(object_index, return_property, property_name, selected_field,
-                    Some(buf), cursor + 1, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
+                    Some(buf), cursor + 1, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
                 return Action::Redraw;
             }
             _ => {}
@@ -1984,20 +1986,20 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
         KeyCode::Up if key.modifiers == KeyModifiers::NONE => {
             let new_sel = if selected_field == 0 { ANIM_FIELDS - 1 } else { selected_field - 1 };
             state.mode = anim_mode(object_index, return_property, property_name, new_sel,
-                None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
+                None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
             return Action::Redraw;
         }
         KeyCode::Down if key.modifiers == KeyModifiers::NONE => {
             let new_sel = (selected_field + 1) % ANIM_FIELDS;
             state.mode = anim_mode(object_index, return_property, property_name, new_sel,
-                None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
+                None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
             return Action::Redraw;
         }
         // Space / Enter on a boolean field toggles it in place (no text detour).
         KeyCode::Char(' ') | KeyCode::Enter if is_toggle => {
             if selected_field == 4 { add_frames = !add_frames; } else { auto_play = !auto_play; }
             state.mode = anim_mode(object_index, return_property, property_name, selected_field,
-                None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
+                None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
             return Action::Redraw;
         }
         KeyCode::Enter => {
@@ -2007,17 +2009,18 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
                 1 => to.to_string(),
                 2 => (start_frame + 1).to_string(),
                 3 => (end_frame + 1).to_string(),
-                _ => delay_ms.to_string(),
+                6 => delay_ms.to_string(),
+                _ => gap_frames.to_string(),
             };
             let new_cursor = init.chars().count();
             state.mode = anim_mode(object_index, return_property, property_name, selected_field,
-                Some(init), new_cursor, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
+                Some(init), new_cursor, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
             return Action::Redraw;
         }
         // [s] apply → animate the coordinate (+ optional add-frames + auto-play).
         KeyCode::Char('s') if key.modifiers == KeyModifiers::NONE => {
             apply_animation(state, object_index, property_name,
-                from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
+                from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
             state.mode = ep_browse(object_index, return_property, 0);
             return Action::Redraw;
         }
@@ -2052,7 +2055,7 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
 fn apply_animation(
     state: &mut EditorState, object_index: usize, property_name: &'static str,
     from: u16, to: u16, start_frame: usize, end_frame: usize,
-    add_frames: bool, auto_play: bool, delay_ms: u64,
+    add_frames: bool, auto_play: bool, delay_ms: u64, gap_frames: usize,
 ) {
     let animate = start_frame < end_frame;
     let end_excl = end_frame + 1;
@@ -2093,6 +2096,13 @@ fn apply_animation(
     // covers exactly this span, so X and Y of an object stay one animation).
     if animate {
         super::state::upsert_animation(&mut state.source, start_frame, end_excl, auto_play, delay_ms);
+    }
+
+    // Gap-frames: strobe the element onto every Nth frame of the span (a fresh
+    // animation only — the clones are independent, so re-applying would stack
+    // duplicates; that's why it shares the add-frames "new span" guard).
+    if animate && add_frames && !span_exists && gap_frames > 1 {
+        super::state::apply_gap(&mut state.source, object_index, start_frame, end_frame, gap_frames);
     }
 
     // A new animation can collide with a loop (a loop may not bisect an

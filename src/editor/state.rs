@@ -125,6 +125,9 @@ pub enum Mode {
         auto_play: bool,
         /// Auto-play delay between frames, in milliseconds. Default 500.
         delay_ms: u64,
+        /// Show the animated element only every `gap_frames`-th frame of the span
+        /// (a stop-motion strobe with empty gaps between). `1` = every frame (off).
+        gap_frames: usize,
     },
     Confirm {
         message: String,
@@ -639,6 +642,45 @@ pub fn add_frames_and_share(
     }
 }
 
+/// Turn the just-animated element at `object_index` into a stop-motion strobe:
+/// show it only on every `gap`-th frame of its span (frames `start`,
+/// `start + gap`, `start + 2·gap`, … up to `end_frame`), leaving the frames
+/// between as gaps. The original is kept on the first sample frame; single-frame
+/// clones are added on the later sample frames. Every copy keeps the animated
+/// coordinate, so each evaluates to the element's interpolated position for its
+/// own frame — the motion is sampled, not held.
+///
+/// `gap <= 1` is a no-op (the element stays on every frame). Call this only on a
+/// freshly created animation; the clones are independent objects, so re-applying
+/// over the same span would stack duplicates.
+pub fn apply_gap(
+    source: &mut SourcePresentation,
+    object_index: usize,
+    start: usize,
+    end_frame: usize,
+    gap: usize,
+) {
+    if gap <= 1 {
+        return;
+    }
+    // The original holds the first sample frame.
+    if let Some(fr) = scene_object_frame_range_mut(&mut source.objects[object_index]) {
+        fr.start = start;
+        fr.end = start + 1;
+    }
+    let proto = source.objects[object_index].clone();
+    let mut f = start + gap;
+    while f <= end_frame {
+        let mut clone = proto.clone();
+        if let Some(fr) = scene_object_frame_range_mut(&mut clone) {
+            fr.start = f;
+            fr.end = f + 1;
+        }
+        source.objects.push(clone);
+        f += gap;
+    }
+}
+
 /// Create or update the [`Animation`] span `[start, end_excl)` with the given
 /// auto-play config. If an animation with exactly this span already exists (e.g.
 /// animating a second coordinate over the same frames), reuse it so X and Y of
@@ -983,6 +1025,45 @@ mod tests {
         let p = pres(1, vec![label(0, 1), group(vec![0])]);
         let clones = clone_selection(&p.objects, &[1]);
         assert_eq!(members_of(&clones[0]), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn apply_gap_strobes_element_onto_every_nth_frame() {
+        // A label animated over span [0,10). gap=4 → keep the original on the
+        // first sample frame, clone onto frames 4 and 8 (single-frame each); the
+        // frames between are gaps.
+        let mut obj = create_default(0, 0);
+        if let SceneObject::Label(l) = &mut obj {
+            l.position.x = Coordinate::Animated { from: 0, to: 9, start_frame: 0, end_frame: 9 };
+            l.frames = FrameRange { start: 0, end: 10 };
+        }
+        let mut p = pres(10, vec![obj]);
+        apply_gap(&mut p, 0, 0, 9, 4);
+        assert_eq!(p.objects.len(), 3); // original + 2 clones
+        assert_eq!(range(&p.objects[0]), (0, 1));
+        assert_eq!(range(&p.objects[1]), (4, 5));
+        assert_eq!(range(&p.objects[2]), (8, 9));
+        // Every copy keeps the animated coordinate, so each samples its own frame.
+        for o in &p.objects {
+            match o {
+                SceneObject::Label(l) => {
+                    assert!(matches!(l.position.x, Coordinate::Animated { .. }));
+                }
+                _ => panic!(),
+            }
+        }
+    }
+
+    #[test]
+    fn apply_gap_of_one_is_a_noop() {
+        let mut obj = create_default(0, 0);
+        if let SceneObject::Label(l) = &mut obj {
+            l.frames = FrameRange { start: 0, end: 10 };
+        }
+        let mut p = pres(10, vec![obj]);
+        apply_gap(&mut p, 0, 0, 9, 1);
+        assert_eq!(p.objects.len(), 1);
+        assert_eq!(range(&p.objects[0]), (0, 10)); // untouched
     }
 
     #[test]
