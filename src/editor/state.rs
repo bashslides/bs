@@ -49,6 +49,19 @@ pub enum TableCellSubState {
     },
 }
 
+/// What the ASCII-art picker (`Mode::AddArt` / `Mode::LoadArtFile`) is choosing
+/// a piece *for*. Lets the one picker flow serve both a standalone `Art` object
+/// and the two-stage `from`/`to` selection of a new `Morph`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArtPick {
+    /// Add a standalone `Art` object with the chosen piece.
+    Art,
+    /// Pick the *from* piece of a new `Morph`; the next pick is its *to* piece.
+    MorphFrom,
+    /// Pick the *to* piece of a new `Morph`, carrying the already-chosen *from*.
+    MorphTo { from_art: String, from_name: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
     Normal,
@@ -130,15 +143,19 @@ pub enum Mode {
         cursor: usize,
     },
     /// Choosing a piece from the ASCII-art library to add. The entry at index
-    /// `items.len()` is the "Load from file…" action.
+    /// `items.len()` is the "Load from file…" action. `purpose` says whether the
+    /// pick becomes a standalone `Art` or one end of a new `Morph`.
     AddArt {
         selected: usize,
         items: Vec<ArtItem>,
+        purpose: ArtPick,
     },
-    /// Typing a path to load a custom art file at runtime.
+    /// Typing a path to load a custom art file at runtime. `purpose` is carried
+    /// through so a file picked mid-morph routes the same as a library pick.
     LoadArtFile {
         buf: String,
         cursor: usize,
+        purpose: ArtPick,
     },
     /// Presentation settings — currently the output frame size (width × height).
     Settings {
@@ -270,6 +287,7 @@ pub fn scene_object_frame_range(obj: &SceneObject) -> Option<&FrameRange> {
         SceneObject::Command(c) => Some(&c.frames),
         SceneObject::List(l) => Some(&l.frames),
         SceneObject::Loop(l) => Some(&l.frames),
+        SceneObject::Morph(m) => Some(&m.frames),
     }
 }
 
@@ -288,6 +306,7 @@ pub fn scene_object_frame_range_mut(obj: &mut SceneObject) -> Option<&mut FrameR
         SceneObject::Command(c) => Some(&mut c.frames),
         SceneObject::List(l) => Some(&mut l.frames),
         SceneObject::Loop(l) => Some(&mut l.frames),
+        SceneObject::Morph(m) => Some(&mut m.frames),
     }
 }
 
@@ -304,6 +323,7 @@ pub fn scene_object_type_name(obj: &SceneObject) -> &'static str {
         SceneObject::Command(_) => "Command",
         SceneObject::List(_) => "List",
         SceneObject::Loop(_) => "Loop",
+        SceneObject::Morph(_) => "Morph",
     }
 }
 
@@ -348,6 +368,9 @@ fn scene_object_coordinates_mut(obj: &mut SceneObject) -> Vec<&mut Coordinate> {
         // A loop has no coordinates (it draws nothing); its frame range still
         // shifts via `scene_object_frame_range_mut` during frame insert/delete.
         SceneObject::Loop(_) => vec![],
+        // A morph is sized by its art content (like Art); only its position can
+        // animate, so width/height are absent here.
+        SceneObject::Morph(m) => vec![&mut m.position.x, &mut m.position.y],
     }
 }
 
@@ -676,6 +699,11 @@ pub fn scene_object_summary(obj: &SceneObject) -> String {
             let times = if l.count == 0 { "∞".to_string() } else { format!("{}×", l.count) };
             let mode = if l.bounce { "bounce" } else { "loop" };
             format!("Loop: {n} frames {times} ({mode})")
+        }
+        SceneObject::Morph(m) => {
+            let n = m.frames.end.saturating_sub(m.frames.start);
+            let label = if m.name.is_empty() { m.mode.as_str().to_string() } else { m.name.clone() };
+            format!("Morph: {label} ({n} frames)")
         }
     }
 }

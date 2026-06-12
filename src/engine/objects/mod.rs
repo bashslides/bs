@@ -39,6 +39,7 @@ mod hline;
 mod label;
 mod list;
 mod looping;
+mod morph;
 mod rect;
 pub mod table;
 mod wrap;
@@ -52,6 +53,7 @@ pub use hline::HLine;
 pub use label::Label;
 pub use list::List;
 pub use looping::Loop;
+pub use morph::{Morph, MorphMode};
 pub use rect::Rect;
 pub use table::Table;
 
@@ -82,6 +84,7 @@ impl Resolve for SceneObject {
             SceneObject::Command(o) => o.resolve(frame, canvas_width, ops),
             SceneObject::List(o) => o.resolve(frame, canvas_width, ops),
             SceneObject::Loop(o) => o.resolve(frame, canvas_width, ops),
+            SceneObject::Morph(o) => o.resolve(frame, canvas_width, ops),
         }
     }
 }

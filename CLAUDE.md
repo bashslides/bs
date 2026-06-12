@@ -101,8 +101,8 @@ auto groups (their members shift instead).
 | `src/main.rs` | CLI entry point |
 | `src/types.rs` | Shared types: `Color`, `Style`, `Cell`, `DrawOp`, `Frame`, `PlayablePresentation`, `CommandRegion`, `LoopRegion` |
 | `src/engine/source.rs` | `SourcePresentation` (+ `command_regions()`, `loop_regions()`, `validate_loops()`), `SceneObject`, `Coordinate` (Fixed/Animated), `FrameRange` |
-| `src/engine/objects/` | Eleven object types: `Label`, `HLine`, `Rect`, `Header`, `Group`, `Arrow`, `Table`, `Art`, `Command`, `List`, `Loop` — each implements `Resolve`. See the module-doc checklist in `mod.rs` for every site a new type touches. `List` (ordered/unordered) shares `Label`'s text-editing UX and the shared `wrap` helper. `Loop` (like `Group`) draws nothing; its `frames` range is the loop range and it emits a `LoopRegion` sidecar |
-| `src/art_library.rs` | Built-in + user ASCII-art palette (`~/.config/bs/art/`, one file per piece); pieces are copied into self-contained `Art` objects when added |
+| `src/engine/objects/` | Twelve object types: `Label`, `HLine`, `Rect`, `Header`, `Group`, `Arrow`, `Table`, `Art`, `Command`, `List`, `Loop`, `Morph` — each implements `Resolve`. See the module-doc checklist in `mod.rs` for every site a new type touches. `List` (ordered/unordered) shares `Label`'s text-editing UX and the shared `wrap` helper. `Loop` (like `Group`) draws nothing; its `frames` range is the loop range and it emits a `LoopRegion` sidecar. `Morph` blends two inline ASCII-art grids (`from`→`to`) across its `frames` range — each cell flips to the `to` glyph once playback progress passes that cell's per-cell threshold (`MorphMode`: `dissolve` or four directional wipes). Fully baked into static frames in `resolve`, so the editor preview shows it for free |
+| `src/art_library.rs` | Built-in + user ASCII-art palette (`~/.config/bs/art/`, one file per piece); pieces are copied into self-contained `Art` objects when added. Includes a matched `ball`/`square` pair used as the default `Morph` endpoints. The picker (`Mode::AddArt`/`LoadArtFile`) carries an `ArtPick` purpose so the same flow serves a standalone `Art` or the two-stage `from`/`to` pick of a `Morph` |
 | `src/renderer/mod.rs` | Rasterizes DrawOps into cell grid; diffs frames |
 | `src/player/mod.rs` | Playback loop, keyboard nav (arrows, space, q, f=fullscreen); runs `Command` objects (piped, async, timeout) and overlays output; drives `Loop` regions (timer-based auto-advance + bounce + arrow-key break-out) via the pure `loop_next` step fn |
 | `src/editor/mod.rs` | Editor lifecycle, raw mode setup, main loop |
@@ -130,7 +130,7 @@ Normal ──a──→ AddObject ──Enter──→ Normal (object added)
 - **FrameOverlay**: paste the current (source) frame's objects *on top of* another existing frame, **without** inserting a new frame. ←/→ scroll the deck to a target frame; Enter calls `state::overlay_frame`, which **deep-clones** every object on the source frame onto the target (same positions/styles/z-order), appended after the target's existing objects so they render over it. Objects already visible on the target (e.g. a deck-wide background spanning both frames) are skipped rather than duplicated. Unlike copy/move, the deck's `frame_count` is unchanged
 - **FrameMove → FrameMovePlace**: relocate the current slide. In FrameMove, ←/→ scroll the deck to a target slide; Enter opens FrameMovePlace, where Enter drops the moved slide *after* the target and `b` drops it *before* (`state::move_frame` remaps object ranges through the new frame ordering)
 - **Settings**: edit the output frame size (width × height in cells); ↑↓/Tab switch field, Enter apply, Esc cancel
-- **AddObject**: choose object type from the list (↑/↓ + Enter) or press its **quick-add shortcut** — one unique letter per type, shown as `[l] Label` and defined by `object_defaults::OBJECT_TYPE_KEYS` (`object_type_for_key` maps a keypress to the type). Either path runs the shared `commit_add_object`. After committing, most types land in `EditProperties` (browse); `Group`/`Art` enter their member/library pickers; `Label` and `List` jump straight into the centred multi-line text overlay (empty buffer) so you can type content immediately — Esc keeps the default text, Enter commits
+- **AddObject**: choose object type from the list (↑/↓ + Enter) or press its **quick-add shortcut** — one unique letter per type, shown as `[l] Label` and defined by `object_defaults::OBJECT_TYPE_KEYS` (`object_type_for_key` maps a keypress to the type). Either path runs the shared `commit_add_object`. After committing, most types land in `EditProperties` (browse); `Group`/`Art` enter their member/library pickers; `Morph` runs the art-library picker **twice** (pick the `from` piece, then the `to` piece) before landing in `EditProperties`; `Label` and `List` jump straight into the centred multi-line text overlay (empty buffer) so you can type content immediately — Esc keeps the default text, Enter commits
 - **SelectObject**: pick object visible on current frame
 - **SelectedObject**: move (arrows), `r` → resize mode, `e` → edit props, `d` delete; Shift+arrows also grow
 - **ResizeObject**: arrow-key resize (←→ width, ↑↓ height) — a terminal-robust path since many terminals capture Shift+↑/↓ for scrollback; Enter/Esc exit
@@ -246,14 +246,15 @@ targets the pure, deterministic core):
 | `tests/rect.rs` | `Rect`: border + blank interior, title on the top edge |
 | `tests/group.rs` | `Group`: members render independently / group emits nothing; auto range doesn't gate members; explicit range overrides members (narrows + widens) |
 | `tests/looping.rs` | `Loop`: compiled `LoopRegion` sidecar (defaults + explicit fields) and `validate_loops` (disjoint OK; overlap/nesting/past-end/empty rejected). The auto-advance run-loop is TUI; the pure `loop_next` step fn is tested inline in `player/mod.rs` |
+| `tests/morph.rs` | `Morph`: end-to-end blend — `from` on the first frame / `to` on the last, `wipe-right` half-done at the midpoint, smaller grid padded with transparent space, hidden outside its range. The per-cell threshold/progress fns are tested inline in `engine/objects/morph.rs` |
 | `tests/engine.rs` | `Engine::compile`: one scene per frame, empty deck, object outside `frame_count` |
 | `tests/renderer.rs` | Renderer + `grid_at`: equal-z-order source order, clamp past end, out-of-bounds diff skip |
 
 Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
 `engine/objects/wrap.rs`, `editor/textedit.rs`, `editor/object_defaults.rs`,
 `editor/state.rs` — frame copy/blank-insert/move/delete, `player/mod.rs` —
-`loop_next` bounce/wrap stepping). The suite totals 127 tests (83 integration +
-44 inline); `TESTS.md` is the authoritative per-test list.
+`loop_next` bounce/wrap stepping). The suite totals 137 tests (87 integration +
+50 inline); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the

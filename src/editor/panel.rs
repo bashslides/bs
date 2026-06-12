@@ -5,7 +5,7 @@ use crossterm::{cursor, queue, style};
 use crate::engine::source::SceneObject;
 use super::object_defaults;
 use super::properties::{self, PropertyKind};
-use super::state::{scene_object_summary, scene_object_type_name, EditorState, Mode, TableCellSubState};
+use super::state::{scene_object_summary, scene_object_type_name, ArtPick, EditorState, Mode, TableCellSubState};
 use super::ui::Layout;
 
 /// If `value` names a concrete colour (named or `#rrggbb`), paint a two-cell
@@ -135,9 +135,14 @@ pub fn render_right_panel(
     }
 
     // === AddArt ===
-    if let Mode::AddArt { selected, items } = &state.mode {
+    if let Mode::AddArt { selected, items, purpose } = &state.mode {
         let selected = *selected;
-        draw_header(stdout, "Add Art")?;
+        let title = match purpose {
+            ArtPick::MorphFrom => "Morph: pick start art",
+            ArtPick::MorphTo { .. } => "Morph: pick target art",
+            ArtPick::Art => "Add Art",
+        };
+        draw_header(stdout, title)?;
         // One row per library piece, then a final "Load from file…" action.
         let mut labels: Vec<String> = items.iter().map(|it| it.name.clone()).collect();
         labels.push("Load from file…".to_string());
@@ -166,7 +171,7 @@ pub fn render_right_panel(
     }
 
     // === LoadArtFile ===
-    if let Mode::LoadArtFile { buf, cursor } = &state.mode {
+    if let Mode::LoadArtFile { buf, cursor, .. } = &state.mode {
         let cursor = *cursor;
         draw_header(stdout, "Load Art File")?;
         if cy + 2 < cy + layout.canvas_height {

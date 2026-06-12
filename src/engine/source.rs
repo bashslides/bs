@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 // Re-export object types so they remain accessible via `engine::source::*`.
 pub use super::objects::{
-    Arrow, Art, Command, Group, HLine, Header, Label, List, Loop, Rect, Table,
+    Arrow, Art, Command, Group, HLine, Header, Label, List, Loop, Morph, MorphMode, Rect, Table,
 };
 
 use crate::types::{CommandRegion, LoopRegion};
@@ -34,6 +34,7 @@ pub enum SceneObject {
     Command(Command),
     List(List),
     Loop(Loop),
+    Morph(Morph),
 }
 
 impl SceneObject {
@@ -53,6 +54,7 @@ impl SceneObject {
             SceneObject::Command(c) => Some(c.frames.clone()),
             SceneObject::List(l) => Some(l.frames.clone()),
             SceneObject::Loop(l) => Some(l.frames.clone()),
+            SceneObject::Morph(m) => Some(m.frames.clone()),
         }
     }
 
@@ -71,6 +73,7 @@ impl SceneObject {
             SceneObject::Command(c) => c.frames = r,
             SceneObject::List(l) => l.frames = r,
             SceneObject::Loop(l) => l.frames = r,
+            SceneObject::Morph(m) => m.frames = r,
         }
     }
 }

@@ -11,7 +11,7 @@ use super::properties;
 use super::textedit::{TextAction, TextEdit};
 use super::state::{
     adjust_frames_after_delete, adjust_group_members_after_delete, copy_frame,
-    insert_blank_frame, move_frame, overlay_frame, ConfirmAction, EditorState, Mode,
+    insert_blank_frame, move_frame, overlay_frame, ArtPick, ConfirmAction, EditorState, Mode,
     TableCellSubState,
 };
 
@@ -250,11 +250,43 @@ fn add_art_item(state: &mut EditorState, art: String, name: String) {
     state.status_message = Some(format!("Added art: {name}"));
 }
 
+/// Route a chosen art piece according to the picker's `purpose`: add it as a
+/// standalone `Art`, capture it as a morph's *from* (and re-open the picker for
+/// the *to* piece), or finish a morph with the chosen *to* piece.
+fn route_picked_art(state: &mut EditorState, art: String, name: String, purpose: ArtPick) {
+    match purpose {
+        ArtPick::Art => add_art_item(state, art, name),
+        ArtPick::MorphFrom => {
+            // Re-open the library to pick the target piece for the morph.
+            state.mode = Mode::AddArt {
+                selected: 0,
+                items: crate::art_library::all_items(),
+                purpose: ArtPick::MorphTo { from_art: art, from_name: name },
+            };
+            state.status_message = Some("Morph: now pick the target art".into());
+        }
+        ArtPick::MorphTo { from_art, from_name } => {
+            let obj = object_defaults::create_morph(
+                from_art,
+                from_name.clone(),
+                art,
+                name.clone(),
+                state.current_frame,
+            );
+            state.source.objects.push(obj);
+            state.dirty = true;
+            let new_index = state.source.objects.len() - 1;
+            state.mode = ep_browse(new_index, 0, 0);
+            state.status_message = Some(format!("Added morph: {from_name}→{name}"));
+        }
+    }
+}
+
 fn handle_add_art(state: &mut EditorState, key: KeyEvent) -> Action {
     let bindings = state.config.key_bindings.clone();
 
-    let (selected, items) = match &state.mode {
-        Mode::AddArt { selected, items } => (*selected, items.clone()),
+    let (selected, items, purpose) = match &state.mode {
+        Mode::AddArt { selected, items, purpose } => (*selected, items.clone(), purpose.clone()),
         _ => return Action::Continue,
     };
 
@@ -268,21 +300,21 @@ fn handle_add_art(state: &mut EditorState, key: KeyEvent) -> Action {
 
     if matches_binding(&bindings.move_up, &key) {
         let new_sel = if selected == 0 { entry_count - 1 } else { selected - 1 };
-        state.mode = Mode::AddArt { selected: new_sel, items };
+        state.mode = Mode::AddArt { selected: new_sel, items, purpose };
         return Action::Redraw;
     }
     if matches_binding(&bindings.move_down, &key) {
         let new_sel = (selected + 1) % entry_count;
-        state.mode = Mode::AddArt { selected: new_sel, items };
+        state.mode = Mode::AddArt { selected: new_sel, items, purpose };
         return Action::Redraw;
     }
     if matches_binding(&bindings.confirm, &key) {
         if selected < items.len() {
             let item = items[selected].clone();
-            add_art_item(state, item.art, item.name);
+            route_picked_art(state, item.art, item.name, purpose);
         } else {
-            // "Load from file…" entry.
-            state.mode = Mode::LoadArtFile { buf: String::new(), cursor: 0 };
+            // "Load from file…" entry — carry the purpose through.
+            state.mode = Mode::LoadArtFile { buf: String::new(), cursor: 0, purpose };
         }
         return Action::Redraw;
     }
@@ -293,13 +325,17 @@ fn handle_add_art(state: &mut EditorState, key: KeyEvent) -> Action {
 fn handle_load_art_file(state: &mut EditorState, key: KeyEvent) -> Action {
     let bindings = state.config.key_bindings.clone();
 
-    let (mut buf, mut cursor) = match &state.mode {
-        Mode::LoadArtFile { buf, cursor } => (buf.clone(), *cursor),
+    let (mut buf, mut cursor, purpose) = match &state.mode {
+        Mode::LoadArtFile { buf, cursor, purpose } => (buf.clone(), *cursor, purpose.clone()),
         _ => return Action::Continue,
     };
 
     if matches_binding(&bindings.cancel, &key) {
-        state.mode = Mode::AddArt { selected: 0, items: crate::art_library::all_items() };
+        state.mode = Mode::AddArt {
+            selected: 0,
+            items: crate::art_library::all_items(),
+            purpose,
+        };
         return Action::Redraw;
     }
 
@@ -310,11 +346,11 @@ fn handle_load_art_file(state: &mut EditorState, key: KeyEvent) -> Action {
             return Action::Redraw;
         }
         match crate::art_library::load_file(std::path::Path::new(path)) {
-            Ok(item) => add_art_item(state, item.art, item.name),
+            Ok(item) => route_picked_art(state, item.art, item.name, purpose),
             Err(e) => {
                 // Stay in the input so the path can be corrected.
                 state.status_message = Some(format!("Load failed: {e}"));
-                state.mode = Mode::LoadArtFile { buf, cursor };
+                state.mode = Mode::LoadArtFile { buf, cursor, purpose };
             }
         }
         return Action::Redraw;
@@ -325,7 +361,7 @@ fn handle_load_art_file(state: &mut EditorState, key: KeyEvent) -> Action {
             let byte_idx = char_to_byte_idx(&buf, cursor);
             buf.insert(byte_idx, c);
             cursor += 1;
-            state.mode = Mode::LoadArtFile { buf, cursor };
+            state.mode = Mode::LoadArtFile { buf, cursor, purpose };
             return Action::Redraw;
         }
         KeyCode::Backspace if key.modifiers == KeyModifiers::NONE => {
@@ -334,21 +370,21 @@ fn handle_load_art_file(state: &mut EditorState, key: KeyEvent) -> Action {
                 buf.remove(byte_idx);
                 cursor -= 1;
             }
-            state.mode = Mode::LoadArtFile { buf, cursor };
+            state.mode = Mode::LoadArtFile { buf, cursor, purpose };
             return Action::Redraw;
         }
         KeyCode::Left if key.modifiers == KeyModifiers::NONE => {
             if cursor > 0 {
                 cursor -= 1;
             }
-            state.mode = Mode::LoadArtFile { buf, cursor };
+            state.mode = Mode::LoadArtFile { buf, cursor, purpose };
             return Action::Redraw;
         }
         KeyCode::Right if key.modifiers == KeyModifiers::NONE => {
             if cursor < buf.chars().count() {
                 cursor += 1;
             }
-            state.mode = Mode::LoadArtFile { buf, cursor };
+            state.mode = Mode::LoadArtFile { buf, cursor, purpose };
             return Action::Redraw;
         }
         _ => {}
@@ -765,7 +801,16 @@ fn commit_add_object(state: &mut EditorState, index: usize) -> Action {
         state.mode = Mode::AddArt {
             selected: 0,
             items: crate::art_library::all_items(),
+            purpose: ArtPick::Art,
         };
+    } else if type_name == "Morph" {
+        // A morph needs two pieces: pick the `from` first, then the `to`.
+        state.mode = Mode::AddArt {
+            selected: 0,
+            items: crate::art_library::all_items(),
+            purpose: ArtPick::MorphFrom,
+        };
+        state.status_message = Some("Morph: pick the starting art".into());
     } else {
         let obj = object_defaults::create_default(index, state.current_frame);
         state.source.objects.push(obj);

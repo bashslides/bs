@@ -3,16 +3,16 @@ use crate::types::Style;
 
 pub const OBJECT_TYPES: &[&str] = &[
     "Label", "HLine", "Rect", "Header", "Group", "Arrow", "Table", "Art", "Command", "List",
-    "Loop",
+    "Loop", "Morph",
 ];
 
 /// One quick-add shortcut per object type, aligned by index with `OBJECT_TYPES`.
 /// The Add-Object menu shows each key (`[l] Label`); pressing it adds that type
 /// directly. Keys are unique and avoid the global fullscreen key (`f`). They are
 /// the type's initial where free, else another distinctive letter (Header→`e`,
-/// Arrow→`w`, Art→`a`, List→`i`, Loop→`p`).
+/// Arrow→`w`, Art→`a`, List→`i`, Loop→`p`, Morph→`m`).
 pub const OBJECT_TYPE_KEYS: &[char] =
-    &['l', 'h', 'r', 'e', 'g', 'w', 't', 'a', 'c', 'i', 'p'];
+    &['l', 'h', 'r', 'e', 'g', 'w', 't', 'a', 'c', 'i', 'p', 'm'];
 
 /// Map a pressed character (case-insensitive) to an object-type index, if it is
 /// a quick-add shortcut.
@@ -34,6 +34,32 @@ pub fn create_art(art: String, name: String, current_frame: usize) -> SceneObjec
         name,
         style: Style::default(),
         // New objects live on the current slide only (end is exclusive).
+        frames: FrameRange { start: current_frame, end: current_frame + 1 },
+        z_order: 0,
+    })
+}
+
+/// Build a `Morph` object that morphs `from_art` into `to_art`. Used by the
+/// editor's two-stage art picker (pick the *from* piece, then the *to* piece).
+/// The morph spans only the current slide by default — widen its frame range in
+/// the properties panel to give it room to animate.
+pub fn create_morph(
+    from_art: String,
+    from_name: String,
+    to_art: String,
+    to_name: String,
+    current_frame: usize,
+) -> SceneObject {
+    SceneObject::Morph(Morph {
+        position: Position {
+            x: Coordinate::Fixed(0.0),
+            y: Coordinate::Fixed(0.0),
+        },
+        from: from_art,
+        to: to_art,
+        name: format!("{from_name}→{to_name}"),
+        mode: MorphMode::default(),
+        style: Style::default(),
         frames: FrameRange { start: current_frame, end: current_frame + 1 },
         z_order: 0,
     })
@@ -180,6 +206,20 @@ pub fn create_default(type_index: usize, current_frame: usize) -> SceneObject {
             count: 0,
             bounce: true,
         }),
+        11 => {
+            // Fallback only — the editor adds Morph via the two-stage art picker
+            // (`create_morph`). Default to the matched ball→square builtins.
+            let by_name = |want: &str| {
+                crate::art_library::builtins()
+                    .into_iter()
+                    .find(|it| it.name == want)
+                    .map(|it| (it.art, it.name))
+                    .unwrap_or_else(|| (String::new(), want.to_string()))
+            };
+            let (from_art, from_name) = by_name("ball");
+            let (to_art, to_name) = by_name("square");
+            create_morph(from_art, from_name, to_art, to_name, current_frame)
+        }
         _ => unreachable!(),
     }
 }

@@ -160,6 +160,15 @@ reconstructed character grid (some also assert on cell styles).
 | `empty_loop_range_is_rejected` | A zero-width range (`start == end`) is rejected |
 | `a_deck_with_no_loops_validates_and_emits_nothing` | No loops → validates and emits no regions |
 
+### Morph object — `tests/morph.rs`
+
+| Test | Verifies |
+|------|----------|
+| `morph_shows_from_on_first_frame_and_to_on_last` | First frame is fully `from`, last frame fully `to` (mode-independent endpoints) |
+| `morph_wipe_right_is_half_done_at_the_midpoint` | `wipe-right` flips the left half before the right at progress 0.5 |
+| `morph_pads_the_smaller_grid_with_transparent_space` | Cells beyond the smaller grid are transparent spaces (smaller shape grows/shrinks) |
+| `morph_is_hidden_outside_its_range` | The morph emits nothing before/after its frame range |
+
 ### Command object — `tests/command.rs`
 
 | Test | Verifies |
@@ -250,11 +259,22 @@ reconstructed character grid (some also assert on cell styles).
 | `move_frame_is_a_noop_onto_itself` | Moving a frame relative to itself is a no-op |
 | `animation_span_unions_animated_coordinates_and_makes_end_exclusive` | `scene_object_animation_span` unions every animated coordinate's window into an exclusive `[start, end)`; `None` when nothing is animated |
 
+### Morph stepping — `src/engine/objects/morph.rs`
+
+| Test | Verifies |
+|------|----------|
+| `progress_runs_zero_to_one_across_the_range` | `progress` is 0 on the first frame, 1 on the last, linear between |
+| `first_frame_is_from_last_frame_is_to` | Resolve emits the `from` glyphs at progress 0 and the `to` glyphs at progress 1 |
+| `wipe_right_flips_left_cells_before_right_cells` | `wipe-right` thresholds flip left columns before right at the midpoint |
+| `out_of_grid_cells_are_transparent_spaces` | Cells past one grid's extent resolve to (transparent) spaces |
+| `outside_the_range_emits_nothing` | Resolve emits no ops outside the frame range |
+| `mode_string_round_trips` | `MorphMode::as_str` / `from_str_opt` round-trip; unknown strings are rejected |
+
 ### Art library — `src/art_library.rs`
 
 | Test | Verifies |
 |------|----------|
-| `builtins_are_present_and_named` | Built-in art pieces are present and named |
+| `builtins_are_present_and_named` | Built-in art pieces are present and named (incl. the `ball`/`square` morph pair) |
 
 ## Not covered (intentional)
 

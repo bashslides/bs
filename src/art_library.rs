@@ -47,8 +47,28 @@ const TREE: &str = r#"        /\
        |  |
       _|__|_"#;
 
+// A matched ball/square pair (same 7×5 bounding box) — handy as the two ends of
+// a `Morph` (the canonical "ball morphs into a square" demo).
+const BALL: &str = r#" .---.
+/     \
+|     |
+\     /
+ '---' "#;
+
+const SQUARE: &str = r#"+-----+
+|     |
+|     |
+|     |
++-----+"#;
+
 /// Built-in pieces, in display order. Add new art here.
-pub const BUILTINS: &[(&str, &str)] = &[("human", HUMAN), ("ghost", GHOST), ("tree", TREE)];
+pub const BUILTINS: &[(&str, &str)] = &[
+    ("human", HUMAN),
+    ("ghost", GHOST),
+    ("tree", TREE),
+    ("ball", BALL),
+    ("square", SQUARE),
+];
 
 /// The built-in pieces as owned [`ArtItem`]s.
 pub fn builtins() -> Vec<ArtItem> {
@@ -112,7 +132,7 @@ mod tests {
     fn builtins_are_present_and_named() {
         let items = builtins();
         let names: Vec<&str> = items.iter().map(|i| i.name.as_str()).collect();
-        assert_eq!(names, ["human", "ghost", "tree"]);
+        assert_eq!(names, ["human", "ghost", "tree", "ball", "square"]);
         // Art is preserved verbatim, including the leading spaces that align it.
         let human = &items[0].art;
         assert_eq!(human.lines().next().unwrap(), "   O");
