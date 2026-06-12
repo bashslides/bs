@@ -12,7 +12,7 @@ use super::textedit::{TextAction, TextEdit};
 use super::state::{
     adjust_frames_after_delete, adjust_group_members_after_delete, copy_frame,
     insert_blank_frame, move_frame, overlay_frame, ArtPick, ConfirmAction, EditorState, Mode,
-    TableCellSubState,
+    MultiSelectPurpose, TableCellSubState,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,7 +93,8 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
         }
         Mode::AnimateProperty { .. } => handle_animate_property(state, key),
         Mode::Confirm { .. } => handle_confirm(state, key),
-        Mode::SelectGroupMembers { .. } => handle_select_group_members(state, key),
+        Mode::MultiSelect { .. } => handle_multi_select(state, key),
+        Mode::PastePlacing { .. } => handle_paste_placing(state, key),
         Mode::TableAddColumn { .. } => handle_table_add_column(state, key),
         Mode::TableRemoveColumn { .. } => handle_table_remove_column(state, key),
         Mode::TableEditCellProps { sub_state, .. } => {
@@ -221,10 +222,27 @@ fn apply_property(state: &mut EditorState, object_index: usize, name: &str, valu
     match properties::set_property(&mut state.source.objects[object_index], name, value) {
         Ok(()) => {
             state.dirty = true;
+            // Linked objects share appearance: a non-placement edit propagates to
+            // the family (placement/layering stays per-object). Siblings that lack
+            // the property (a mixed-type family) simply ignore it.
+            let mut propagated = 0usize;
+            if !is_placement_prop(name) {
+                for j in state.source.link_siblings(object_index) {
+                    if properties::set_property(&mut state.source.objects[j], name, value).is_ok() {
+                        propagated += 1;
+                    }
+                }
+            }
             // Surface a loop overlap/range error live (the compile step enforces
             // it hard); otherwise confirm the edit.
             state.status_message = Some(match state.source.validate_loops() {
-                Ok(()) => format!("Set {name} = {value}"),
+                Ok(()) => {
+                    if propagated > 0 {
+                        format!("Set {name} = {value} (+{propagated} linked)")
+                    } else {
+                        format!("Set {name} = {value}")
+                    }
+                }
                 Err(e) => format!("⚠ {e}"),
             });
         }
@@ -530,6 +548,24 @@ fn handle_normal(state: &mut EditorState, key: KeyEvent) -> Action {
         state.status_message = None;
         return Action::Redraw;
     }
+    // Copy: pick a set of objects on this frame to capture to the clipboard.
+    if matches_binding(&bindings.copy, &key) {
+        if state.objects_on_current_frame().is_empty() {
+            state.status_message = Some("No objects on this frame to copy".into());
+        } else {
+            state.mode = Mode::MultiSelect {
+                purpose: MultiSelectPurpose::Copy,
+                selected: 0,
+                members: Vec::new(),
+            };
+            state.status_message = Some("Copy: [Space] toggle objects, [Enter] copy".into());
+        }
+        return Action::Redraw;
+    }
+    // Paste: place the clipboard's clones as a movable ghost on this frame.
+    if matches_binding(&bindings.paste, &key) {
+        return start_paste(state);
+    }
 
     Action::Continue
 }
@@ -794,7 +830,11 @@ fn commit_add_object(state: &mut EditorState, index: usize) -> Action {
             state.status_message = Some("No objects on this slide to group".into());
             state.mode = Mode::Normal;
         } else {
-            state.mode = Mode::SelectGroupMembers { selected: 0, members: Vec::new() };
+            state.mode = Mode::MultiSelect {
+                purpose: MultiSelectPurpose::Group,
+                selected: 0,
+                members: Vec::new(),
+            };
         }
     } else if type_name == "Art" {
         // Art needs a library piece chosen first.
@@ -835,16 +875,15 @@ fn commit_add_object(state: &mut EditorState, index: usize) -> Action {
     Action::Redraw
 }
 
-fn handle_select_group_members(state: &mut EditorState, key: KeyEvent) -> Action {
+fn handle_multi_select(state: &mut EditorState, key: KeyEvent) -> Action {
     let bindings = state.config.key_bindings.clone();
-    let (selected, members) = match &state.mode {
-        Mode::SelectGroupMembers { selected, members } => (*selected, members.clone()),
+    let (purpose, selected, members) = match &state.mode {
+        Mode::MultiSelect { purpose, selected, members } => (*purpose, *selected, members.clone()),
         _ => return Action::Continue,
     };
 
-    // Only objects on the current slide can be grouped. `selected` indexes into
-    // this visible list; `members` stores the real `source.objects` indices it
-    // maps to (so the created `Group.members` stay valid).
+    // Only the current slide's objects are selectable. `selected` indexes into
+    // this visible list; `members` stores the real `source.objects` indices.
     let visible = state.objects_on_current_frame();
     let total = visible.len();
     if total == 0 {
@@ -859,12 +898,12 @@ fn handle_select_group_members(state: &mut EditorState, key: KeyEvent) -> Action
     }
     if matches_binding(&bindings.move_up, &key) {
         let new_sel = if selected == 0 { total - 1 } else { selected - 1 };
-        state.mode = Mode::SelectGroupMembers { selected: new_sel, members };
+        state.mode = Mode::MultiSelect { purpose, selected: new_sel, members };
         return Action::BlinkSelection;
     }
     if matches_binding(&bindings.move_down, &key) {
         let new_sel = (selected + 1) % total;
-        state.mode = Mode::SelectGroupMembers { selected: new_sel, members };
+        state.mode = Mode::MultiSelect { purpose, selected: new_sel, members };
         return Action::BlinkSelection;
     }
     // Space: toggle membership of the highlighted object
@@ -876,35 +915,202 @@ fn handle_select_group_members(state: &mut EditorState, key: KeyEvent) -> Action
         } else {
             new_members.push(obj_idx);
         }
-        state.mode = Mode::SelectGroupMembers { selected, members: new_members };
+        state.mode = Mode::MultiSelect { purpose, selected, members: new_members };
         return Action::Redraw;
     }
-    // Enter: create the group
+    // Enter: commit — create a group, or copy the set to the clipboard. With
+    // nothing explicitly toggled, fall back to the highlighted object.
     if matches_binding(&bindings.confirm, &key) {
-        let group = SceneObject::Group(Group {
-            members,
-            // Auto by default: the group's span follows its members' ranges
-            // until the user sets an explicit range in the properties panel.
-            frames: None,
-            z_order: 0,
-        });
-        state.source.objects.push(group);
-        state.dirty = true;
-        let new_index = state.source.objects.len() - 1;
-        state.mode = Mode::EditProperties {
-            object_index: new_index,
-            selected_property: 0,
-            editing_value: None,
-            cursor: 0,
-            scroll: 0,
-            panel_scroll: 0,
-            dropdown: None,
-        };
-        state.status_message = Some("Added Group".into());
+        let mut chosen = members;
+        if chosen.is_empty() {
+            chosen.push(visible[selected]);
+        }
+        match purpose {
+            MultiSelectPurpose::Group => {
+                let group = SceneObject::Group(Group {
+                    members: chosen,
+                    // Auto by default: the group's span follows its members'
+                    // ranges until an explicit range is set in the props panel.
+                    frames: None,
+                    z_order: 0,
+                });
+                state.source.objects.push(group);
+                state.dirty = true;
+                let new_index = state.source.objects.len() - 1;
+                state.mode = ep_browse(new_index, 0, 0);
+                state.status_message = Some("Added Group".into());
+            }
+            MultiSelectPurpose::Copy => {
+                copy_to_clipboard(state, &chosen);
+                state.mode = Mode::Normal;
+            }
+        }
         return Action::Redraw;
     }
 
     Action::Continue
+}
+
+/// Capture the objects at `indices` (expanding any group to include its members)
+/// into the clipboard as self-contained clones, recording their source indices
+/// for a later *linked* paste. Shared by the copy-select flow and the quick
+/// single-object copy from `SelectedObject`.
+fn copy_to_clipboard(state: &mut EditorState, indices: &[usize]) {
+    let expanded = super::state::expand_selection(&state.source, indices);
+    state.clipboard = super::state::clone_selection(&state.source.objects, &expanded);
+    state.clipboard_sources = expanded;
+    let n = state.clipboard.len();
+    state.status_message = Some(format!(
+        "Copied {n} object{} — press paste to place",
+        if n == 1 { "" } else { "s" }
+    ));
+}
+
+/// Begin a paste session: spawn the first ghost clone-set and enter
+/// `PastePlacing`. No-op (with a hint) when the clipboard is empty.
+fn start_paste(state: &mut EditorState) -> Action {
+    if state.clipboard.is_empty() {
+        state.status_message = Some("Clipboard is empty — copy something first".into());
+        return Action::Redraw;
+    }
+    let pending = spawn_paste(state);
+    state.dirty = true;
+    state.mode = Mode::PastePlacing { pending, linked: false, families: Vec::new() };
+    state.status_message =
+        Some("Paste: arrows move, [Enter] stamp, [l] link, [Esc] done".into());
+    Action::Redraw
+}
+
+/// Append a fresh set of clipboard clones onto the current frame — re-anchored
+/// to it (single frame), group members re-pointed to their new absolute
+/// indices, and nudged by (1,1) so a same-frame paste is visibly a new copy.
+/// Returns the new objects' (tail) indices.
+fn spawn_paste(state: &mut EditorState) -> Vec<usize> {
+    let base = state.source.objects.len();
+    let current = state.current_frame;
+    let mut clones = state.clipboard.clone();
+    for obj in &mut clones {
+        // Re-anchor to the current frame (auto groups keep their derived range).
+        if let Some(fr) = super::state::scene_object_frame_range_mut(obj) {
+            fr.start = current;
+            fr.end = current + 1;
+        }
+        // Clipboard-local member index → new absolute index.
+        if let SceneObject::Group(g) = obj {
+            for m in &mut g.members {
+                *m += base;
+            }
+        }
+    }
+    let pending: Vec<usize> = (base..base + clones.len()).collect();
+    state.source.objects.extend(clones);
+    // Nudge off the source (groups are no-ops; their members carry the motion).
+    for &i in &pending {
+        properties::move_object(&mut state.source.objects[i], 1, 1);
+    }
+    pending
+}
+
+fn handle_paste_placing(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+    let (pending, mut linked, mut families) = match &state.mode {
+        Mode::PastePlacing { pending, linked, families } => {
+            (pending.clone(), *linked, families.clone())
+        }
+        _ => return Action::Continue,
+    };
+
+    // Esc: discard the un-dropped ghost (always the tail) and finish. Commit each
+    // accumulated per-object link family.
+    if matches_binding(&bindings.cancel, &key) {
+        let keep = state.source.objects.len().saturating_sub(pending.len());
+        state.source.objects.truncate(keep);
+        if linked {
+            for mut fam in families {
+                fam.sort_unstable();
+                fam.dedup();
+                fam.retain(|&i| i < state.source.objects.len());
+                if fam.len() >= 2 {
+                    state.source.links.push(fam);
+                }
+            }
+        }
+        state.mode = Mode::Normal;
+        state.status_message = Some("Paste finished".into());
+        return Action::Redraw;
+    }
+
+    // [l]: toggle linked vs independent for the rest of this session.
+    if key.code == KeyCode::Char('l') && key.modifiers == KeyModifiers::NONE {
+        linked = !linked;
+        state.mode = Mode::PastePlacing { pending, linked, families };
+        state.status_message = Some(if linked {
+            "Linked: each copy syncs edits with its original".into()
+        } else {
+            "Independent: detached copies".into()
+        });
+        return Action::Redraw;
+    }
+
+    // Arrows: move the whole ghost set together.
+    if key.modifiers == KeyModifiers::NONE {
+        let (dx, dy) = match key.code {
+            KeyCode::Left => (-1, 0),
+            KeyCode::Right => (1, 0),
+            KeyCode::Up => (0, -1),
+            KeyCode::Down => (0, 1),
+            _ => (0, 0),
+        };
+        if dx != 0 || dy != 0 {
+            for &i in &pending {
+                properties::move_object(&mut state.source.objects[i], dx, dy);
+            }
+            state.dirty = true;
+            return Action::Redraw;
+        }
+    }
+
+    // Enter: drop the current set and re-arm a fresh ghost (rubber-stamp loop).
+    if matches_binding(&bindings.confirm, &key) {
+        if linked {
+            // One family per clipboard object: clone `pending[p]` joins object
+            // `p`'s family (seeded with its still-valid source on the first
+            // stamp), so an object links only to its own copies.
+            if families.is_empty() {
+                families = pending
+                    .iter()
+                    .enumerate()
+                    .map(|(p, _)| {
+                        match state.clipboard_sources.get(p) {
+                            Some(&src) if src < state.source.objects.len() => vec![src],
+                            _ => vec![],
+                        }
+                    })
+                    .collect();
+            }
+            for (p, &clone_idx) in pending.iter().enumerate() {
+                if let Some(fam) = families.get_mut(p) {
+                    fam.push(clone_idx);
+                }
+            }
+        }
+        let next = spawn_paste(state);
+        state.dirty = true;
+        state.mode = Mode::PastePlacing { pending: next, linked, families };
+        state.status_message = Some("Stamped — place the next, or [Esc] to finish".into());
+        return Action::Redraw;
+    }
+
+    Action::Continue
+}
+
+/// Properties that stay **per-object** on linked copies (placement/layering);
+/// every other property propagates to a linked object's siblings.
+fn is_placement_prop(name: &str) -> bool {
+    matches!(
+        name,
+        "x" | "y" | "width" | "height" | "first_frame" | "last_frame" | "z_order"
+    )
 }
 
 fn handle_select_object(state: &mut EditorState, key: KeyEvent) -> Action {
@@ -985,6 +1191,16 @@ fn handle_selected_object(state: &mut EditorState, key: KeyEvent) -> Action {
             dropdown: None,
         };
         return Action::Redraw;
+    }
+
+    // [c]opy this object to the clipboard (quick single-object path).
+    if matches_binding(&bindings.copy, &key) {
+        copy_to_clipboard(state, &[object_index]);
+        return Action::Redraw;
+    }
+    // [v] paste the clipboard right away.
+    if matches_binding(&bindings.paste, &key) {
+        return start_paste(state);
     }
 
     // [d]elete
@@ -1207,6 +1423,10 @@ fn handle_confirm(state: &mut EditorState, key: KeyEvent) -> Action {
                     ConfirmAction::DeleteFrame => {
                         let deleted = state.current_frame;
                         adjust_frames_after_delete(&mut state.source, deleted);
+                        // Object indices may have shifted; the copy clipboard's
+                        // source indices (for a linked paste) can no longer be
+                        // trusted, so a later linked paste links copies only.
+                        state.clipboard_sources.clear();
                         if state.current_frame >= state.source.frame_count {
                             state.current_frame = state.source.frame_count.saturating_sub(1);
                         }
@@ -1222,6 +1442,8 @@ fn handle_confirm(state: &mut EditorState, key: KeyEvent) -> Action {
                         if object_index < state.source.objects.len() {
                             state.source.objects.remove(object_index);
                             adjust_group_members_after_delete(&mut state.source, object_index);
+                            // Source indices for a linked paste are now stale.
+                            state.clipboard_sources.clear();
                             state.dirty = true;
                             state.status_message = Some("Object deleted".into());
                         }

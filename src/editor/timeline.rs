@@ -47,7 +47,11 @@ pub fn render_timeline(
         Mode::EditProperties { .. } => "EDIT PROPERTIES",
         Mode::AnimateProperty { .. } => "ANIMATE",
         Mode::Confirm { .. } => "CONFIRM",
-        Mode::SelectGroupMembers { .. } => "ADD GROUP",
+        Mode::MultiSelect { purpose, .. } => match purpose {
+            super::state::MultiSelectPurpose::Group => "ADD GROUP",
+            super::state::MultiSelectPurpose::Copy => "COPY SELECT",
+        },
+        Mode::PastePlacing { .. } => "PASTE",
         Mode::AddArt { .. } => "ADD ART",
         Mode::LoadArtFile { .. } => "LOAD ART",
         Mode::Settings { .. } => "SETTINGS",

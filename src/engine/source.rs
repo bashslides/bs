@@ -19,6 +19,12 @@ pub struct SourcePresentation {
     pub height: u16,
     pub frame_count: usize,
     pub objects: Vec<SceneObject>,
+    /// Groups of object indices that are **linked**: a non-placement property
+    /// edit (text, colour, art, …) on any member propagates to the others, while
+    /// position/size/range/z-order stay per-object. Created by a *linked* paste;
+    /// maintained through object deletion like `Group.members`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<Vec<usize>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -162,6 +168,16 @@ impl SourcePresentation {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Other objects linked to object `index` (its link family minus itself).
+    /// Empty when the object is in no link group.
+    pub fn link_siblings(&self, index: usize) -> Vec<usize> {
+        self.links
+            .iter()
+            .find(|fam| fam.contains(&index))
+            .map(|fam| fam.iter().copied().filter(|&i| i != index).collect())
+            .unwrap_or_default()
     }
 
     /// Collect the runtime animation specs from all `Animation` objects. Like

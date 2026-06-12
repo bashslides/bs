@@ -5,7 +5,7 @@ use crossterm::{cursor, queue, style};
 use crate::engine::source::SceneObject;
 use super::object_defaults;
 use super::properties::{self, PropertyKind};
-use super::state::{scene_object_summary, scene_object_type_name, ArtPick, EditorState, Mode, TableCellSubState};
+use super::state::{scene_object_summary, scene_object_type_name, ArtPick, EditorState, Mode, MultiSelectPurpose, TableCellSubState};
 use super::ui::Layout;
 
 /// If `value` names a concrete colour (named or `#rrggbb`), paint a two-cell
@@ -311,10 +311,13 @@ pub fn render_right_panel(
         return Ok(());
     }
 
-    // === SelectGroupMembers ===
-    if let Mode::SelectGroupMembers { selected, members } = &state.mode {
+    // === MultiSelect (group / copy) ===
+    if let Mode::MultiSelect { purpose, selected, members } = &state.mode {
         let selected = *selected;
-        draw_header(stdout, "Add Group")?;
+        draw_header(stdout, match purpose {
+            MultiSelectPurpose::Group => "Add Group",
+            MultiSelectPurpose::Copy => "Copy Objects",
+        })?;
         // Only the current slide's objects are groupable; `selected` and the
         // [+]/[ ] markers are keyed off the real object index in `visible`.
         let visible = state.objects_on_current_frame();

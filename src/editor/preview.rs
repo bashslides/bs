@@ -42,9 +42,14 @@ fn focus_indices(state: &EditorState) -> Option<Vec<usize>> {
                 }
             })
         }
-        Mode::SelectGroupMembers { selected, .. } => {
+        Mode::MultiSelect { selected, .. } => {
             let visible = state.objects_on_current_frame();
             visible.get(*selected).copied().map(|i| vec![i])
+        }
+        // Placing pasted clones: highlight the whole ghost set so it stands out
+        // while the user moves it.
+        Mode::PastePlacing { pending, .. } => {
+            (!pending.is_empty()).then(|| pending.clone())
         }
         // Table modes: focus the table object (rendering is overridden separately)
         Mode::TableEditCellProps { object_index, .. }
@@ -155,7 +160,7 @@ pub fn render_canvas_production(
     };
 
     // Compile and rasterize — dim non-focused objects when a focus set is active.
-    let is_select_mode = matches!(state.mode, Mode::SelectObject { .. } | Mode::SelectGroupMembers { .. });
+    let is_select_mode = matches!(state.mode, Mode::SelectObject { .. } | Mode::MultiSelect { .. });
     let scenes = if let Some(focused) = focus_indices(state) {
         // For a single focused object (non-group) we boost its z_order above others.
         let single_focus = if focused.len() == 1 { Some(focused[0]) } else { None };

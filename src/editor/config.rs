@@ -14,6 +14,13 @@ pub struct KeyBindings {
     pub select_object: String,
     pub edit_object: String,
     pub delete_object: String,
+    /// Copy: the selected object (in SelectedObject) or a multi-select set (in
+    /// Normal) to the clipboard.
+    #[serde(default = "default_copy")]
+    pub copy: String,
+    /// Paste: place the clipboard's clones as a movable, re-stampable ghost.
+    #[serde(default = "default_paste")]
+    pub paste: String,
     pub save: String,
     pub quit: String,
     pub confirm: String,
@@ -78,6 +85,8 @@ fn default_table_edit_cell_style() -> String { "s".into() }
 fn default_open_settings() -> String { "g".into() }
 fn default_resize_object() -> String { "r".into() }
 fn default_fullscreen() -> String { "F".into() }
+fn default_copy() -> String { "c".into() }
+fn default_paste() -> String { "v".into() }
 fn default_frame_menu() -> String { "f".into() }
 fn default_frame_add() -> String { "a".into() }
 fn default_frame_copy() -> String { "c".into() }
@@ -96,6 +105,8 @@ impl Default for EditorConfig {
                 select_object: "s".into(),
                 edit_object: "e".into(),
                 delete_object: "d".into(),
+                copy: default_copy(),
+                paste: default_paste(),
                 save: "Ctrl-s".into(),
                 quit: "q".into(),
                 confirm: "Enter".into(),

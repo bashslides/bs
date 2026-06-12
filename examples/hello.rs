@@ -195,6 +195,7 @@ fn main() -> anyhow::Result<()> {
                 z_order: 0,
             }),
         ],
+        links: Vec::new(),
     };
 
     // ── Pipeline: Source → Engine → Renderer → Player ──

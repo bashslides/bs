@@ -35,7 +35,7 @@ impl Layout {
             | Mode::AddObject { .. }
             | Mode::SelectObject { .. }
             | Mode::Confirm { .. }
-            | Mode::SelectGroupMembers { .. }
+            | Mode::MultiSelect { .. }
             | Mode::AddArt { .. }
             | Mode::LoadArtFile { .. }
             | Mode::Settings { .. } => RIGHT_PANEL_WIDTH,

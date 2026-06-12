@@ -17,6 +17,8 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[←][→] frame",
             "[a]dd",
             "[s]elect",
+            "[c]opy",
+            "[v] paste",
             "[f]rame",
             "settin[g]s",
             "[Ctrl-s]ave",
@@ -71,6 +73,7 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[r]esize",
             "[Shift+←→↑↓] grow",
             "[e]dit props",
+            "[c]opy",
             "[d]el",
             "[Esc] back",
             "[F]ull",
@@ -136,11 +139,20 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[Enter] confirm",
             "[Esc] cancel",
         ],
-        Mode::SelectGroupMembers { .. } => vec![
+        Mode::MultiSelect { purpose, .. } => vec![
             "[↑][↓] navigate",
             "[Space] toggle",
-            "[Enter] create group",
+            match purpose {
+                super::state::MultiSelectPurpose::Group => "[Enter] create group",
+                super::state::MultiSelectPurpose::Copy => "[Enter] copy",
+            },
             "[Esc] cancel",
+        ],
+        Mode::PastePlacing { linked, .. } => vec![
+            "[←→↑↓] move",
+            "[Enter] stamp",
+            if *linked { "[l] linked" } else { "[l] independent" },
+            "[Esc] done",
         ],
         Mode::AddArt { .. } => vec![
             "[↑][↓] navigate",

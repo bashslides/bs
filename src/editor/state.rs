@@ -62,6 +62,15 @@ pub enum ArtPick {
     MorphTo { from_art: String, from_name: String },
 }
 
+/// What a [`Mode::MultiSelect`] session is collecting objects for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MultiSelectPurpose {
+    /// Build a new `Group` from the toggled objects.
+    Group,
+    /// Copy the toggled objects to the clipboard.
+    Copy,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
     Normal,
@@ -125,12 +134,31 @@ pub enum Mode {
         /// Mode to restore when the user picks No or presses Esc.
         return_mode: Box<Mode>,
     },
-    /// Picking which existing objects belong to a new group being created.
-    SelectGroupMembers {
-        /// Currently highlighted object index in the full objects list.
+    /// Toggling a set of objects on the current frame, for either grouping or
+    /// copying (`purpose`). Reuses one multi-select flow for both.
+    MultiSelect {
+        purpose: MultiSelectPurpose,
+        /// Currently highlighted object's position in the visible list.
         selected: usize,
-        /// Objects toggled into the group so far.
+        /// Objects toggled into the set so far (real `objects` indices).
         members: Vec<usize>,
+    },
+    /// Placing freshly-pasted clones: a movable "ghost" that rides the arrow keys
+    /// until Enter drops it (and re-arms the next stamp). Esc discards the
+    /// un-dropped set. The clones live in `objects` (so the preview shows them);
+    /// `pending` is their tail indices.
+    PastePlacing {
+        /// Indices of the clones currently being placed (the live ghost), in
+        /// clipboard order.
+        pending: Vec<usize>,
+        /// Whether this paste session links its copies (synced edits).
+        linked: bool,
+        /// One accumulating link family **per clipboard object** (seeded with its
+        /// source, then each stamp's clone of it), so an object links only to its
+        /// own copies — distinct objects copied together never cross-sync.
+        /// Written to `source.links` when the session ends. Empty until the first
+        /// linked stamp.
+        families: Vec<Vec<usize>>,
     },
     /// Adding a column to a table (before or after a reference column).
     TableAddColumn {
@@ -221,6 +249,12 @@ pub struct EditorState {
     pub blink_hidden: bool,
     /// "No bars" mode: hide the menu bar and timeline so the canvas fills the screen.
     pub fullscreen: bool,
+    /// Self-contained deep clones captured by **copy**, ready to **paste**. Group
+    /// member indices inside are clipboard-local. Persists across frames/pastes.
+    pub clipboard: Vec<SceneObject>,
+    /// Source object indices the clipboard was copied from, for a *linked* paste
+    /// (so the stamped copies sync with the original). Re-validated at paste.
+    pub clipboard_sources: Vec<usize>,
 }
 
 impl EditorState {
@@ -235,6 +269,7 @@ impl EditorState {
                 height: 24,
                 frame_count: 1,
                 objects: Vec::new(),
+                links: Vec::new(),
             }
         };
 
@@ -248,6 +283,8 @@ impl EditorState {
             status_message: None,
             blink_hidden: false,
             fullscreen: false,
+            clipboard: Vec::new(),
+            clipboard_sources: Vec::new(),
         })
     }
 
@@ -629,6 +666,45 @@ pub fn upsert_animation(
     }));
 }
 
+/// Expand a selection so every selected `Group` also pulls in its members — a
+/// copied group is meaningless without the objects it contains. Returns the
+/// selection plus those members, de-duplicated, in ascending index order.
+pub fn expand_selection(source: &SourcePresentation, indices: &[usize]) -> Vec<usize> {
+    let mut set: Vec<usize> = indices.to_vec();
+    for &i in indices {
+        if let Some(SceneObject::Group(g)) = source.objects.get(i) {
+            for &m in &g.members {
+                if !set.contains(&m) {
+                    set.push(m);
+                }
+            }
+        }
+    }
+    set.sort_unstable();
+    set.dedup();
+    set
+}
+
+/// Deep-clone the objects at `indices` into a self-contained list whose internal
+/// `Group.members` are remapped to be **selection-local** (an index into the
+/// returned vec). Members that were not part of the selection are dropped, so a
+/// copied group only references objects that travel with it.
+pub fn clone_selection(objects: &[SceneObject], indices: &[usize]) -> Vec<SceneObject> {
+    // Map each source index to its position within the cloned list.
+    let pos: std::collections::HashMap<usize, usize> = indices
+        .iter()
+        .enumerate()
+        .map(|(local, &src)| (src, local))
+        .collect();
+    let mut out: Vec<SceneObject> = indices.iter().map(|&i| objects[i].clone()).collect();
+    for obj in &mut out {
+        if let SceneObject::Group(g) = obj {
+            g.members = g.members.iter().filter_map(|m| pos.get(m).copied()).collect();
+        }
+    }
+    out
+}
+
 /// Reorder the deck so frame `from` sits immediately before (`before == true`)
 /// or after (`before == false`) frame `target`, and return the moved frame's
 /// new index.
@@ -740,7 +816,10 @@ pub fn adjust_frames_after_delete(source: &mut SourcePresentation, deleted: usiz
     }
 }
 
-/// After an object at `removed_idx` is deleted, fix group member index references.
+/// After an object at `removed_idx` is deleted, fix the index references that
+/// point into `objects`: `Group.members` and the `links` families. Each drops
+/// the removed index and shifts every higher index down by one. Link families
+/// that fall below two members are pruned (a one-object "family" syncs nothing).
 pub fn adjust_group_members_after_delete(source: &mut SourcePresentation, removed_idx: usize) {
     for obj in &mut source.objects {
         if let SceneObject::Group(g) = obj {
@@ -752,6 +831,15 @@ pub fn adjust_group_members_after_delete(source: &mut SourcePresentation, remove
             }
         }
     }
+    for fam in &mut source.links {
+        fam.retain(|&m| m != removed_idx);
+        for m in fam.iter_mut() {
+            if *m > removed_idx {
+                *m -= 1;
+            }
+        }
+    }
+    source.links.retain(|fam| fam.len() >= 2);
 }
 
 pub fn scene_object_summary(obj: &SceneObject) -> String {
@@ -816,7 +904,7 @@ mod tests {
     }
 
     fn pres(frame_count: usize, objects: Vec<SceneObject>) -> SourcePresentation {
-        SourcePresentation { width: 80, height: 24, frame_count, objects }
+        SourcePresentation { width: 80, height: 24, frame_count, objects, links: Vec::new() }
     }
 
     fn range(obj: &SceneObject) -> (usize, usize) {
@@ -841,6 +929,68 @@ mod tests {
             grp.members = members;
         }
         g
+    }
+
+    fn members_of(obj: &SceneObject) -> Vec<usize> {
+        match obj {
+            SceneObject::Group(g) => g.members.clone(),
+            _ => vec![],
+        }
+    }
+
+    #[test]
+    fn expand_selection_pulls_in_group_members() {
+        // objects: [label0, label1, group(0,1)]. Selecting just the group must
+        // expand to include its members.
+        let p = pres(1, vec![label(0, 1), label(0, 1), group(vec![0, 1])]);
+        assert_eq!(expand_selection(&p, &[2]), vec![0, 1, 2]);
+        // A plain selection is unchanged (deduped/sorted).
+        assert_eq!(expand_selection(&p, &[1, 0]), vec![0, 1]);
+    }
+
+    #[test]
+    fn clone_selection_remaps_members_locally_and_is_independent() {
+        // Select [label0, group(0)] → cloned group points at the cloned label
+        // (local index 1), and editing a clone never touches the original.
+        let mut p = pres(1, vec![label(0, 1), group(vec![0])]);
+        let mut clones = clone_selection(&p.objects, &[0, 1]);
+        assert_eq!(clones.len(), 2);
+        assert_eq!(members_of(&clones[1]), vec![0]); // remapped to local pos of orig 0
+        set_text(&mut clones[0], "changed");
+        assert_eq!(text(&p.objects[0]), "New Label"); // original untouched
+        assert_eq!(text(&clones[0]), "changed");
+        // A member dropped from the selection is not referenced by the clone.
+        set_text(&mut p.objects[0], "orig");
+        assert_eq!(text(&clones[0]), "changed");
+    }
+
+    #[test]
+    fn clone_selection_drops_members_outside_the_selection() {
+        // group references member 0, but only the group is selected (not 0).
+        let p = pres(1, vec![label(0, 1), group(vec![0])]);
+        let clones = clone_selection(&p.objects, &[1]);
+        assert_eq!(members_of(&clones[0]), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn link_siblings_returns_family_minus_self() {
+        let mut p = pres(1, vec![label(0, 1), label(0, 1), label(0, 1), label(0, 1)]);
+        p.links = vec![vec![0, 2, 3]];
+        assert_eq!(p.link_siblings(2), vec![0, 3]);
+        assert_eq!(p.link_siblings(0), vec![2, 3]);
+        assert_eq!(p.link_siblings(1), Vec::<usize>::new()); // not in any family
+    }
+
+    #[test]
+    fn delete_shifts_and_prunes_link_families() {
+        let mut p = pres(1, vec![label(0, 1), label(0, 1), label(0, 1), label(0, 1), label(0, 1)]);
+        p.links = vec![vec![0, 2, 4]];
+        // Remove index 2: drop it, shift 4 → 3.
+        adjust_group_members_after_delete(&mut p, 2);
+        assert_eq!(p.links, vec![vec![0, 3]]);
+        // Remove index 0: family collapses to one member and is pruned.
+        adjust_group_members_after_delete(&mut p, 0);
+        assert!(p.links.is_empty());
     }
 
     #[test]
