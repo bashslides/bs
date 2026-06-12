@@ -557,15 +557,19 @@ pub fn overlay_frame(source: &mut SourcePresentation, from: usize, onto: usize) 
     index_map.len()
 }
 
-/// Prepare the deck for an animation spanning `[start, end_frame]` (inclusive
-/// last animated frame) started from the `current` frame: insert any missing
-/// frames immediately after `current`, then extend every object visible on
-/// `current` to span the whole range. The elements therefore become a single
-/// shared object across all the animation's frames — editing one edits them all.
+/// Give a new animation spanning `[start, end_frame]` (inclusive last animated
+/// frame, started from the `current` frame) its own dedicated frames: insert
+/// `N - 1` **fresh** blank frames immediately after `current` (where `N` is the
+/// span length), then extend every object visible on `current` to span the whole
+/// range. The elements therefore become a single shared object across all the
+/// animation's frames — editing one edits them all.
 ///
-/// Frames already present in the span are left in place; only the shortfall up to
-/// the exclusive end (`end_frame + 1`) is inserted. Deck-wide/spanning objects
-/// are extended by [`insert_blank_frame`] already and stay a single object.
+/// The new frames are always inserted, not reused — any existing content after
+/// `current` shifts back to make room (`insert_blank_frame` already extends
+/// deck-wide/spanning objects across them, keeping each a single object). The
+/// caller is responsible for *not* calling this twice for the same animation
+/// (re-applying X+Y over one span, or re-saving), which would insert again — see
+/// the span guard in `input::apply_animation`.
 pub fn add_frames_and_share(
     source: &mut SourcePresentation,
     current: usize,
@@ -577,9 +581,10 @@ pub fn add_frames_and_share(
     let visible: Vec<usize> = (0..source.objects.len())
         .filter(|&i| source.effective_frame_range(i).contains(current))
         .collect();
-    // Insert just enough blank frames after the current one to reach the span end.
-    let needed = end_excl.saturating_sub(source.frame_count);
-    for _ in 0..needed {
+    // Insert N-1 fresh frames after the current one (N = span length). The
+    // `current` frame is the span's first frame; the rest are brand new.
+    let new_frames = end_frame.saturating_sub(start);
+    for _ in 0..new_frames {
         insert_blank_frame(source, current);
     }
     // Extend each shared element across the span. Auto groups have no stored
@@ -1016,13 +1021,14 @@ mod tests {
     }
 
     #[test]
-    fn add_frames_and_share_only_inserts_the_missing_frames() {
-        // Deck already has 4 frames; animating frame 0 over 6 frames needs only
-        // 2 more (to reach exclusive end 6), and the element spans the whole run.
+    fn add_frames_and_share_inserts_n_minus_1_fresh_frames() {
+        // Deck already has 4 frames; animating frame 0 over a 6-frame span
+        // (start=0, end_frame=5) inserts 5 NEW frames after frame 0 — the old
+        // frames 1-3 shift back — and the element is shared across the span.
         let mut p = pres(4, vec![label(0, 1)]);
-        add_frames_and_share(&mut p, 0, 0, 5); // end_frame=5 → end_excl=6
-        assert_eq!(p.frame_count, 6);
-        assert_eq!(range(&p.objects[0]), (0, 6));
+        add_frames_and_share(&mut p, 0, 0, 5); // span [0,6) ⇒ 5 new frames
+        assert_eq!(p.frame_count, 9); // 4 existing + 5 fresh
+        assert_eq!(range(&p.objects[0]), (0, 6)); // shared across the span
     }
 
     #[test]

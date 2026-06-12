@@ -1829,15 +1829,22 @@ fn apply_animation(
     add_frames: bool, auto_play: bool, delay_ms: u64,
 ) {
     let animate = start_frame < end_frame;
+    let end_excl = end_frame + 1;
     let coord = if animate {
         Coordinate::Animated { from, to, start_frame, end_frame }
     } else {
         Coordinate::Fixed(from as f64)
     };
 
-    // Add the frames the animation spans and share the current frame's elements
-    // across them (one shared object per element ⇒ editing one edits all).
-    if animate && add_frames {
+    // "Add frames" gives the animation its own fresh frames (inserting N-1 after
+    // the current one and sharing the current frame's elements across them, so
+    // editing one edits all). Only for a *new* span, though: re-applying over a
+    // span that already exists — animating Y after X, or re-saving an animation —
+    // must not insert frames again, so guard on whether the span already exists.
+    let span_exists = state.source.objects.iter().any(|o| {
+        matches!(o, SceneObject::Animation(a) if a.frames.start == start_frame && a.frames.end == end_excl)
+    });
+    if animate && add_frames && !span_exists {
         super::state::add_frames_and_share(&mut state.source, state.current_frame, start_frame, end_frame);
     }
 
@@ -1859,7 +1866,7 @@ fn apply_animation(
     // Record the animation span + its auto-play config (reusing one that already
     // covers exactly this span, so X and Y of an object stay one animation).
     if animate {
-        super::state::upsert_animation(&mut state.source, start_frame, end_frame + 1, auto_play, delay_ms);
+        super::state::upsert_animation(&mut state.source, start_frame, end_excl, auto_play, delay_ms);
     }
 
     // A new animation can collide with a loop (a loop may not bisect an

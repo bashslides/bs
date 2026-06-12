@@ -280,8 +280,8 @@ reconstructed character grid (some also assert on cell styles).
 | `move_frame_keeps_a_whole_deck_object_spanning_the_whole_deck` | A whole-deck object still spans the whole deck after a move |
 | `move_frame_is_a_noop_onto_itself` | Moving a frame relative to itself is a no-op |
 | `animation_span_unions_animated_coordinates_and_makes_end_exclusive` | `scene_object_animation_span` unions every animated coordinate's window into an exclusive `[start, end)`; `None` when nothing is animated |
-| `add_frames_and_share_grows_the_deck_and_shares_elements` | Animating over N frames inserts the missing frames and extends every current-frame element to span them (shared object) |
-| `add_frames_and_share_only_inserts_the_missing_frames` | Only the shortfall up to the span's exclusive end is inserted; existing frames are reused |
+| `add_frames_and_share_grows_the_deck_and_shares_elements` | Animating over N frames inserts N-1 fresh frames and extends every current-frame element to span them (shared object) |
+| `add_frames_and_share_inserts_n_minus_1_fresh_frames` | N-1 *new* frames are always inserted after the current one (existing frames shift back), not reused — even when the deck already has frames in the span |
 | `upsert_animation_reuses_a_matching_span` | Animating X then Y over the same span keeps one `Animation` (updated in place) |
 | `upsert_animation_appends_a_distinct_span` | A different (even overlapping) span creates a second `Animation` |
 
