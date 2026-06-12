@@ -666,6 +666,19 @@ pub fn upsert_animation(
     }));
 }
 
+/// Replace every `Animated` coordinate on `obj` with a `Fixed` value sampled at
+/// `frame`. Used when pasting: a clone is re-anchored to a single frame, where
+/// an animated coordinate is degenerate — it would also be un-nudgeable, since
+/// the arrow-key move only adjusts `Fixed` coordinates. Flattening makes the
+/// pasted copy a static, movable object showing the position it had at `frame`.
+pub fn flatten_coordinates(obj: &mut SceneObject, frame: usize) {
+    for coord in scene_object_coordinates_mut(obj) {
+        if matches!(coord, Coordinate::Animated { .. }) {
+            *coord = Coordinate::Fixed(coord.evaluate(frame) as f64);
+        }
+    }
+}
+
 /// Expand a selection so every selected `Group` also pulls in its members — a
 /// copied group is meaningless without the objects it contains. Returns the
 /// selection plus those members, de-duplicated, in ascending index order.
@@ -970,6 +983,27 @@ mod tests {
         let p = pres(1, vec![label(0, 1), group(vec![0])]);
         let clones = clone_selection(&p.objects, &[1]);
         assert_eq!(members_of(&clones[0]), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn flatten_coordinates_converts_animated_to_fixed_at_frame() {
+        // A label whose x animates 2→12 over frames 0..=4. Flattening at the end
+        // frame yields a Fixed x of 12 — static and now nudgeable by move_by
+        // (which only adjusts Fixed coords), so a paste can be moved horizontally.
+        let mut obj = create_default(0, 0); // Label, all Fixed
+        if let SceneObject::Label(l) = &mut obj {
+            l.position.x = Coordinate::Animated { from: 2, to: 12, start_frame: 0, end_frame: 4 };
+        }
+        flatten_coordinates(&mut obj, 4);
+        match &obj {
+            SceneObject::Label(l) => match l.position.x {
+                Coordinate::Fixed(v) => assert_eq!(v, 12.0),
+                _ => panic!("x should be Fixed after flattening"),
+            },
+            _ => panic!(),
+        }
+        // No animated coordinate remains.
+        assert_eq!(scene_object_animation_span(&mut obj), None);
     }
 
     #[test]

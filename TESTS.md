@@ -284,6 +284,7 @@ reconstructed character grid (some also assert on cell styles).
 | `add_frames_and_share_inserts_n_minus_1_fresh_frames` | N-1 *new* frames are always inserted after the current one (existing frames shift back), not reused — even when the deck already has frames in the span |
 | `upsert_animation_reuses_a_matching_span` | Animating X then Y over the same span keeps one `Animation` (updated in place) |
 | `upsert_animation_appends_a_distinct_span` | A different (even overlapping) span creates a second `Animation` |
+| `flatten_coordinates_converts_animated_to_fixed_at_frame` | Pasting flattens an animated coordinate to a `Fixed` value sampled at the frame, so the copy is static and arrow-movable on both axes |
 | `expand_selection_pulls_in_group_members` | Copying a group expands the selection to include its members (deduped/sorted) |
 | `clone_selection_remaps_members_locally_and_is_independent` | A cloned group points at its cloned members (selection-local); clones are independent of the originals |
 | `clone_selection_drops_members_outside_the_selection` | A group member not in the selection is dropped from the clone's member list |

@@ -995,6 +995,10 @@ fn spawn_paste(state: &mut EditorState) -> Vec<usize> {
             fr.start = current;
             fr.end = current + 1;
         }
+        // A clone lands on a single frame, so flatten any animated coordinate to
+        // a static value (otherwise it's degenerate — and can't be moved with the
+        // arrow keys, which only nudge `Fixed` coordinates).
+        super::state::flatten_coordinates(obj, current);
         // Clipboard-local member index → new absolute index.
         if let SceneObject::Group(g) = obj {
             for m in &mut g.members {
