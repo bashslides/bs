@@ -237,6 +237,10 @@ reconstructed character grid (some also assert on cell styles).
 |------|----------|
 | `copy_frame_clones_objects_independently` | Copy deep-clones the frame's objects; editing the copy doesn't change the original |
 | `copy_frame_keeps_a_spanning_background_shared` | A deck-wide/spanning object is extended (stays one object), not cloned |
+| `overlay_frame_pastes_clones_onto_existing_frame_without_growing_deck` | Overlay deep-clones the source frame's objects onto an existing frame; clones are independent and `frame_count` is unchanged |
+| `overlay_frame_skips_objects_already_on_the_target` | An object already visible on the target frame (a spanning background) is not re-cloned/duplicated |
+| `overlay_frame_onto_itself_is_a_noop` | Overlaying a frame onto itself pastes nothing |
+| `overlay_frame_repoints_cloned_group_members` | A cloned group on overlay points at its cloned member, not the original |
 | `blank_frame_leaves_a_single_frame_object_behind` | Blank insert does not extend the source frame's object into the new frame |
 | `blank_frame_still_shifts_later_objects` | Objects on later frames slide forward past an inserted blank frame |
 | `delete_frame_fixes_group_member_indices` | Pruning a collapsed object on delete keeps surviving group member indices correct |

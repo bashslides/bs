@@ -106,7 +106,7 @@ auto groups (their members shift instead).
 | `src/renderer/mod.rs` | Rasterizes DrawOps into cell grid; diffs frames |
 | `src/player/mod.rs` | Playback loop, keyboard nav (arrows, space, q, f=fullscreen); runs `Command` objects (piped, async, timeout) and overlays output; drives `Loop` regions (timer-based auto-advance + bounce + arrow-key break-out) via the pure `loop_next` step fn |
 | `src/editor/mod.rs` | Editor lifecycle, raw mode setup, main loop |
-| `src/editor/state.rs` | `EditorState`, `Mode` enum (~21 variants, incl. table sub-modes, art picker, frame sub-menu/move). Frame ops: `insert_blank_frame`, `copy_frame` (deep-clone duplicate), `move_frame`. Frame delete fixes group member indices as collapsed objects are pruned |
+| `src/editor/state.rs` | `EditorState`, `Mode` enum (~22 variants, incl. table sub-modes, art picker, frame sub-menu/move/overlay). Frame ops: `insert_blank_frame`, `copy_frame` (deep-clone duplicate into a *new* frame), `overlay_frame` (deep-clone paste onto an *existing* frame, no new frame), `move_frame`. Frame delete fixes group member indices as collapsed objects are pruned |
 | `src/editor/config.rs` | `KeyBindings` — all bindings configurable via `~/.config/bs/editor.json` |
 | `src/editor/input.rs` | All key event handling. Property browse/edit/dropdown flows (object + table cell-style) share helpers: `TextEdit` (text fields), `dropdown_key`/`DropdownKey` (list nav), and the `ep_*` `Mode::EditProperties` constructors |
 | `src/editor/textedit.rs` | `TextEdit` — reusable text-buffer + cursor used by every text field (property values, the multi-line overlay, cell-style values); translates key events into edits (insert/delete/arrows/home-end/newline) |
@@ -126,7 +126,8 @@ Normal ──a──→ AddObject ──Enter──→ Normal (object added)
 ```
 
 - **Normal**: frame navigation (←/→), `f` opens the frame sub-menu, g presentation settings (frame size), Ctrl-s save, q quit, Shift+F fullscreen
-- **FrameMenu**: frame operations — `a` add blank frame, `c` copy (duplicate) current frame, `d` delete current frame (with confirm), `m` move current frame, Esc back. `add` calls `state::insert_blank_frame` (the "make room" primitive — a new empty frame). `copy` calls `state::copy_frame`, which inserts a blank frame and then **deep-clones** every object on the source frame onto it, so the copy's objects are independent of the original (editing one never changes the other). Deck-wide/spanning objects stay shared (extended across the new frame) rather than cloned, so they remain a single continuous object
+- **FrameMenu**: frame operations — `a` add blank frame, `c` copy (duplicate) current frame, `o` overlay (paste) current frame's objects onto another existing frame, `d` delete current frame (with confirm), `m` move current frame, Esc back. `add` calls `state::insert_blank_frame` (the "make room" primitive — a new empty frame). `copy` calls `state::copy_frame`, which inserts a blank frame and then **deep-clones** every object on the source frame onto it, so the copy's objects are independent of the original (editing one never changes the other). Deck-wide/spanning objects stay shared (extended across the new frame) rather than cloned, so they remain a single continuous object
+- **FrameOverlay**: paste the current (source) frame's objects *on top of* another existing frame, **without** inserting a new frame. ←/→ scroll the deck to a target frame; Enter calls `state::overlay_frame`, which **deep-clones** every object on the source frame onto the target (same positions/styles/z-order), appended after the target's existing objects so they render over it. Objects already visible on the target (e.g. a deck-wide background spanning both frames) are skipped rather than duplicated. Unlike copy/move, the deck's `frame_count` is unchanged
 - **FrameMove → FrameMovePlace**: relocate the current slide. In FrameMove, ←/→ scroll the deck to a target slide; Enter opens FrameMovePlace, where Enter drops the moved slide *after* the target and `b` drops it *before* (`state::move_frame` remaps object ranges through the new frame ordering)
 - **Settings**: edit the output frame size (width × height in cells); ↑↓/Tab switch field, Enter apply, Esc cancel
 - **AddObject**: choose object type from the list (↑/↓ + Enter) or press its **quick-add shortcut** — one unique letter per type, shown as `[l] Label` and defined by `object_defaults::OBJECT_TYPE_KEYS` (`object_type_for_key` maps a keypress to the type). Either path runs the shared `commit_add_object`. After committing, most types land in `EditProperties` (browse); `Group`/`Art` enter their member/library pickers; `Label` and `List` jump straight into the centred multi-line text overlay (empty buffer) so you can type content immediately — Esc keeps the default text, Enter commits
@@ -251,8 +252,8 @@ targets the pure, deterministic core):
 Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
 `engine/objects/wrap.rs`, `editor/textedit.rs`, `editor/object_defaults.rs`,
 `editor/state.rs` — frame copy/blank-insert/move/delete, `player/mod.rs` —
-`loop_next` bounce/wrap stepping). The suite totals 123 tests (83 integration +
-40 inline); `TESTS.md` is the authoritative per-test list.
+`loop_next` bounce/wrap stepping). The suite totals 127 tests (83 integration +
+44 inline); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the

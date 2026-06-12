@@ -59,6 +59,10 @@ pub struct KeyBindings {
     /// Within the frame sub-menu: move (relocate) the current frame.
     #[serde(default = "default_frame_move")]
     pub frame_move: String,
+    /// Within the frame sub-menu: overlay (paste) the current frame's objects
+    /// on top of another existing frame.
+    #[serde(default = "default_frame_overlay")]
+    pub frame_overlay: String,
     /// While placing a moved frame: drop it *before* the shown frame
     /// (Enter drops it after).
     #[serde(default = "default_frame_move_before")]
@@ -79,6 +83,7 @@ fn default_frame_add() -> String { "a".into() }
 fn default_frame_copy() -> String { "c".into() }
 fn default_frame_delete() -> String { "d".into() }
 fn default_frame_move() -> String { "m".into() }
+fn default_frame_overlay() -> String { "o".into() }
 fn default_frame_move_before() -> String { "b".into() }
 
 impl Default for EditorConfig {
@@ -113,6 +118,7 @@ impl Default for EditorConfig {
                 frame_copy: default_frame_copy(),
                 frame_delete: default_frame_delete(),
                 frame_move: default_frame_move(),
+                frame_overlay: default_frame_overlay(),
                 frame_move_before: default_frame_move_before(),
             },
         }

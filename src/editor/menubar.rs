@@ -26,6 +26,7 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
         Mode::FrameMenu => vec![
             "[a]dd blank",
             "[c]opy",
+            "[o]verlay onto",
             "[d]elete",
             "[m]ove",
             "[Esc] back",
@@ -34,6 +35,12 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
         Mode::FrameMove { .. } => vec![
             "[←][→] pick slide",
             "[Enter] place here",
+            "[Esc] cancel",
+            "[F]ull",
+        ],
+        Mode::FrameOverlay { .. } => vec![
+            "[←][→] pick target",
+            "[Enter] paste here",
             "[Esc] cancel",
             "[F]ull",
         ],

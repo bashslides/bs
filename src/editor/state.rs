@@ -165,6 +165,14 @@ pub enum Mode {
         /// Target slide (currently shown) the moved slide will sit next to.
         target: usize,
     },
+    /// Overlaying (pasting) the source slide's objects onto another existing
+    /// slide. Left/Right scroll the deck to the target slide (tracked by
+    /// `current_frame`); Enter then pastes the source slide's objects on top of
+    /// it. Unlike `FrameMove`/`FrameMovePlace` this inserts no new frame.
+    FrameOverlay {
+        /// Index of the source slide whose objects will be pasted.
+        from: usize,
+    },
     /// Navigating / selecting cells in a table to edit their properties.
     TableEditCellProps {
         object_index: usize,
@@ -458,6 +466,60 @@ pub fn copy_frame(source: &mut SourcePresentation, current: usize) {
     }
 }
 
+/// Copy every object shown on frame `from` and paste an independent, deep clone
+/// of each **on top of** the existing frame `onto` — same positions, styles, and
+/// z-order — without inserting a new frame (the deck's `frame_count` is
+/// unchanged). The target frame keeps whatever it already had; the pasted
+/// clones, appended after the existing objects, render over it.
+///
+/// Objects already visible on `onto` (e.g. a deck-wide background spanning both
+/// frames) are skipped — they are already present, so re-cloning them would just
+/// stack an identical duplicate on top. Cloned groups are re-pointed at their
+/// cloned members (a skipped, shared member keeps referring to the original).
+///
+/// Returns the number of objects pasted. A no-op (returns 0) when `from == onto`.
+pub fn overlay_frame(source: &mut SourcePresentation, from: usize, onto: usize) -> usize {
+    if from == onto {
+        return 0;
+    }
+    // Objects visible on the source frame are the paste candidates.
+    let visible: Vec<usize> = (0..source.objects.len())
+        .filter(|&i| source.effective_frame_range(i).contains(from))
+        .collect();
+
+    let mut index_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for &i in &visible {
+        if source.effective_frame_range(i).contains(onto) {
+            continue; // already present on the target frame — don't duplicate it
+        }
+        let mut clone = source.objects[i].clone();
+        // Plain objects (and explicit-range groups) land on the target frame
+        // only; an auto group has no stored range and stays auto (derived from
+        // its — also cloned — members).
+        if let Some(fr) = scene_object_frame_range_mut(&mut clone) {
+            fr.start = onto;
+            fr.end = onto + 1;
+        }
+        let new_index = source.objects.len();
+        source.objects.push(clone);
+        index_map.insert(i, new_index);
+    }
+
+    // Re-point cloned groups at their cloned members. A member that was not
+    // cloned (a shared spanning object) keeps referring to the original.
+    for &new_index in index_map.values() {
+        if let SceneObject::Group(g) = &mut source.objects[new_index] {
+            for m in &mut g.members {
+                if let Some(&mapped) = index_map.get(m) {
+                    *m = mapped;
+                }
+            }
+        }
+    }
+
+    index_map.len()
+}
+
 /// Reorder the deck so frame `from` sits immediately before (`before == true`)
 /// or after (`before == false`) frame `target`, and return the moved frame's
 /// new index.
@@ -674,6 +736,62 @@ mod tests {
         set_text(&mut p.objects[1], "changed");
         assert_eq!(text(&p.objects[0]), "New Label");
         assert_eq!(text(&p.objects[1]), "changed");
+    }
+
+    #[test]
+    fn overlay_frame_pastes_clones_onto_existing_frame_without_growing_deck() {
+        // Frame 0 has a label; frame 1 has its own. Overlay 0 onto 1 pastes an
+        // independent clone of frame 0's object onto frame 1 — no new frame.
+        let mut p = pres(2, vec![label(0, 1), label(1, 2)]);
+        let pasted = overlay_frame(&mut p, 0, 1);
+        assert_eq!(pasted, 1);
+        assert_eq!(p.frame_count, 2); // overlay never changes the count
+        assert_eq!(p.objects.len(), 3);
+        assert_eq!(range(&p.objects[0]), (0, 1)); // source untouched
+        assert_eq!(range(&p.objects[1]), (1, 2)); // target's own object kept
+        assert_eq!(range(&p.objects[2]), (1, 2)); // clone lands on the target frame
+        // The clone is independent of the source.
+        set_text(&mut p.objects[2], "changed");
+        assert_eq!(text(&p.objects[0]), "New Label");
+        assert_eq!(text(&p.objects[2]), "changed");
+    }
+
+    #[test]
+    fn overlay_frame_skips_objects_already_on_the_target() {
+        // obj0 spans the whole deck (already on every frame); obj1 is local to
+        // frame 0. Overlaying 0 onto 1 must paste only obj1 — the background is
+        // already present on frame 1, so re-cloning it would just duplicate it.
+        let mut p = pres(2, vec![label(0, 2), label(0, 1)]);
+        let pasted = overlay_frame(&mut p, 0, 1);
+        assert_eq!(pasted, 1);
+        assert_eq!(p.objects.len(), 3);
+        assert_eq!(range(&p.objects[0]), (0, 2)); // background unchanged, not duplicated
+        assert_eq!(range(&p.objects[1]), (0, 1)); // source-local original
+        assert_eq!(range(&p.objects[2]), (1, 2)); // clone pasted onto frame 1
+    }
+
+    #[test]
+    fn overlay_frame_onto_itself_is_a_noop() {
+        let mut p = pres(2, vec![label(0, 1)]);
+        let pasted = overlay_frame(&mut p, 0, 0);
+        assert_eq!(pasted, 0);
+        assert_eq!(p.objects.len(), 1);
+    }
+
+    #[test]
+    fn overlay_frame_repoints_cloned_group_members() {
+        // A group over a per-slide member on frame 0, overlaid onto frame 1:
+        // both the member and the group are cloned, and the cloned group points
+        // at the cloned member.
+        let mut p = pres(2, vec![label(0, 1), group(vec![0])]);
+        let pasted = overlay_frame(&mut p, 0, 1);
+        assert_eq!(pasted, 2); // member + group
+        // Cloned member at index 2, cloned group at index 3 pointing to it.
+        assert_eq!(range(&p.objects[2]), (1, 2));
+        match &p.objects[3] {
+            SceneObject::Group(g) => assert_eq!(g.members, vec![2]),
+            _ => panic!("expected a cloned group at index 3"),
+        }
     }
 
     #[test]

@@ -11,7 +11,8 @@ use super::properties;
 use super::textedit::{TextAction, TextEdit};
 use super::state::{
     adjust_frames_after_delete, adjust_group_members_after_delete, copy_frame,
-    insert_blank_frame, move_frame, ConfirmAction, EditorState, Mode, TableCellSubState,
+    insert_blank_frame, move_frame, overlay_frame, ConfirmAction, EditorState, Mode,
+    TableCellSubState,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +75,7 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
         Mode::FrameMenu => handle_frame_menu(state, key),
         Mode::FrameMove { .. } => handle_frame_move(state, key),
         Mode::FrameMovePlace { .. } => handle_frame_move_place(state, key),
+        Mode::FrameOverlay { .. } => handle_frame_overlay(state, key),
         Mode::AddObject { .. } => handle_add_object(state, key),
         Mode::SelectObject { .. } => handle_select_object(state, key),
         Mode::SelectedObject { .. } => handle_selected_object(state, key),
@@ -547,6 +549,19 @@ fn handle_frame_menu(state: &mut EditorState, key: KeyEvent) -> Action {
         }
         return Action::Redraw;
     }
+    if matches_binding(&bindings.frame_overlay, &key) {
+        if state.source.frame_count > 1 {
+            let from = state.current_frame;
+            state.mode = Mode::FrameOverlay { from };
+            state.status_message = Some(format!(
+                "Overlay frame {} — ←/→ pick a target, Enter to paste",
+                from + 1
+            ));
+        } else {
+            state.status_message = Some("Only one frame — nowhere to overlay".into());
+        }
+        return Action::Redraw;
+    }
 
     Action::Continue
 }
@@ -631,6 +646,57 @@ fn handle_frame_move_place(state: &mut EditorState, key: KeyEvent) -> Action {
             new_index + 1,
             if before { "before" } else { "after" },
             target + 1
+        ));
+        state.mode = Mode::Normal;
+        return Action::Redraw;
+    }
+
+    Action::Continue
+}
+
+/// Scrolling the deck to choose which existing frame to paste the source
+/// frame's objects on top of, then pasting them (no new frame is inserted).
+fn handle_frame_overlay(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+    let from = match &state.mode {
+        Mode::FrameOverlay { from } => *from,
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        // Cancel: drop back to the frame menu on the source slide.
+        state.current_frame = from;
+        state.mode = Mode::FrameMenu;
+        state.status_message = Some("Overlay cancelled".into());
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.next_frame, &key) {
+        let last = state.source.frame_count.saturating_sub(1);
+        if state.current_frame < last {
+            state.current_frame += 1;
+        }
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.prev_frame, &key) {
+        if state.current_frame > 0 {
+            state.current_frame -= 1;
+        }
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.confirm, &key) {
+        let onto = state.current_frame;
+        if onto == from {
+            state.status_message = Some("Pick a different frame (←/→)".into());
+            return Action::Redraw;
+        }
+        let pasted = overlay_frame(&mut state.source, from, onto);
+        state.dirty = true;
+        state.status_message = Some(format!(
+            "Pasted {} object{} from frame {} onto frame {}",
+            pasted,
+            if pasted == 1 { "" } else { "s" },
+            from + 1,
+            onto + 1
         ));
         state.mode = Mode::Normal;
         return Action::Redraw;
