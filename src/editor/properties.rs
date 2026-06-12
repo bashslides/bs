@@ -1,8 +1,8 @@
 use anyhow::{bail, Result};
 
 use crate::engine::source::{
-    Arrow, Art, Command, Coordinate, FrameRange, Group, HLine, Header, Label, List, Loop, Morph,
-    MorphMode, Rect, SceneObject, Table,
+    Animation, Arrow, Art, Command, Coordinate, FrameRange, Group, HLine, Header, Label, List,
+    Loop, Morph, MorphMode, Rect, SceneObject, Table,
 };
 use crate::types::{Color, NamedColor};
 
@@ -170,6 +170,7 @@ fn as_editable(obj: &SceneObject) -> &dyn Editable {
         SceneObject::List(o) => o,
         SceneObject::Loop(o) => o,
         SceneObject::Morph(o) => o,
+        SceneObject::Animation(o) => o,
     }
 }
 
@@ -187,6 +188,7 @@ fn as_editable_mut(obj: &mut SceneObject) -> &mut dyn Editable {
         SceneObject::List(o) => o,
         SceneObject::Loop(o) => o,
         SceneObject::Morph(o) => o,
+        SceneObject::Animation(o) => o,
     }
 }
 
@@ -217,6 +219,43 @@ impl Editable for Loop {
     fn get_coord(&self, _name: &str) -> Option<Coordinate> { None }
     fn set_coord(&mut self, _name: &str, _coord: Coordinate) -> Result<()> {
         bail!("Loops have no coordinate properties")
+    }
+    fn origin_x(&self) -> f64 { 0.0 }
+    fn origin_y(&self) -> f64 { 0.0 }
+    fn dim_x(&self) -> f64 { 0.0 }
+    fn dim_y(&self) -> f64 { 0.0 }
+    fn set_origin_x(&mut self, _v: f64) {}
+    fn set_origin_y(&mut self, _v: f64) {}
+    fn set_dim_x(&mut self, _v: f64) {}
+    fn set_dim_y(&mut self, _v: f64) {}
+    fn move_by(&mut self, _dx: i32, _dy: i32) {}
+}
+
+impl Editable for Animation {
+    fn properties(&self, _ctx: &PropContext) -> Vec<Property> {
+        vec![
+            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Number },
+            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Number },
+            Property { name: "auto_play", value: self.auto_play.to_string(), kind: PropertyKind::Bool },
+            Property { name: "delay_ms", value: self.delay_ms.to_string(), kind: PropertyKind::Number },
+        ]
+    }
+
+    fn set(&mut self, name: &str, value: &str) -> Result<()> {
+        match name {
+            "first_frame" => self.frames.start = value.parse()?,
+            "last_frame" => self.frames.end = value.parse()?,
+            "auto_play" => self.auto_play = parse_bool(value)?,
+            "delay_ms" => self.delay_ms = value.trim().parse()?,
+            _ => bail!("Unknown property: {name}"),
+        }
+        Ok(())
+    }
+
+    // An animation span has no geometry: it draws nothing and has no position.
+    fn get_coord(&self, _name: &str) -> Option<Coordinate> { None }
+    fn set_coord(&mut self, _name: &str, _coord: Coordinate) -> Result<()> {
+        bail!("Animations have no coordinate properties")
     }
     fn origin_x(&self) -> f64 { 0.0 }
     fn origin_y(&self) -> f64 { 0.0 }

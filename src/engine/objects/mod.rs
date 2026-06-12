@@ -30,6 +30,7 @@
 //! the generic `Editable` dispatch, so they usually need no changes.
 
 pub mod font;
+mod animation;
 mod arrow;
 mod art;
 mod command;
@@ -44,6 +45,7 @@ mod rect;
 pub mod table;
 mod wrap;
 
+pub use animation::Animation;
 pub use arrow::Arrow;
 pub use art::Art;
 pub use command::Command;
@@ -85,6 +87,7 @@ impl Resolve for SceneObject {
             SceneObject::List(o) => o.resolve(frame, canvas_width, ops),
             SceneObject::Loop(o) => o.resolve(frame, canvas_width, ops),
             SceneObject::Morph(o) => o.resolve(frame, canvas_width, ops),
+            SceneObject::Animation(o) => o.resolve(frame, canvas_width, ops),
         }
     }
 }

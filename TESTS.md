@@ -160,6 +160,19 @@ reconstructed character grid (some also assert on cell styles).
 | `empty_loop_range_is_rejected` | A zero-width range (`start == end`) is rejected |
 | `a_deck_with_no_loops_validates_and_emits_nothing` | No loops → validates and emits no regions |
 
+### Animation object — `tests/animation.rs`
+
+| Test | Verifies |
+|------|----------|
+| `animation_regions_collects_specs_with_defaults` | An `animation` compiles to an `AnimationRegion`; omitted fields default (auto_play true / 500 ms) |
+| `animation_regions_carries_explicit_fields` | Explicit `auto_play` / `delay_ms` pass through to the region |
+| `animations_may_overlap_each_other` | Two overlapping animation spans validate (unlike loops) |
+| `a_loop_containing_a_whole_animation_validates` | A loop that fully contains an animation is allowed |
+| `a_loop_whose_bounds_match_the_animation_validates` | Containment is inclusive of equal bounds |
+| `an_animation_fully_outside_a_loop_validates` | A disjoint loop/animation pair is allowed |
+| `a_loop_cutting_an_animation_in_half_is_rejected` | A loop that partially overlaps an animation is rejected |
+| `a_loop_starting_inside_an_animation_is_rejected` | A loop starting mid-animation (partial overlap) is rejected |
+
 ### Morph object — `tests/morph.rs`
 
 | Test | Verifies |
@@ -210,6 +223,15 @@ reconstructed character grid (some also assert on cell styles).
 | `single_frame_range_completes_each_tick` | A one-frame loop stays put and counts a pass per tick |
 | `two_frame_bounce_alternates` | A two-frame bounce alternates `5,6,5,6` |
 
+### Animation auto-play stepping — `src/player/mod.rs`
+
+| Test | Verifies |
+|------|----------|
+| `auto_advance_delay_covers_only_internal_boundaries` | A span auto-advances only across boundaries internal to it (the exclusive-end boundary is excluded) |
+| `auto_advance_delay_takes_the_minimum_over_overlapping_animations` | Where auto-play spans overlap, the boundary delay is the minimum of theirs |
+| `auto_advance_delay_handles_backward_boundaries` | Backward stepping uses the boundary below the frame |
+| `auto_advance_delay_ignores_non_auto_play_animations` | A non-auto-play animation never drives auto-advance |
+
 ### Word-wrap — `src/engine/objects/wrap.rs`
 
 | Test | Verifies |
@@ -258,6 +280,10 @@ reconstructed character grid (some also assert on cell styles).
 | `move_frame_keeps_a_whole_deck_object_spanning_the_whole_deck` | A whole-deck object still spans the whole deck after a move |
 | `move_frame_is_a_noop_onto_itself` | Moving a frame relative to itself is a no-op |
 | `animation_span_unions_animated_coordinates_and_makes_end_exclusive` | `scene_object_animation_span` unions every animated coordinate's window into an exclusive `[start, end)`; `None` when nothing is animated |
+| `add_frames_and_share_grows_the_deck_and_shares_elements` | Animating over N frames inserts the missing frames and extends every current-frame element to span them (shared object) |
+| `add_frames_and_share_only_inserts_the_missing_frames` | Only the shortfall up to the span's exclusive end is inserted; existing frames are reused |
+| `upsert_animation_reuses_a_matching_span` | Animating X then Y over the same span keeps one `Animation` (updated in place) |
+| `upsert_animation_appends_a_distinct_span` | A different (even overlapping) span creates a second `Animation` |
 
 ### Morph stepping — `src/engine/objects/morph.rs`
 

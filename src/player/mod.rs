@@ -54,6 +54,10 @@ pub struct Player {
     fullscreen: bool,
     running: Option<RunningCommand>,
     loop_play: Option<LoopPlay>,
+    /// When the deck should auto-advance because an auto-play animation covers
+    /// the current frame boundary (and no loop is driving). `None` = wait for a
+    /// keypress. Loops, when active, drive advancement instead (see `loop_play`).
+    auto_deadline: Option<Instant>,
 }
 
 impl Player {
@@ -67,6 +71,7 @@ impl Player {
             fullscreen: false,
             running: None,
             loop_play: None,
+            auto_deadline: None,
         }
     }
 
@@ -115,8 +120,9 @@ impl Player {
         self.apply_frame(0)?;
         self.redraw_all(stdout)?;
         self.maybe_start_command(stdout)?;
-        // Frame 0 may itself sit inside a loop.
+        // Frame 0 may itself sit inside a loop, or under an auto-play animation.
         self.arm_loop(None);
+        self.schedule_auto();
 
         loop {
             // Drive any running command: drain output, repaint, finalize on exit.
@@ -135,15 +141,18 @@ impl Player {
             if let Some(lp) = &self.loop_play {
                 poll = poll.min(lp.deadline.saturating_duration_since(Instant::now()));
             }
+            if let Some(dl) = self.auto_deadline {
+                poll = poll.min(dl.saturating_duration_since(Instant::now()));
+            }
 
             if !event::poll(poll)? {
-                // No key arrived — advance the loop if its delay has elapsed.
-                if self
-                    .loop_play
-                    .as_ref()
-                    .is_some_and(|lp| Instant::now() >= lp.deadline)
-                {
+                // No key arrived — advance on whichever timer elapsed. A loop, if
+                // active, drives playback; otherwise an auto-play animation does.
+                let now = Instant::now();
+                if self.loop_play.as_ref().is_some_and(|lp| now >= lp.deadline) {
                     self.loop_tick(stdout)?;
+                } else if self.auto_deadline.is_some_and(|dl| now >= dl) {
+                    self.auto_tick(stdout)?;
                 }
                 continue;
             }
@@ -211,6 +220,9 @@ impl Player {
                         }
                         _ => {}
                     }
+                    // After any navigation, re-arm the auto-play timer for the
+                    // frame we landed on (disarmed while a loop drives playback).
+                    self.schedule_auto();
                 }
                 event::Event::Resize(_, _) => {
                     self.redraw_all(stdout)?;
@@ -248,7 +260,12 @@ impl Player {
             if exclude == Some(span(&region)) {
                 return;
             }
-            let deadline = Instant::now() + Duration::from_millis(region.delay_ms.max(1));
+            // First wait crosses `current`→`current+1`; an auto-play animation
+            // covering it sets the pace (min delay), else the loop's own delay.
+            let d = self
+                .auto_advance_delay(self.current_frame, true)
+                .unwrap_or(region.delay_ms);
+            let deadline = Instant::now() + Duration::from_millis(d.max(1));
             self.loop_play = Some(LoopPlay {
                 region,
                 forward: true,
@@ -260,6 +277,51 @@ impl Player {
 
     fn stop_loop(&mut self) {
         self.loop_play = None;
+    }
+
+    // -----------------------------------------------------------------------
+    // Animation auto-play
+    // -----------------------------------------------------------------------
+
+    /// The effective auto-advance delay across the boundary leaving `from` in
+    /// the given direction (forward = `from`→`from+1`, backward = `from`→`from-1`),
+    /// taken as the **minimum** `delay_ms` over every auto-play animation for
+    /// which that boundary is *internal* (both frames lie within its span).
+    /// `None` when no auto-play animation covers the boundary.
+    fn auto_advance_delay(&self, from: usize, forward: bool) -> Option<u64> {
+        // The boundary is between `lo` and `lo + 1`.
+        let lo = if forward { from } else { from.checked_sub(1)? };
+        self.presentation
+            .animations
+            .iter()
+            .filter(|a| a.auto_play && a.start_frame <= lo && lo + 1 < a.end_frame)
+            .map(|a| a.delay_ms)
+            .min()
+    }
+
+    /// (Re)arm the non-loop auto-advance timer for the current frame. A loop, if
+    /// active, drives advancement itself, so the animation timer stays disarmed
+    /// while one is running.
+    fn schedule_auto(&mut self) {
+        self.auto_deadline = if self.loop_play.is_some() {
+            None
+        } else {
+            self.auto_advance_delay(self.current_frame, true)
+                .map(|d| Instant::now() + Duration::from_millis(d.max(1)))
+        };
+    }
+
+    /// Advance one frame because an auto-play animation's delay elapsed (no loop
+    /// active). Re-arms the loop (in case we stepped into one) and the animation
+    /// timer for the new frame.
+    fn auto_tick(&mut self, stdout: &mut io::Stdout) -> Result<()> {
+        let last = self.presentation.frames.len().saturating_sub(1);
+        if self.current_frame < last {
+            self.nav_forward(stdout)?;
+            self.arm_loop(None);
+        }
+        self.schedule_auto();
+        Ok(())
     }
 
     /// Advance the active loop by one frame (called when its delay elapses).
@@ -297,10 +359,15 @@ impl Player {
         self.render_full(stdout)?;
         self.render_status(stdout)?;
         self.maybe_start_command(stdout)?;
+        // The next wait crosses `next`→ in `next_forward`; let an auto-play
+        // animation covering that boundary set the pace, else the loop's delay.
+        let next_delay = self
+            .auto_advance_delay(next, next_forward)
+            .unwrap_or(region.delay_ms);
         if let Some(lp) = self.loop_play.as_mut() {
             lp.forward = next_forward;
             lp.iterations = iterations;
-            lp.deadline = Instant::now() + Duration::from_millis(region.delay_ms.max(1));
+            lp.deadline = Instant::now() + Duration::from_millis(next_delay.max(1));
         }
         Ok(())
     }
@@ -876,7 +943,65 @@ pub fn to_ct_color(c: &Color) -> style::Color {
 
 #[cfg(test)]
 mod tests {
-    use super::loop_next;
+    use super::{loop_next, Player};
+    use crate::types::{
+        AnimationRegion, Cell, Frame, PlayablePresentation, TerminalContract,
+    };
+
+    /// A player over `frames` blank frames carrying the given animation regions.
+    fn player_with(frames: usize, animations: Vec<AnimationRegion>) -> Player {
+        let pres = PlayablePresentation {
+            contract: TerminalContract { width: 1, height: 1 },
+            frames: (0..frames).map(|_| Frame::Full { cells: vec![vec![Cell::default()]] }).collect(),
+            markers: Vec::new(),
+            commands: Vec::new(),
+            loops: Vec::new(),
+            animations,
+        };
+        Player::new(pres)
+    }
+
+    fn anim(start: usize, end: usize, delay: u64) -> AnimationRegion {
+        AnimationRegion { start_frame: start, end_frame: end, auto_play: true, delay_ms: delay }
+    }
+
+    #[test]
+    fn auto_advance_delay_covers_only_internal_boundaries() {
+        // Animation spans frames [2,5): internal forward boundaries are 2→3 and
+        // 3→4 (both frames in span). 4→5 is NOT internal (5 is the exclusive end).
+        let p = player_with(8, vec![anim(2, 5, 300)]);
+        assert_eq!(p.auto_advance_delay(2, true), Some(300));
+        assert_eq!(p.auto_advance_delay(3, true), Some(300));
+        assert_eq!(p.auto_advance_delay(4, true), None); // boundary 4→5 not internal
+        assert_eq!(p.auto_advance_delay(1, true), None); // before the span
+    }
+
+    #[test]
+    fn auto_advance_delay_takes_the_minimum_over_overlapping_animations() {
+        // Two auto-play animations overlap on the 4→5 boundary; the faster one
+        // (200 ms) sets the pace there.
+        let p = player_with(10, vec![anim(0, 6, 500), anim(3, 8, 200)]);
+        assert_eq!(p.auto_advance_delay(1, true), Some(500)); // only the first covers 1→2
+        assert_eq!(p.auto_advance_delay(4, true), Some(200)); // both cover 4→5 → min
+        assert_eq!(p.auto_advance_delay(6, true), Some(200)); // only the second covers 6→7
+    }
+
+    #[test]
+    fn auto_advance_delay_handles_backward_boundaries() {
+        // Backward from frame 4 crosses 3→4, internal to [2,5).
+        let p = player_with(8, vec![anim(2, 5, 300)]);
+        assert_eq!(p.auto_advance_delay(4, false), Some(300));
+        assert_eq!(p.auto_advance_delay(2, false), None); // boundary 1→2 not internal
+        assert_eq!(p.auto_advance_delay(0, false), None); // no boundary below 0
+    }
+
+    #[test]
+    fn auto_advance_delay_ignores_non_auto_play_animations() {
+        let mut a = anim(2, 6, 300);
+        a.auto_play = false;
+        let p = player_with(8, vec![a]);
+        assert_eq!(p.auto_advance_delay(3, true), None);
+    }
 
     /// Replay a loop from `start` for `steps` ticks, collecting the frames shown
     /// and how many iterations completed.

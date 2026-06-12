@@ -40,6 +40,7 @@ impl Renderer {
             markers: Vec::new(),
             commands: Vec::new(),
             loops: Vec::new(),
+            animations: Vec::new(),
         }
     }
 

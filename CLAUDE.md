@@ -68,11 +68,29 @@ it ping-pongs forward then backward (`5,6,7,8,7,6,…`); otherwise it restarts
 (`5,6,7,8,5,6,…`). `count` plays before moving on (`0` = forever; a finite loop
 auto-continues just past its range). The presenter breaks out with the arrow keys:
 `→` jumps to the first frame *after* the loop, `←` to the first frame *before* it
-(Home/End/q also tear it down). Loops may **not overlap or nest** — `SourcePresentation::validate_loops`
-enforces disjoint ranges both live in the editor (status warning) and at compile
-time (hard error). The pure step function is `player::loop_next`. Loops are added
+(Home/End/q also tear it down). Loops may **not overlap or nest**, and a loop may
+**not bisect an `Animation`** (it must contain each animation span wholly or not
+at all, since it replays whole animations) — `SourcePresentation::validate_loops`
+enforces all three both live in the editor (status warning) and at compile time
+(hard error). The pure step function is `player::loop_next`. Loops are added
 through the normal **Add Object** menu, so they reuse property editing and frame
 insert/delete/move range-remapping for free.
+
+**Runtime exception — `Animation` objects.** A first-class *animation span*,
+also play-time. Like `Loop` it draws **nothing**; the motion itself is already
+baked into the frames via the objects' `Coordinate::Animated` fields. An
+`Animation` records the *span* those coordinates play over (`frames`) plus its
+**auto-play** config (`auto_play`, `delay_ms`) and emits an `AnimationRegion`
+sidecar. When `auto_play` is set, the `Player` auto-advances across the span on a
+timer. Unlike loops, animations **may overlap** freely — where several auto-play
+animations cover the same frame boundary, the effective advance delay is the
+**minimum** of their `delay_ms` (`Player::auto_advance_delay`). Animations are
+created by the editor's **animate sub-menu** (not Add Object); they are still
+selectable/editable like a `Loop`. The animate flow's `add_frames` toggle inserts
+the spanned frames and **shares** the current frame's elements across them (one
+range-extended object per element ⇒ editing one edits all), and X and Y of an
+object animated over the same span share **one** `Animation` (reuse-by-span in
+`state::upsert_animation`).
 
 **`Group` frame range — auto vs. explicit override.** `Group.frames` is an
 `Option<FrameRange>`. A group is a logical container whose members are ordinary
@@ -100,11 +118,11 @@ auto groups (their members shift instead).
 |------|------|
 | `src/main.rs` | CLI entry point |
 | `src/types.rs` | Shared types: `Color`, `Style`, `Cell`, `DrawOp`, `Frame`, `PlayablePresentation`, `CommandRegion`, `LoopRegion` |
-| `src/engine/source.rs` | `SourcePresentation` (+ `command_regions()`, `loop_regions()`, `validate_loops()`), `SceneObject`, `Coordinate` (Fixed/Animated), `FrameRange` |
-| `src/engine/objects/` | Twelve object types: `Label`, `HLine`, `Rect`, `Header`, `Group`, `Arrow`, `Table`, `Art`, `Command`, `List`, `Loop`, `Morph` — each implements `Resolve`. See the module-doc checklist in `mod.rs` for every site a new type touches. `List` (ordered/unordered) shares `Label`'s text-editing UX and the shared `wrap` helper. `Loop` (like `Group`) draws nothing; its `frames` range is the loop range and it emits a `LoopRegion` sidecar. `Morph` blends two inline ASCII-art grids (`from`→`to`) across its `frames` range — each cell flips to the `to` glyph once playback progress passes that cell's per-cell threshold (`MorphMode`: `dissolve` or four directional wipes). Fully baked into static frames in `resolve`, so the editor preview shows it for free |
+| `src/engine/source.rs` | `SourcePresentation` (+ `command_regions()`, `loop_regions()`, `animation_regions()`, `validate_loops()`), `SceneObject`, `Coordinate` (Fixed/Animated), `FrameRange` |
+| `src/engine/objects/` | Thirteen `SceneObject` types: `Label`, `HLine`, `Rect`, `Header`, `Group`, `Arrow`, `Table`, `Art`, `Command`, `List`, `Loop`, `Morph`, `Animation` — each implements `Resolve`. See the module-doc checklist in `mod.rs` for every site a new type touches. `List` (ordered/unordered) shares `Label`'s text-editing UX and the shared `wrap` helper. `Loop` (like `Group`) draws nothing; its `frames` range is the loop range and it emits a `LoopRegion` sidecar. `Morph` blends two inline ASCII-art grids (`from`→`to`) across its `frames` range — each cell flips to the `to` glyph once playback progress passes that cell's per-cell threshold (`MorphMode`: `dissolve` or four directional wipes). Fully baked into static frames in `resolve`, so the editor preview shows it for free. `Animation` (also draws nothing) marks an auto-play *span* and emits an `AnimationRegion` sidecar; it is created by the animate sub-menu, not the Add-Object menu (the only type absent from `OBJECT_TYPES`) |
 | `src/art_library.rs` | Built-in + user ASCII-art palette (`~/.config/bs/art/`, one file per piece); pieces are copied into self-contained `Art` objects when added. Includes a matched `ball`/`square` pair used as the default `Morph` endpoints. The picker (`Mode::AddArt`/`LoadArtFile`) carries an `ArtPick` purpose so the same flow serves a standalone `Art` or the two-stage `from`/`to` pick of a `Morph` |
 | `src/renderer/mod.rs` | Rasterizes DrawOps into cell grid; diffs frames |
-| `src/player/mod.rs` | Playback loop, keyboard nav (arrows, space, q, f=fullscreen); runs `Command` objects (piped, async, timeout) and overlays output; drives `Loop` regions (timer-based auto-advance + bounce + arrow-key break-out) via the pure `loop_next` step fn |
+| `src/player/mod.rs` | Playback loop, keyboard nav (arrows, space, q, f=fullscreen); runs `Command` objects (piped, async, timeout) and overlays output; drives `Loop` regions (timer-based auto-advance + bounce + arrow-key break-out) via the pure `loop_next` step fn; auto-advances across auto-play `Animation` spans (`auto_deadline`), using `auto_advance_delay` = the **min** `delay_ms` over the animations covering each boundary, with the loop's own delay as the fallback for gaps inside a loop |
 | `src/editor/mod.rs` | Editor lifecycle, raw mode setup, main loop |
 | `src/editor/state.rs` | `EditorState`, `Mode` enum (~22 variants, incl. table sub-modes, art picker, frame sub-menu/move/overlay). Frame ops: `insert_blank_frame`, `copy_frame` (deep-clone duplicate into a *new* frame), `overlay_frame` (deep-clone paste onto an *existing* frame, no new frame), `move_frame`. Frame delete fixes group member indices as collapsed objects are pruned |
 | `src/editor/config.rs` | `KeyBindings` — all bindings configurable via `~/.config/bs/editor.json` |
@@ -113,7 +131,7 @@ auto groups (their members shift instead).
 | `src/editor/panel.rs` | Left panel (Add Object), right panel (Properties incl. `Bool` checkboxes + colour swatches), object selection overlay, and the centred multi-line text-editing overlay (`render_text_overlay`). Every text field draws its caret through one shared helper, `draw_caret_line` (see "Text caret convention" below) |
 | `src/editor/properties.rs` | `Editable` trait — one impl per object type holds its property list, setter, coordinate + geometry accessors; generic dispatch (`get_properties`, `set_property`, …) is type-agnostic. `PropertyKind::Bool` flags toggle in place (Space/Enter); `PropertyKind::Note` renders a non-editable free-form warning line (the whole `value`, no `name:`) — the mechanism for surfacing per-object warnings in the panel |
 | `src/editor/preview.rs` | Canvas preview using Engine+Renderer |
-| `src/editor/timeline.rs` | Frame bar and status line |
+| `src/editor/timeline.rs` | Frame bar and status line. Frames under an auto-play `Animation` collapse into a single range cell (`[10-20]`); strictly-overlapping auto-play spans merge into one range (continuous auto-advance), adjacent-but-disjoint ones stay separate |
 | `src/editor/menubar.rs` | Context-sensitive menu bar |
 | `src/editor/ui.rs` | Layout computation |
 
@@ -135,7 +153,15 @@ Normal ──a──→ AddObject ──Enter──→ Normal (object added)
 - **SelectedObject**: move (arrows), `r` → resize mode, `e` → edit props, `d` delete; Shift+arrows also grow
 - **ResizeObject**: arrow-key resize (←→ width, ↑↓ height) — a terminal-robust path since many terminals capture Shift+↑/↓ for scrollback; Enter/Esc exit
 - **EditProperties**: edit typed properties; color fields show dropdown; text fields support multi-line (Alt-Enter = newline); property list scrolls vertically
-- **AnimateProperty**: set from/to/start_frame/end_frame for coordinate animation
+- **AnimateProperty**: seven fields — `from`/`to`/`start`/`end` (the coordinate
+  animation) plus `add frames`/`auto play` (toggles, Space/Enter) and `delay ms`.
+  `[s]` applies via `input::apply_animation`: optionally inserts the spanned
+  frames + shares the current frame's elements (`state::add_frames_and_share`),
+  sets the `Coordinate::Animated`, keeps the object's own range in lock-step
+  (`scene_object_animation_span`), and creates/updates the `Animation` span
+  entity (`state::upsert_animation`, reuse-by-span so X+Y stay one animation).
+  `[x]` reverts the coordinate to `Fixed`. Defaults: add-frames on, auto-play on,
+  500 ms. Re-animating a span reseeds its auto-play settings (`enter_animate`)
 
 ## Text caret convention
 
@@ -216,6 +242,16 @@ Mode::EditProperties {
     "delay_ms": 500, "count": 0, "bounce": true }
   ```
 
+- An `animation` object likewise has no geometry — just a range plus auto-play
+  config (`auto_play` default true, `delay_ms` default 500). It records the span
+  an animated coordinate plays over; the motion itself lives on the objects'
+  `Coordinate::Animated` fields:
+
+  ```json
+  { "type": "animation", "frames": { "start": 0, "end": 5 },
+    "auto_play": true, "delay_ms": 500 }
+  ```
+
 ## Dependencies
 
 - `crossterm 0.28` — terminal raw mode, colors, cursor, events
@@ -246,15 +282,17 @@ targets the pure, deterministic core):
 | `tests/rect.rs` | `Rect`: border + blank interior, title on the top edge |
 | `tests/group.rs` | `Group`: members render independently / group emits nothing; auto range doesn't gate members; explicit range overrides members (narrows + widens) |
 | `tests/looping.rs` | `Loop`: compiled `LoopRegion` sidecar (defaults + explicit fields) and `validate_loops` (disjoint OK; overlap/nesting/past-end/empty rejected). The auto-advance run-loop is TUI; the pure `loop_next` step fn is tested inline in `player/mod.rs` |
+| `tests/animation.rs` | `Animation`: compiled `AnimationRegion` sidecar (defaults + explicit) and the loop/animation rules in `validate_loops` (animations may overlap; a loop must contain a whole animation or none of it — bisecting is rejected). The auto-advance/min-delay run-loop is TUI; the pure `auto_advance_delay` is tested inline in `player/mod.rs` |
 | `tests/morph.rs` | `Morph`: end-to-end blend — `from` on the first frame / `to` on the last, `wipe-right` half-done at the midpoint, smaller grid padded with transparent space, hidden outside its range. The per-cell threshold/progress fns are tested inline in `engine/objects/morph.rs` |
 | `tests/engine.rs` | `Engine::compile`: one scene per frame, empty deck, object outside `frame_count` |
 | `tests/renderer.rs` | Renderer + `grid_at`: equal-z-order source order, clamp past end, out-of-bounds diff skip |
 
 Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
 `engine/objects/wrap.rs`, `editor/textedit.rs`, `editor/object_defaults.rs`,
-`editor/state.rs` — frame copy/blank-insert/move/delete, `player/mod.rs` —
-`loop_next` bounce/wrap stepping). The suite totals 137 tests (87 integration +
-50 inline); `TESTS.md` is the authoritative per-test list.
+`editor/state.rs` — frame copy/blank-insert/move/delete + `add_frames_and_share`
++ `upsert_animation`, `player/mod.rs` — `loop_next` bounce/wrap stepping +
+`auto_advance_delay` min-over-overlap). The suite totals 153 tests (95 integration
++ 58 inline); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the

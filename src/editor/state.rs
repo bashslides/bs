@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 
 use crate::art_library::ArtItem;
-use crate::engine::source::{Coordinate, FrameRange, SceneObject, SourcePresentation};
+use crate::engine::source::{Animation, Coordinate, FrameRange, SceneObject, SourcePresentation};
 
 use super::config::EditorConfig;
 
@@ -99,7 +99,8 @@ pub enum Mode {
         return_property: usize,
         /// The property name being animated (static because Property.name is &'static str).
         property_name: &'static str,
-        /// Which field is highlighted: 0=from, 1=to, 2=start_frame, 3=end_frame.
+        /// Which field is highlighted: 0=from, 1=to, 2=start_frame, 3=end_frame,
+        /// 4=add_frames (toggle), 5=auto_play (toggle), 6=delay_ms.
         selected_field: usize,
         /// Text being typed into the selected field, if actively editing.
         editing: Option<String>,
@@ -108,6 +109,13 @@ pub enum Mode {
         to: u16,
         start_frame: usize,
         end_frame: usize,
+        /// Insert the frames the animation spans (and share the current frame's
+        /// elements across them) on apply. Default on.
+        add_frames: bool,
+        /// Auto-advance across the animation's span at play time. Default on.
+        auto_play: bool,
+        /// Auto-play delay between frames, in milliseconds. Default 500.
+        delay_ms: u64,
     },
     Confirm {
         message: String,
@@ -288,6 +296,7 @@ pub fn scene_object_frame_range(obj: &SceneObject) -> Option<&FrameRange> {
         SceneObject::List(l) => Some(&l.frames),
         SceneObject::Loop(l) => Some(&l.frames),
         SceneObject::Morph(m) => Some(&m.frames),
+        SceneObject::Animation(a) => Some(&a.frames),
     }
 }
 
@@ -307,6 +316,7 @@ pub fn scene_object_frame_range_mut(obj: &mut SceneObject) -> Option<&mut FrameR
         SceneObject::List(l) => Some(&mut l.frames),
         SceneObject::Loop(l) => Some(&mut l.frames),
         SceneObject::Morph(m) => Some(&mut m.frames),
+        SceneObject::Animation(a) => Some(&mut a.frames),
     }
 }
 
@@ -324,6 +334,7 @@ pub fn scene_object_type_name(obj: &SceneObject) -> &'static str {
         SceneObject::List(_) => "List",
         SceneObject::Loop(_) => "Loop",
         SceneObject::Morph(_) => "Morph",
+        SceneObject::Animation(_) => "Animation",
     }
 }
 
@@ -371,6 +382,9 @@ fn scene_object_coordinates_mut(obj: &mut SceneObject) -> Vec<&mut Coordinate> {
         // A morph is sized by its art content (like Art); only its position can
         // animate, so width/height are absent here.
         SceneObject::Morph(m) => vec![&mut m.position.x, &mut m.position.y],
+        // An animation span has no coordinates (it draws nothing); its frame
+        // range still shifts via `scene_object_frame_range_mut`.
+        SceneObject::Animation(_) => vec![],
     }
 }
 
@@ -543,6 +557,73 @@ pub fn overlay_frame(source: &mut SourcePresentation, from: usize, onto: usize) 
     index_map.len()
 }
 
+/// Prepare the deck for an animation spanning `[start, end_frame]` (inclusive
+/// last animated frame) started from the `current` frame: insert any missing
+/// frames immediately after `current`, then extend every object visible on
+/// `current` to span the whole range. The elements therefore become a single
+/// shared object across all the animation's frames — editing one edits them all.
+///
+/// Frames already present in the span are left in place; only the shortfall up to
+/// the exclusive end (`end_frame + 1`) is inserted. Deck-wide/spanning objects
+/// are extended by [`insert_blank_frame`] already and stay a single object.
+pub fn add_frames_and_share(
+    source: &mut SourcePresentation,
+    current: usize,
+    start: usize,
+    end_frame: usize,
+) {
+    let end_excl = end_frame + 1;
+    // Elements to share are those visible on the current frame *before* growth.
+    let visible: Vec<usize> = (0..source.objects.len())
+        .filter(|&i| source.effective_frame_range(i).contains(current))
+        .collect();
+    // Insert just enough blank frames after the current one to reach the span end.
+    let needed = end_excl.saturating_sub(source.frame_count);
+    for _ in 0..needed {
+        insert_blank_frame(source, current);
+    }
+    // Extend each shared element across the span. Auto groups have no stored
+    // range; their (also-visible) members extend instead.
+    let lo = start.min(current);
+    for &i in &visible {
+        if let Some(fr) = scene_object_frame_range_mut(&mut source.objects[i]) {
+            if fr.start > lo {
+                fr.start = lo;
+            }
+            if fr.end < end_excl {
+                fr.end = end_excl;
+            }
+        }
+    }
+}
+
+/// Create or update the [`Animation`] span `[start, end_excl)` with the given
+/// auto-play config. If an animation with exactly this span already exists (e.g.
+/// animating a second coordinate over the same frames), reuse it so X and Y of
+/// the same object stay one animation; otherwise append a new one.
+pub fn upsert_animation(
+    source: &mut SourcePresentation,
+    start: usize,
+    end_excl: usize,
+    auto_play: bool,
+    delay_ms: u64,
+) {
+    for obj in &mut source.objects {
+        if let SceneObject::Animation(a) = obj {
+            if a.frames.start == start && a.frames.end == end_excl {
+                a.auto_play = auto_play;
+                a.delay_ms = delay_ms;
+                return;
+            }
+        }
+    }
+    source.objects.push(SceneObject::Animation(Animation {
+        frames: FrameRange { start, end: end_excl },
+        auto_play,
+        delay_ms,
+    }));
+}
+
 /// Reorder the deck so frame `from` sits immediately before (`before == true`)
 /// or after (`before == false`) frame `target`, and return the moved frame's
 /// new index.
@@ -704,6 +785,12 @@ pub fn scene_object_summary(obj: &SceneObject) -> String {
             let n = m.frames.end.saturating_sub(m.frames.start);
             let label = if m.name.is_empty() { m.mode.as_str().to_string() } else { m.name.clone() };
             format!("Morph: {label} ({n} frames)")
+        }
+        SceneObject::Animation(a) => {
+            let lo = a.frames.start + 1;
+            let hi = a.frames.end; // exclusive end == 1-based inclusive last
+            let play = if a.auto_play { format!("auto {}ms", a.delay_ms) } else { "manual".into() };
+            format!("Animation: {lo}-{hi} ({play})")
         }
     }
 }
@@ -915,6 +1002,59 @@ mod tests {
         // No animated coordinate → no span (range is left untouched on apply).
         let mut plain = create_default(0, 0);
         assert_eq!(scene_object_animation_span(&mut plain), None);
+    }
+
+    #[test]
+    fn add_frames_and_share_grows_the_deck_and_shares_elements() {
+        // One frame, two local elements. Animate over 10 frames from frame 0:
+        // insert 9 frames and extend both elements to span [0, 10).
+        let mut p = pres(1, vec![label(0, 1), label(0, 1)]);
+        add_frames_and_share(&mut p, 0, 0, 9); // current=0, start=0, end_frame=9
+        assert_eq!(p.frame_count, 10);
+        assert_eq!(range(&p.objects[0]), (0, 10));
+        assert_eq!(range(&p.objects[1]), (0, 10));
+    }
+
+    #[test]
+    fn add_frames_and_share_only_inserts_the_missing_frames() {
+        // Deck already has 4 frames; animating frame 0 over 6 frames needs only
+        // 2 more (to reach exclusive end 6), and the element spans the whole run.
+        let mut p = pres(4, vec![label(0, 1)]);
+        add_frames_and_share(&mut p, 0, 0, 5); // end_frame=5 → end_excl=6
+        assert_eq!(p.frame_count, 6);
+        assert_eq!(range(&p.objects[0]), (0, 6));
+    }
+
+    #[test]
+    fn upsert_animation_reuses_a_matching_span() {
+        // Animating X then Y over the same span keeps a single Animation entity.
+        let mut p = pres(10, vec![label(0, 10)]);
+        upsert_animation(&mut p, 0, 10, true, 500);
+        upsert_animation(&mut p, 0, 10, false, 200); // same span → update in place
+        let anims: Vec<_> = p
+            .objects
+            .iter()
+            .filter_map(|o| match o {
+                SceneObject::Animation(a) => Some(a),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(anims.len(), 1);
+        assert!(!anims[0].auto_play);
+        assert_eq!(anims[0].delay_ms, 200);
+    }
+
+    #[test]
+    fn upsert_animation_appends_a_distinct_span() {
+        let mut p = pres(10, vec![label(0, 10)]);
+        upsert_animation(&mut p, 0, 5, true, 500);
+        upsert_animation(&mut p, 3, 9, true, 500); // overlapping but distinct span
+        let count = p
+            .objects
+            .iter()
+            .filter(|o| matches!(o, SceneObject::Animation(_)))
+            .count();
+        assert_eq!(count, 2);
     }
 
     #[test]

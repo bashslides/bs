@@ -120,6 +120,7 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
         Mode::AnimateProperty { editing: None, .. } => vec![
             "[↑][↓] field",
             "[Enter] edit",
+            "[Space] toggle",
             "[s]ave anim",
             "[x] →fixed",
             "[Esc] cancel",

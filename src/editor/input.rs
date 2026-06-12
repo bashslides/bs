@@ -1389,18 +1389,10 @@ fn handle_edit_properties(state: &mut EditorState, key: KeyEvent) -> Action {
         } else if prop_kind == PropertyKind::Coordinate {
             if let Some(coord) = properties::get_coord(&state.source.objects[object_index], prop_name) {
                 if let Coordinate::Animated { from, to, start_frame, end_frame } = &coord {
-                    state.mode = Mode::AnimateProperty {
-                        object_index,
-                        return_property: selected_property,
-                        property_name: prop_name,
-                        selected_field: 0,
-                        editing: None,
-                        cursor: 0,
-                        from: *from,
-                        to: *to,
-                        start_frame: *start_frame,
-                        end_frame: *end_frame,
-                    };
+                    state.mode = enter_animate(
+                        state, object_index, selected_property, prop_name,
+                        *from, *to, *start_frame, *end_frame,
+                    );
                 } else {
                     let cursor = prop_value.chars().count();
                     state.mode = ep_editing(object_index, selected_property, prop_value, cursor, 0, panel_scroll);
@@ -1483,18 +1475,10 @@ fn handle_edit_properties(state: &mut EditorState, key: KeyEvent) -> Action {
                         (*from, *to, *start_frame, *end_frame)
                     }
                 };
-                state.mode = Mode::AnimateProperty {
-                    object_index,
-                    return_property: selected_property,
-                    property_name: prop_name,
-                    selected_field: 0,
-                    editing: None,
-                    cursor: 0,
-                    from,
-                    to,
-                    start_frame,
-                    end_frame,
-                };
+                state.mode = enter_animate(
+                    state, object_index, selected_property, prop_name,
+                    from, to, start_frame, end_frame,
+                );
                 return Action::Redraw;
             }
         }
@@ -1647,102 +1631,120 @@ fn handle_dropdown(state: &mut EditorState, key: KeyEvent) -> Action {
     }
 }
 
+/// Number of fields in the Animate sub-menu: from, to, start, end, add_frames,
+/// auto_play, delay_ms.
+const ANIM_FIELDS: usize = 7;
+
+/// Build the `AnimateProperty` mode in one place (the variant has many fields).
+#[allow(clippy::too_many_arguments)]
+fn anim_mode(
+    object_index: usize, return_property: usize, property_name: &'static str,
+    selected_field: usize, editing: Option<String>, cursor: usize,
+    from: u16, to: u16, start_frame: usize, end_frame: usize,
+    add_frames: bool, auto_play: bool, delay_ms: u64,
+) -> Mode {
+    Mode::AnimateProperty {
+        object_index, return_property, property_name, selected_field, editing, cursor,
+        from, to, start_frame, end_frame, add_frames, auto_play, delay_ms,
+    }
+}
+
+/// Open the Animate sub-menu, seeding the add-frames / auto-play / delay config
+/// from an Animation span that exactly matches `[start_frame, end_frame + 1)` —
+/// so re-animating that span (or adding a second coordinate to it) keeps its
+/// current auto-play settings — else the defaults (add frames on, auto-play on,
+/// 500 ms).
+#[allow(clippy::too_many_arguments)]
+fn enter_animate(
+    state: &EditorState, object_index: usize, return_property: usize,
+    property_name: &'static str, from: u16, to: u16, start_frame: usize, end_frame: usize,
+) -> Mode {
+    let end_excl = end_frame + 1;
+    let (auto_play, delay_ms) = state
+        .source
+        .objects
+        .iter()
+        .find_map(|o| match o {
+            SceneObject::Animation(a)
+                if a.frames.start == start_frame && a.frames.end == end_excl =>
+            {
+                Some((a.auto_play, a.delay_ms))
+            }
+            _ => None,
+        })
+        .unwrap_or((true, 500));
+    anim_mode(
+        object_index, return_property, property_name, 0, None, 0,
+        from, to, start_frame, end_frame, true, auto_play, delay_ms,
+    )
+}
+
 fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
-    let (object_index, return_property, property_name, selected_field, editing, cursor, from, to, start_frame, end_frame) =
+    let (object_index, return_property, property_name, selected_field, editing, cursor,
+         mut from, mut to, mut start_frame, mut end_frame, mut add_frames, mut auto_play, mut delay_ms) =
         match &state.mode {
             Mode::AnimateProperty {
-                object_index, return_property, property_name, selected_field,
-                editing, cursor, from, to, start_frame, end_frame,
+                object_index, return_property, property_name, selected_field, editing, cursor,
+                from, to, start_frame, end_frame, add_frames, auto_play, delay_ms,
             } => (
                 *object_index, *return_property, *property_name, *selected_field,
                 editing.clone(), *cursor, *from, *to, *start_frame, *end_frame,
+                *add_frames, *auto_play, *delay_ms,
             ),
             _ => return Action::Continue,
         };
 
-    // -- Editing a field value -------------------------------------------------
+    // -- Editing a numeric field value -----------------------------------------
     if let Some(mut buf) = editing {
         match key.code {
             KeyCode::Enter => {
-                let mut new_from = from;
-                let mut new_to = to;
-                let mut new_start = start_frame;
-                let mut new_end = end_frame;
+                // `start`/`end` are entered 1-based (matching first/last_frame).
                 let err: Option<String> = match selected_field {
-                    0 => match buf.parse::<u16>() {
-                        Ok(v) => { new_from = v; None }
-                        Err(e) => Some(format!("Invalid number: {e}")),
-                    },
-                    1 => match buf.parse::<u16>() {
-                        Ok(v) => { new_to = v; None }
-                        Err(e) => Some(format!("Invalid number: {e}")),
-                    },
-                    // `start`/`end` are entered 1-based (matching first_frame/
-                    // last_frame); store them 0-based.
-                    2 => match buf.trim().parse::<usize>() {
-                        Ok(v) => { new_start = v.saturating_sub(1); None }
-                        Err(e) => Some(format!("Invalid number: {e}")),
-                    },
-                    3 => match buf.trim().parse::<usize>() {
-                        Ok(v) => { new_end = v.saturating_sub(1); None }
-                        Err(e) => Some(format!("Invalid number: {e}")),
-                    },
-                    _ => None,
+                    0 => buf.parse::<u16>().map(|v| from = v).err().map(|e| format!("Invalid number: {e}")),
+                    1 => buf.parse::<u16>().map(|v| to = v).err().map(|e| format!("Invalid number: {e}")),
+                    2 => buf.trim().parse::<usize>().map(|v| start_frame = v.saturating_sub(1)).err().map(|e| format!("Invalid number: {e}")),
+                    3 => buf.trim().parse::<usize>().map(|v| end_frame = v.saturating_sub(1)).err().map(|e| format!("Invalid number: {e}")),
+                    _ => buf.trim().parse::<u64>().map(|v| delay_ms = v).err().map(|e| format!("Invalid number: {e}")),
                 };
                 if let Some(msg) = err {
                     state.status_message = Some(msg);
                 }
-                state.mode = Mode::AnimateProperty {
-                    object_index, return_property, property_name, selected_field,
-                    editing: None, cursor: 0,
-                    from: new_from, to: new_to, start_frame: new_start, end_frame: new_end,
-                };
+                state.mode = anim_mode(object_index, return_property, property_name, selected_field,
+                    None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
                 return Action::Redraw;
             }
             KeyCode::Esc => {
-                state.mode = Mode::AnimateProperty {
-                    object_index, return_property, property_name, selected_field,
-                    editing: None, cursor: 0, from, to, start_frame, end_frame,
-                };
+                state.mode = anim_mode(object_index, return_property, property_name, selected_field,
+                    None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
                 return Action::Redraw;
             }
             KeyCode::Left if key.modifiers == KeyModifiers::NONE => {
                 let new_cursor = cursor.saturating_sub(1);
-                state.mode = Mode::AnimateProperty {
-                    object_index, return_property, property_name, selected_field,
-                    editing: Some(buf), cursor: new_cursor, from, to, start_frame, end_frame,
-                };
+                state.mode = anim_mode(object_index, return_property, property_name, selected_field,
+                    Some(buf), new_cursor, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
                 return Action::Redraw;
             }
             KeyCode::Right if key.modifiers == KeyModifiers::NONE => {
                 let new_cursor = (cursor + 1).min(buf.chars().count());
-                state.mode = Mode::AnimateProperty {
-                    object_index, return_property, property_name, selected_field,
-                    editing: Some(buf), cursor: new_cursor, from, to, start_frame, end_frame,
-                };
+                state.mode = anim_mode(object_index, return_property, property_name, selected_field,
+                    Some(buf), new_cursor, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
                 return Action::Redraw;
             }
             KeyCode::Backspace => {
                 if cursor > 0 {
-                    let start = char_to_byte_idx(&buf, cursor - 1);
-                    let end = char_to_byte_idx(&buf, cursor);
-                    buf.drain(start..end);
-                    let new_cursor = cursor - 1;
-                    state.mode = Mode::AnimateProperty {
-                        object_index, return_property, property_name, selected_field,
-                        editing: Some(buf), cursor: new_cursor, from, to, start_frame, end_frame,
-                    };
+                    let s = char_to_byte_idx(&buf, cursor - 1);
+                    let e = char_to_byte_idx(&buf, cursor);
+                    buf.drain(s..e);
+                    state.mode = anim_mode(object_index, return_property, property_name, selected_field,
+                        Some(buf), cursor - 1, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
                     return Action::Redraw;
                 }
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 let byte_idx = char_to_byte_idx(&buf, cursor);
                 buf.insert(byte_idx, c);
-                let new_cursor = cursor + 1;
-                state.mode = Mode::AnimateProperty {
-                    object_index, return_property, property_name, selected_field,
-                    editing: Some(buf), cursor: new_cursor, from, to, start_frame, end_frame,
-                };
+                state.mode = anim_mode(object_index, return_property, property_name, selected_field,
+                    Some(buf), cursor + 1, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
                 return Action::Redraw;
             }
             _ => {}
@@ -1751,81 +1753,49 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
     }
 
     // -- Browsing fields -------------------------------------------------------
+    let is_toggle = selected_field == 4 || selected_field == 5;
     match key.code {
         KeyCode::Up if key.modifiers == KeyModifiers::NONE => {
-            let new_sel = if selected_field == 0 { 3 } else { selected_field - 1 };
-            state.mode = Mode::AnimateProperty {
-                object_index, return_property, property_name,
-                selected_field: new_sel, editing: None, cursor: 0,
-                from, to, start_frame, end_frame,
-            };
+            let new_sel = if selected_field == 0 { ANIM_FIELDS - 1 } else { selected_field - 1 };
+            state.mode = anim_mode(object_index, return_property, property_name, new_sel,
+                None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
             return Action::Redraw;
         }
         KeyCode::Down if key.modifiers == KeyModifiers::NONE => {
-            let new_sel = (selected_field + 1) % 4;
-            state.mode = Mode::AnimateProperty {
-                object_index, return_property, property_name,
-                selected_field: new_sel, editing: None, cursor: 0,
-                from, to, start_frame, end_frame,
-            };
+            let new_sel = (selected_field + 1) % ANIM_FIELDS;
+            state.mode = anim_mode(object_index, return_property, property_name, new_sel,
+                None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
+            return Action::Redraw;
+        }
+        // Space / Enter on a boolean field toggles it in place (no text detour).
+        KeyCode::Char(' ') | KeyCode::Enter if is_toggle => {
+            if selected_field == 4 { add_frames = !add_frames; } else { auto_play = !auto_play; }
+            state.mode = anim_mode(object_index, return_property, property_name, selected_field,
+                None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
             return Action::Redraw;
         }
         KeyCode::Enter => {
-            // Start editing the selected field. `start`/`end` are 1-based in the
-            // UI (see the commit handler and panel), so seed them as such.
+            // Start editing the selected numeric field. start/end shown 1-based.
             let init = match selected_field {
                 0 => from.to_string(),
                 1 => to.to_string(),
                 2 => (start_frame + 1).to_string(),
-                _ => (end_frame + 1).to_string(),
+                3 => (end_frame + 1).to_string(),
+                _ => delay_ms.to_string(),
             };
             let new_cursor = init.chars().count();
-            state.mode = Mode::AnimateProperty {
-                object_index, return_property, property_name, selected_field,
-                editing: Some(init), cursor: new_cursor,
-                from, to, start_frame, end_frame,
-            };
+            state.mode = anim_mode(object_index, return_property, property_name, selected_field,
+                Some(init), new_cursor, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
             return Action::Redraw;
         }
-        // [s] apply → Animated coordinate
+        // [s] apply → animate the coordinate (+ optional add-frames + auto-play).
         KeyCode::Char('s') if key.modifiers == KeyModifiers::NONE => {
-            let coord = if start_frame < end_frame {
-                Coordinate::Animated { from, to, start_frame, end_frame }
-            } else {
-                Coordinate::Fixed(from as f64)
-            };
-            match properties::set_coordinate(&mut state.source.objects[object_index], property_name, coord) {
-                Ok(()) => {
-                    state.dirty = true;
-                    // Keep the object's visible range in lock-step with its
-                    // animation window(s): the union of every animated
-                    // coordinate's span. Recomputed on each apply so the range
-                    // grows for a longer animation AND shrinks when one is
-                    // shortened — no "zombie" frames lingering past the new end.
-                    // (Groups have no coordinates, so this path never runs for
-                    // them; an object whose last animation was just cleared keeps
-                    // its current range.)
-                    if let Some((lo, hi)) = super::state::scene_object_animation_span(
-                        &mut state.source.objects[object_index],
-                    ) {
-                        if let Some(fr) = super::state::scene_object_frame_range_mut(
-                            &mut state.source.objects[object_index],
-                        ) {
-                            fr.start = lo;
-                            fr.end = hi;
-                        }
-                    }
-                    state.status_message = Some(format!("Animated {property_name}"));
-                }
-                Err(e) => state.status_message = Some(format!("Error: {e}")),
-            }
-            state.mode = Mode::EditProperties {
-                object_index, selected_property: return_property,
-                editing_value: None, cursor: 0, scroll: 0, panel_scroll: 0, dropdown: None,
-            };
+            apply_animation(state, object_index, property_name,
+                from, to, start_frame, end_frame, add_frames, auto_play, delay_ms);
+            state.mode = ep_browse(object_index, return_property, 0);
             return Action::Redraw;
         }
-        // [x] clear → Fixed coordinate
+        // [x] clear → Fixed coordinate (does not touch any Animation span).
         KeyCode::Char('x') if key.modifiers == KeyModifiers::NONE => {
             let coord = Coordinate::Fixed(from as f64);
             match properties::set_coordinate(&mut state.source.objects[object_index], property_name, coord) {
@@ -1835,23 +1805,69 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
                 }
                 Err(e) => state.status_message = Some(format!("Error: {e}")),
             }
-            state.mode = Mode::EditProperties {
-                object_index, selected_property: return_property,
-                editing_value: None, cursor: 0, scroll: 0, panel_scroll: 0, dropdown: None,
-            };
+            state.mode = ep_browse(object_index, return_property, 0);
             return Action::Redraw;
         }
         KeyCode::Esc => {
-            state.mode = Mode::EditProperties {
-                object_index, selected_property: return_property,
-                editing_value: None, cursor: 0, scroll: 0, panel_scroll: 0, dropdown: None,
-            };
+            state.mode = ep_browse(object_index, return_property, 0);
             return Action::Redraw;
         }
         _ => {}
     }
 
     Action::Continue
+}
+
+/// Apply the animation configured in the Animate sub-menu: optionally insert the
+/// spanned frames and share the current frame's elements across them, set the
+/// animated coordinate, keep the object's own range in lock-step with its
+/// animation, and create/update the Animation span entity (auto-play config).
+#[allow(clippy::too_many_arguments)]
+fn apply_animation(
+    state: &mut EditorState, object_index: usize, property_name: &'static str,
+    from: u16, to: u16, start_frame: usize, end_frame: usize,
+    add_frames: bool, auto_play: bool, delay_ms: u64,
+) {
+    let animate = start_frame < end_frame;
+    let coord = if animate {
+        Coordinate::Animated { from, to, start_frame, end_frame }
+    } else {
+        Coordinate::Fixed(from as f64)
+    };
+
+    // Add the frames the animation spans and share the current frame's elements
+    // across them (one shared object per element ⇒ editing one edits all).
+    if animate && add_frames {
+        super::state::add_frames_and_share(&mut state.source, state.current_frame, start_frame, end_frame);
+    }
+
+    if let Err(e) = properties::set_coordinate(&mut state.source.objects[object_index], property_name, coord) {
+        state.status_message = Some(format!("Error: {e}"));
+        return;
+    }
+    state.dirty = true;
+
+    // Keep the object's visible range in lock-step with its animation window(s)
+    // (grows for a longer animation, shrinks when shortened — no zombie frames).
+    if let Some((lo, hi)) = super::state::scene_object_animation_span(&mut state.source.objects[object_index]) {
+        if let Some(fr) = super::state::scene_object_frame_range_mut(&mut state.source.objects[object_index]) {
+            fr.start = lo;
+            fr.end = hi;
+        }
+    }
+
+    // Record the animation span + its auto-play config (reusing one that already
+    // covers exactly this span, so X and Y of an object stay one animation).
+    if animate {
+        super::state::upsert_animation(&mut state.source, start_frame, end_frame + 1, auto_play, delay_ms);
+    }
+
+    // A new animation can collide with a loop (a loop may not bisect an
+    // animation); surface that live, the way property edits do.
+    state.status_message = Some(match state.source.validate_loops() {
+        Ok(()) => format!("Animated {property_name}"),
+        Err(e) => format!("Animated {property_name} — ⚠ {e}"),
+    });
 }
 
 /// Convert a char index into a byte index for string operations.

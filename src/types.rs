@@ -177,6 +177,28 @@ pub struct LoopRegion {
     pub bounce: bool,
 }
 
+/// A runtime animation region — the sidecar spec for an `Animation` object.
+///
+/// An `Animation` marks a span of frames over which one or more coordinate
+/// animations play (the motion itself lives in `Coordinate::Animated` on the
+/// objects). It draws nothing; its job at play time is **auto-play**: when
+/// `auto_play` is set, the `Player` auto-advances across the span on a timer.
+/// Unlike a `Loop`, animations may overlap — where several auto-play animations
+/// cover the same frame boundary, the effective advance delay is the **minimum**
+/// of their `delay_ms`. The compiler emits this spec alongside the frames; the
+/// editor and renderer ignore it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnimationRegion {
+    /// First frame of the animation (inclusive).
+    pub start_frame: usize,
+    /// One past the last frame of the animation (exclusive).
+    pub end_frame: usize,
+    /// Whether the deck auto-advances across this span at play time.
+    pub auto_play: bool,
+    /// Delay between auto-advanced frames, in milliseconds.
+    pub delay_ms: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayablePresentation {
     pub contract: TerminalContract,
@@ -187,6 +209,8 @@ pub struct PlayablePresentation {
     pub commands: Vec<CommandRegion>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub loops: Vec<LoopRegion>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub animations: Vec<AnimationRegion>,
 }
 
 impl PlayablePresentation {

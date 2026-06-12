@@ -63,6 +63,7 @@ fn compile(source_path: &str, output_path: &str) -> Result<()> {
     let mut presentation = Renderer::render(&scenes, contract);
     presentation.commands = source.command_regions();
     presentation.loops = source.loop_regions();
+    presentation.animations = source.animation_regions();
 
     let output_json = serde_json::to_string_pretty(&presentation)?;
     fs::write(output_path, &output_json)

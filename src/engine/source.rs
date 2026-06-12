@@ -7,10 +7,11 @@ use serde::{Deserialize, Serialize};
 
 // Re-export object types so they remain accessible via `engine::source::*`.
 pub use super::objects::{
-    Arrow, Art, Command, Group, HLine, Header, Label, List, Loop, Morph, MorphMode, Rect, Table,
+    Animation, Arrow, Art, Command, Group, HLine, Header, Label, List, Loop, Morph, MorphMode,
+    Rect, Table,
 };
 
-use crate::types::{CommandRegion, LoopRegion};
+use crate::types::{AnimationRegion, CommandRegion, LoopRegion};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourcePresentation {
@@ -35,6 +36,7 @@ pub enum SceneObject {
     List(List),
     Loop(Loop),
     Morph(Morph),
+    Animation(Animation),
 }
 
 impl SceneObject {
@@ -55,6 +57,7 @@ impl SceneObject {
             SceneObject::List(l) => Some(l.frames.clone()),
             SceneObject::Loop(l) => Some(l.frames.clone()),
             SceneObject::Morph(m) => Some(m.frames.clone()),
+            SceneObject::Animation(a) => Some(a.frames.clone()),
         }
     }
 
@@ -74,6 +77,7 @@ impl SceneObject {
             SceneObject::List(l) => l.frames = r,
             SceneObject::Loop(l) => l.frames = r,
             SceneObject::Morph(m) => m.frames = r,
+            SceneObject::Animation(a) => a.frames = r,
         }
     }
 }
@@ -160,13 +164,39 @@ impl SourcePresentation {
             .collect()
     }
 
+    /// Collect the runtime animation specs from all `Animation` objects. Like
+    /// loops, these travel as a sidecar on the `PlayablePresentation` (the span +
+    /// auto-play config is a play-time behavior; the motion itself is already
+    /// baked into the frames via the objects' animated coordinates).
+    pub fn animation_regions(&self) -> Vec<AnimationRegion> {
+        self.objects
+            .iter()
+            .filter_map(|obj| match obj {
+                SceneObject::Animation(a) => Some(a.region()),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Validate every `Loop` object's range: each must be non-empty, fit within
-    /// the deck, and be **disjoint** from every other loop (loops may neither
-    /// overlap nor nest). Returns an error describing the first problem found.
+    /// the deck, **disjoint** from every other loop (loops may neither overlap
+    /// nor nest), and must not **bisect an animation** — a loop replays whole
+    /// animations, so every `Animation` span must be either fully inside the
+    /// loop or fully outside it (never half-in). Returns an error describing the
+    /// first problem found.
     ///
     /// Run both in the editor (to surface mistakes live) and at compile time (a
     /// hard gate before a playable is written).
     pub fn validate_loops(&self) -> Result<(), String> {
+        let animations: Vec<(usize, usize)> = self
+            .objects
+            .iter()
+            .filter_map(|o| match o {
+                SceneObject::Animation(a) => Some((a.frames.start, a.frames.end)),
+                _ => None,
+            })
+            .collect();
+
         let mut seen: Vec<(usize, usize)> = Vec::new();
         for obj in &self.objects {
             let SceneObject::Loop(l) = obj else { continue };
@@ -186,6 +216,18 @@ impl SourcePresentation {
                 if s < pe && ps < e {
                     return Err(format!(
                         "loops may not overlap or nest, but frames {ps}..{pe} and {s}..{e} do"
+                    ));
+                }
+            }
+            // A loop must not cut an animation in half: an animation either sits
+            // entirely within the loop or entirely outside it. A partial overlap
+            // (they intersect, yet the animation is not contained) is rejected.
+            for &(as_, ae) in &animations {
+                let intersects = s < ae && as_ < e;
+                let contained = s <= as_ && ae <= e;
+                if intersects && !contained {
+                    return Err(format!(
+                        "a loop ({s}..{e}) must not cut an animation ({as_}..{ae}) in half"
                     ));
                 }
             }

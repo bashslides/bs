@@ -348,12 +348,12 @@ pub fn render_right_panel(
 
     // AnimateProperty panel
     if matches!(state.mode, Mode::AnimateProperty { .. }) {
-        let (property_name, selected_field, editing, cursor, from, to, start_frame, end_frame) =
+        let (property_name, selected_field, editing, cursor, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms) =
             match &state.mode {
                 Mode::AnimateProperty {
                     property_name, selected_field, editing, cursor,
-                    from, to, start_frame, end_frame, ..
-                } => (*property_name, *selected_field, editing, *cursor, *from, *to, *start_frame, *end_frame),
+                    from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, ..
+                } => (*property_name, *selected_field, editing, *cursor, *from, *to, *start_frame, *end_frame, *add_frames, *auto_play, *delay_ms),
                 _ => unreachable!(),
             };
 
@@ -361,18 +361,23 @@ pub fn render_right_panel(
         let title: String = title.chars().take((pw - 2) as usize).collect();
         draw_header(stdout, &title)?;
 
-        let field_names = ["from", "to", "start", "end"];
+        let checkbox = |b: bool| if b { "[x]" } else { "[ ]" };
+        let field_names = ["from", "to", "start", "end", "add frames", "auto play", "delay ms"];
         // `start`/`end` are shown 1-based to match the property panel's
         // first_frame/last_frame (an animation through 0-based `end_frame` reads
         // as slide `end_frame + 1`). `from`/`to` are coordinate values, shown raw.
+        // `add frames`/`auto play` render as checkboxes (toggled, never typed).
         let field_values = [
             from.to_string(),
             to.to_string(),
             (start_frame + 1).to_string(),
             (end_frame + 1).to_string(),
+            checkbox(add_frames).to_string(),
+            checkbox(auto_play).to_string(),
+            delay_ms.to_string(),
         ];
 
-        for i in 0..4usize {
+        for i in 0..field_names.len() {
             let y = cy + (i as u16 + 2);
             if y >= cy + layout.canvas_height {
                 break;
@@ -403,11 +408,11 @@ pub fn render_right_panel(
             }
         }
 
-        // Hint row
-        let hint_y = cy + 6;
+        // Hint row, just below the field list.
+        let hint_y = cy + 2 + field_names.len() as u16;
         if hint_y < cy + layout.canvas_height {
             queue!(stdout, cursor::MoveTo(panel_x + 2, hint_y))?;
-            let hint: String = format!("[s]save  [x]\u{2192}fixed")
+            let hint: String = "[Space]toggle [s]save [x]\u{2192}fixed"
                 .chars()
                 .take(max_width)
                 .collect();
