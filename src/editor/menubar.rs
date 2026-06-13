@@ -15,6 +15,7 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
     match &state.mode {
         Mode::Normal => vec![
             "[←][→] frame",
+            "[⇧←][⇧→] ±10",
             "[a]dd",
             "[s]elect",
             "[c]opy",

@@ -21,6 +21,9 @@ use crate::types::{
 /// Rows reserved above the canvas for the menu bar (when not in fullscreen).
 const CANVAS_OFFSET: u16 = 1;
 
+/// Frames moved per Shift+arrow jump during playback navigation.
+const FRAMES_PER_JUMP: usize = 10;
+
 /// A binary currently executing for the active frame. The child runs with piped
 /// stdio (it can never touch the real terminal) and is read on background
 /// threads, so the event loop stays responsive — arrow keys kill it and move on.
@@ -175,6 +178,21 @@ impl Player {
                                 self.kill_running();
                                 break;
                             }
+                        }
+                        // Shift+→ / Shift+← jump FRAMES_PER_JUMP frames at once
+                        // (clamped), tearing down any loop — a quick coarse scrub.
+                        Right if key.modifiers.contains(event::KeyModifiers::SHIFT) => {
+                            self.stop_loop();
+                            let last = self.presentation.frames.len().saturating_sub(1);
+                            let target = (self.current_frame + FRAMES_PER_JUMP).min(last);
+                            self.nav_to(target, stdout)?;
+                            self.arm_loop(None);
+                        }
+                        Left if key.modifiers.contains(event::KeyModifiers::SHIFT) => {
+                            self.stop_loop();
+                            let target = self.current_frame.saturating_sub(FRAMES_PER_JUMP);
+                            self.nav_to(target, stdout)?;
+                            self.arm_loop(None);
                         }
                         // Navigation always interrupts a running binary and
                         // moves on — a slow command (or a loop) can never trap
@@ -538,6 +556,7 @@ impl Player {
         let items: &[&str] = &[
             "[←] prev",
             "[→][Space] next",
+            "[⇧←][⇧→] ±10",
             "[Home] first",
             "[End] last",
             "[q][Esc] quit",

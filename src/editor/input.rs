@@ -500,11 +500,30 @@ fn handle_settings(state: &mut EditorState, key: KeyEvent) -> Action {
     Action::Redraw
 }
 
+/// Frames moved per Shift+arrow jump in top-level (Normal) frame navigation.
+const FRAMES_PER_JUMP: usize = 10;
+
 fn handle_normal(state: &mut EditorState, key: KeyEvent) -> Action {
     let bindings = &state.config.key_bindings;
 
     if matches_binding(&bindings.quit, &key) {
         return Action::Quit;
+    }
+    // Shift + the frame-nav keys jump FRAMES_PER_JUMP frames at once (clamped).
+    // Checked before the plain 1-frame nav, which also matches a shifted arrow
+    // (`matches_binding` ignores Shift on bare keys).
+    if key.modifiers.contains(KeyModifiers::SHIFT) {
+        let last = state.source.frame_count.saturating_sub(1);
+        if matches_binding(&bindings.next_frame, &key) {
+            state.current_frame = (state.current_frame + FRAMES_PER_JUMP).min(last);
+            state.status_message = None;
+            return Action::Redraw;
+        }
+        if matches_binding(&bindings.prev_frame, &key) {
+            state.current_frame = state.current_frame.saturating_sub(FRAMES_PER_JUMP);
+            state.status_message = None;
+            return Action::Redraw;
+        }
     }
     if matches_binding(&bindings.next_frame, &key) {
         let last = state.source.frame_count.saturating_sub(1);
