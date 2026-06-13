@@ -462,16 +462,15 @@ impl Player {
     }
 
     /// Clear and repaint everything for the current fullscreen state: the menu
-    /// and status bars are drawn only when not in fullscreen.
+    /// and status bars are drawn only when not in fullscreen (`render_status`
+    /// self-guards on `fullscreen`; `render_menubar` is gated here).
     fn redraw_all(&self, stdout: &mut io::Stdout) -> Result<()> {
         queue!(stdout, terminal::Clear(terminal::ClearType::All))?;
         if !self.fullscreen {
             self.render_menubar(stdout)?;
         }
         self.render_full(stdout)?;
-        if !self.fullscreen {
-            self.render_status(stdout)?;
-        }
+        self.render_status(stdout)?;
         Ok(())
     }
 
@@ -539,6 +538,11 @@ impl Player {
     }
 
     fn render_status(&self, stdout: &mut io::Stdout) -> Result<()> {
+        // Fullscreen ("no bars") owns the whole screen — no footer at all. Guard
+        // here so every caller (navigation, loop steps, full repaint) honours it.
+        if self.fullscreen {
+            return Ok(());
+        }
         let status_y = self.presentation.contract.height + self.canvas_offset();
         let (_, term_h) = terminal::size()?;
         if status_y >= term_h {
