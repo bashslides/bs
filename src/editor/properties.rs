@@ -1822,6 +1822,24 @@ mod tests {
     }
 
     #[test]
+    fn label_exposes_align_and_valign_dropdowns() {
+        let o = vec![obj(
+            r#"{"type":"label","text":"Hi","position":{"x":{"fixed":0},"y":{"fixed":0}},
+                "frames":{"start":0,"end":1}}"#,
+        )];
+        let props = get_properties(&o, 0);
+        let align = props.iter().find(|p| p.name == "align").expect("align property is listed");
+        assert_eq!(align.kind, PropertyKind::TextAlign);
+        assert_eq!(align.value, "left");
+        let valign = props.iter().find(|p| p.name == "valign").expect("valign property is listed");
+        assert_eq!(valign.kind, PropertyKind::VerticalAlign);
+        assert_eq!(valign.value, "top");
+        // Both are dropdowns with the expected options.
+        assert_eq!(dropdown_options_for(&PropertyKind::TextAlign), Some(TEXT_ALIGN_OPTIONS));
+        assert_eq!(dropdown_options_for(&PropertyKind::VerticalAlign), Some(VERTICAL_ALIGN_OPTIONS));
+    }
+
+    #[test]
     fn hline_properties_roundtrip() {
         let mut o = vec![obj(
             r#"{"type":"h_line","y":2,"x_start":1,"x_end":5,"frames":{"start":0,"end":2}}"#,
