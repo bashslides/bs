@@ -1261,8 +1261,15 @@ pub fn adjust_frames_after_delete(source: &mut SourcePresentation, deleted: usiz
                 if *start_frame > deleted {
                     *start_frame -= 1;
                 }
-                if *end_frame > deleted {
-                    *end_frame -= 1;
+                // `end_frame` is *inclusive*, so it must shrink in lock-step with
+                // the object's *exclusive* range end (which decrements when
+                // `range.end > deleted`, i.e. `end_frame + 1 > deleted`, i.e.
+                // `end_frame >= deleted`). Using `>` here instead left the
+                // animation's last frame one past the object's now-shorter range
+                // when the deleted frame *was* that last frame — so the motion
+                // never reached its `to` value and the deck looked jumpy.
+                if *end_frame >= deleted {
+                    *end_frame = end_frame.saturating_sub(1);
                 }
             }
         }
@@ -1745,6 +1752,85 @@ mod tests {
         assert_eq!(range(&p.objects[0]), (0, 3)); // background extended, not cloned
         assert_eq!(range(&p.objects[1]), (0, 1)); // original local object
         assert_eq!(range(&p.objects[2]), (1, 2)); // independent clone on new frame
+    }
+
+    // Read an object's `(start_frame, end_frame)` for its first animated coord.
+    fn anim_span(obj: &SceneObject) -> Option<(usize, usize)> {
+        let mut c = obj.clone();
+        scene_object_coordinates_mut(&mut c).into_iter().find_map(|coord| match coord {
+            Coordinate::Animated { start_frame, end_frame, .. } => Some((*start_frame, *end_frame)),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn delete_animation_end_frame_keeps_coord_and_range_in_lockstep() {
+        // x animates 0→10 over frames 0..=4 (object range [0,5)). Deleting the
+        // animation's *last* frame (4) must shrink the inclusive `end_frame` in
+        // step with the exclusive range end, so the motion still reaches `to` on
+        // its new last frame instead of stopping short (the "jumpy" bug).
+        let mut o = create_default(0, 0);
+        if let SceneObject::Label(l) = &mut o {
+            l.position.x = Coordinate::Animated { from: 0, to: 10, start_frame: 0, end_frame: 4 };
+            l.frames = FrameRange { start: 0, end: 5 };
+        }
+        let mut p = pres(6, vec![o]);
+        adjust_frames_after_delete(&mut p, 4);
+
+        let (_, re) = range(&p.objects[0]);
+        let (sf, ef) = anim_span(&p.objects[0]).unwrap();
+        assert_eq!((sf, ef), (0, 3));
+        assert_eq!(re, ef + 1, "range end stays == end_frame + 1");
+        // The motion reaches `to` on the last visible frame (no early stop).
+        match &p.objects[0] {
+            SceneObject::Label(l) => assert_eq!(l.position.x.evaluate(re - 1), 10),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn delete_frame_range_keeps_multiple_animations_consistent() {
+        // Two animated objects with their auto-play sidecars: A over [0,3]
+        // (range [0,4), sidecar [0,4)), B over [4,7] (range [4,8), sidecar [4,8)).
+        // Delete the contiguous range [2,5] (frames 2,3,4,5) — straddling the end
+        // of A and the start of B. Afterwards every animation's coord span, its
+        // object range, and its sidecar must remain mutually consistent.
+        let mk = |from, to, s, e| {
+            let mut o = create_default(0, 0);
+            if let SceneObject::Label(l) = &mut o {
+                l.position.x = Coordinate::Animated { from, to, start_frame: s, end_frame: e };
+                l.frames = FrameRange { start: s, end: e + 1 };
+            }
+            o
+        };
+        let mut p = pres(
+            8,
+            vec![
+                mk(0, 9, 0, 3),
+                SceneObject::Animation(Animation { frames: FrameRange { start: 0, end: 4 }, auto_play: true, delay_ms: 500, gap_frames: 0 }),
+                mk(0, 9, 4, 7),
+                SceneObject::Animation(Animation { frames: FrameRange { start: 4, end: 8 }, auto_play: true, delay_ms: 500, gap_frames: 0 }),
+            ],
+        );
+        delete_frames(&mut p, &[2, 3, 4, 5]);
+        assert_eq!(p.frame_count, 4);
+
+        // For every surviving animated object: range.end == end_frame + 1 and
+        // range.start == start_frame, and each sidecar matches its coord span.
+        for obj in &p.objects {
+            if let Some((sf, ef)) = anim_span(obj) {
+                let (rs, re) = range(obj);
+                assert_eq!(rs, sf, "range start tracks start_frame");
+                assert_eq!(re, ef + 1, "range end tracks end_frame + 1");
+                assert!(sf <= ef, "span stays well-formed");
+                // The matching sidecar (same [sf, ef+1)) still exists.
+                assert!(
+                    p.objects.iter().any(|o| matches!(o,
+                        SceneObject::Animation(a) if a.frames.start == sf && a.frames.end == ef + 1)),
+                    "a sidecar matches the coord span [{sf},{}]", ef
+                );
+            }
+        }
     }
 
     #[test]

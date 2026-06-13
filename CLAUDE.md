@@ -328,8 +328,8 @@ Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
 `auto_advance_delay` min-over-overlap + `animation_cluster` overlap-merging;
 copy/paste `expand_selection` +
 `clone_selection` + `link_siblings` + link-family delete maintenance). The suite
-totals 194 tests (100 integration
-+ 94 inline); `TESTS.md` is the authoritative per-test list.
+totals 196 tests (100 integration
++ 96 inline); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the

@@ -313,6 +313,8 @@ reconstructed character grid (some also assert on cell styles).
 | `parse_frame_selection_handles_lists_ranges_and_mixes` | `1,2,3` / `5-12` / mixes parse to 0-based, sorted, de-duplicated, clamped indices |
 | `parse_frame_selection_rejects_bad_input` | Frame 0, non-numbers, reversed ranges, empty, and all-out-of-range are rejected |
 | `delete_frames_removes_highest_first_and_keeps_one` | Multi-delete removes highest index first and never empties the deck (keeps ≥1) |
+| `delete_animation_end_frame_keeps_coord_and_range_in_lockstep` | Deleting an animation's last frame shrinks the inclusive `end_frame` with the exclusive range end (`>= deleted`), so the motion still reaches `to` instead of stopping short |
+| `delete_frame_range_keeps_multiple_animations_consistent` | Deleting a range straddling several animations leaves each coord span, object range, and auto-play sidecar mutually consistent |
 | `save_as_writes_the_file_and_adopts_the_path` | `save_as` writes valid JSON to the new path, adopts it as `file_path`, and clears `dirty` |
 | `animation_span_unions_animated_coordinates_and_makes_end_exclusive` | `scene_object_animation_span` unions every animated coordinate's window into an exclusive `[start, end)`; `None` when nothing is animated |
 | `add_frames_and_share_grows_the_deck_and_shares_elements` | Animating over N frames inserts N-1 fresh frames and extends every current-frame element to span them (shared object) |
