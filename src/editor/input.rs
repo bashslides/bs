@@ -3,7 +3,7 @@ use crossterm::terminal;
 
 use crate::engine::objects::table::{table_add_column, table_remove_column};
 use crate::engine::objects::Group;
-use crate::engine::source::{Coordinate, SceneObject};
+use crate::engine::source::{Coordinate, SceneObject, SourcePresentation};
 use crate::types::Style;
 use super::config::matches_binding;
 use super::object_defaults;
@@ -100,6 +100,7 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
             }
         }
         Mode::AnimateProperty { .. } => handle_animate_property(state, key),
+        Mode::ConvergeConfig { .. } => handle_converge_config(state, key),
         Mode::Confirm { .. } => handle_confirm(state, key),
         Mode::MultiSelect { .. } => handle_multi_select(state, key),
         Mode::PastePlacing { .. } => handle_paste_placing(state, key),
@@ -602,6 +603,22 @@ fn handle_normal(state: &mut EditorState, key: KeyEvent) -> Action {
     // Paste: place the clipboard's clones as a movable ghost on this frame.
     if matches_binding(&bindings.paste, &key) {
         return start_paste(state);
+    }
+    // Converge: pick a set of objects on this frame and animate them onto one
+    // shared point (each starts from wherever it sits).
+    if matches_binding(&bindings.converge, &key) {
+        if state.objects_on_current_frame().is_empty() {
+            state.status_message = Some("No objects on this frame to converge".into());
+        } else {
+            state.mode = Mode::MultiSelect {
+                purpose: MultiSelectPurpose::Converge,
+                selected: 0,
+                members: Vec::new(),
+            };
+            state.status_message =
+                Some("Converge: [Space] toggle objects, [Enter] set target".into());
+        }
+        return Action::Redraw;
     }
 
     Action::Continue
@@ -1263,6 +1280,11 @@ fn handle_multi_select(state: &mut EditorState, key: KeyEvent) -> Action {
             MultiSelectPurpose::Copy => {
                 copy_to_clipboard(state, &chosen);
                 state.mode = Mode::Normal;
+            }
+            MultiSelectPurpose::Converge => {
+                // Expand any selected group to its members so they converge too.
+                let expanded = super::state::expand_selection(&state.source, &chosen);
+                state.mode = enter_converge(state, expanded);
             }
         }
         return Action::Redraw;
@@ -2526,16 +2548,6 @@ fn apply_animation(
 ) {
     let animate = start_frame < end_frame;
     let end_excl = end_frame + 1;
-    // A coordinate is Animated only when the span is valid *and* the value moves;
-    // an unchanged axis (from == to) stays Fixed so a 2-axis session can animate
-    // just one axis.
-    let coord = |f: u16, t: u16| {
-        if animate && f != t {
-            Coordinate::Animated { from: f, to: t, start_frame, end_frame }
-        } else {
-            Coordinate::Fixed(f as f64)
-        }
-    };
 
     // "Add frames" gives the animation its own fresh frames (inserting N-1 after
     // the current one and sharing the current frame's elements across them, so
@@ -2557,29 +2569,15 @@ fn apply_animation(
         super::state::add_frames_and_share(&mut state.source, state.current_frame, start_frame, end_frame);
     }
 
-    // Set the animated coordinate(s): both x and y for a two-axis session, else
-    // the single named property.
-    let obj = &mut state.source.objects[object_index];
-    let res = if two_axis {
-        properties::set_coordinate(obj, "x", coord(from, to))
-            .and_then(|_| properties::set_coordinate(obj, "y", coord(from_y, to_y)))
-    } else {
-        properties::set_coordinate(obj, property_name, coord(from, to))
-    };
-    if let Err(e) = res {
+    // Set the animated coordinate(s) and lock the object's range to its span.
+    if let Err(e) = set_object_animation(
+        &mut state.source, object_index, property_name,
+        from, to, from_y, to_y, two_axis, start_frame, end_frame,
+    ) {
         state.status_message = Some(format!("Error: {e}"));
         return;
     }
     state.dirty = true;
-
-    // Keep the object's visible range in lock-step with its animation window(s)
-    // (grows for a longer animation, shrinks when shortened — no zombie frames).
-    if let Some((lo, hi)) = super::state::scene_object_animation_span(&mut state.source.objects[object_index]) {
-        if let Some(fr) = super::state::scene_object_frame_range_mut(&mut state.source.objects[object_index]) {
-            fr.start = lo;
-            fr.end = hi;
-        }
-    }
 
     // Record the animation span + its auto-play config + gap (reusing one that
     // already covers exactly this span, so X and Y of an object stay one
@@ -2602,6 +2600,300 @@ fn apply_animation(
     state.status_message = Some(match state.source.validate_loops() {
         Ok(()) => format!("Animated {what}"),
         Err(e) => format!("Animated {what} — ⚠ {e}"),
+    });
+}
+
+/// Set the animated coordinate(s) for one object and keep its frame range in
+/// lock-step with its animation window. A coordinate is `Animated` only when the
+/// span is valid *and* the value moves; an unchanged axis (`from == to`) stays
+/// `Fixed`, so a two-axis session can animate just one axis. Does **not** insert
+/// frames, clear gap clones, touch the `Animation` sidecar, or re-strobe — the
+/// caller owns those once-per-apply steps.
+#[allow(clippy::too_many_arguments)]
+fn set_object_animation(
+    source: &mut SourcePresentation, object_index: usize, property_name: &str,
+    from: u16, to: u16, from_y: u16, to_y: u16, two_axis: bool,
+    start_frame: usize, end_frame: usize,
+) -> anyhow::Result<()> {
+    let animate = start_frame < end_frame;
+    let coord = |f: u16, t: u16| {
+        if animate && f != t {
+            Coordinate::Animated { from: f, to: t, start_frame, end_frame }
+        } else {
+            Coordinate::Fixed(f as f64)
+        }
+    };
+    let obj = &mut source.objects[object_index];
+    if two_axis {
+        properties::set_coordinate(obj, "x", coord(from, to))?;
+        properties::set_coordinate(obj, "y", coord(from_y, to_y))?;
+    } else {
+        properties::set_coordinate(obj, property_name, coord(from, to))?;
+    }
+
+    // Keep the object's visible range in lock-step with its animation window(s)
+    // (grows for a longer animation, shrinks when shortened — no zombie frames).
+    if let Some((lo, hi)) = super::state::scene_object_animation_span(&mut source.objects[object_index]) {
+        if let Some(fr) = super::state::scene_object_frame_range_mut(&mut source.objects[object_index]) {
+            fr.start = lo;
+            fr.end = hi;
+        }
+    }
+    Ok(())
+}
+
+/// The Converge config fields, in display order. Reuses the Animate roles but
+/// drops `XFrom`/`YFrom` — each object's *from* is its own current position,
+/// seeded per-object at apply time, not edited here.
+const CONVERGE_ROLES: &[AnimRole] = &[
+    AnimRole::XTo, AnimRole::YTo, AnimRole::Start, AnimRole::End,
+    AnimRole::AddFrames, AnimRole::AutoPlay, AnimRole::Delay, AnimRole::Gap,
+];
+
+/// The Converge config's `(label, value)` rows, in display order — used by the
+/// panel to render the fields without duplicating the role layout.
+pub(crate) fn converge_field_rows(
+    to: u16, to_y: u16, start_frame: usize, end_frame: usize,
+    add_frames: bool, auto_play: bool, delay_ms: u64, gap_frames: usize,
+) -> Vec<(&'static str, String)> {
+    CONVERGE_ROLES
+        .iter()
+        .map(|&r| {
+            (
+                // Two-axis labels ("x to" / "y to"); `from` args are unused here.
+                r.label(true),
+                anim_role_value(r, 0, to, 0, to_y, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames),
+            )
+        })
+        .collect()
+}
+
+/// Open the Converge config menu for the chosen `members`. The shared target is
+/// seeded to the centroid of the members' current positions at the current frame
+/// (falling back to the canvas centre), so the default is a sensible "meet in the
+/// middle"; the span defaults to current..last frame.
+fn enter_converge(state: &EditorState, members: Vec<usize>) -> Mode {
+    let start_frame = state.current_frame;
+    let end_frame = state.source.frame_count.saturating_sub(1);
+    let (mut sx, mut sy, mut nx, mut ny) = (0u32, 0u32, 0u32, 0u32);
+    for &idx in &members {
+        let obj = &state.source.objects[idx];
+        if let Some(c) = properties::get_coord(obj, "x") {
+            sx += c.evaluate(start_frame) as u32;
+            nx += 1;
+        }
+        if let Some(c) = properties::get_coord(obj, "y") {
+            sy += c.evaluate(start_frame) as u32;
+            ny += 1;
+        }
+    }
+    let to = if nx > 0 { (sx / nx) as u16 } else { state.source.width / 2 };
+    let to_y = if ny > 0 { (sy / ny) as u16 } else { state.source.height / 2 };
+    Mode::ConvergeConfig {
+        members, selected_field: 0, editing: None, cursor: 0,
+        to, to_y, start_frame, end_frame,
+        add_frames: false, auto_play: true, delay_ms: 500, gap_frames: 0,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn converge_mode(
+    members: Vec<usize>, selected_field: usize, editing: Option<String>, cursor: usize,
+    to: u16, to_y: u16, start_frame: usize, end_frame: usize,
+    add_frames: bool, auto_play: bool, delay_ms: u64, gap_frames: usize,
+) -> Mode {
+    Mode::ConvergeConfig {
+        members, selected_field, editing, cursor,
+        to, to_y, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames,
+    }
+}
+
+fn handle_converge_config(state: &mut EditorState, key: KeyEvent) -> Action {
+    let (members, selected_field, editing, cursor,
+         mut to, mut to_y, mut start_frame, mut end_frame,
+         mut add_frames, mut auto_play, mut delay_ms, mut gap_frames) = match &state.mode {
+        Mode::ConvergeConfig {
+            members, selected_field, editing, cursor,
+            to, to_y, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames,
+        } => (
+            members.clone(), *selected_field, editing.clone(), *cursor,
+            *to, *to_y, *start_frame, *end_frame, *add_frames, *auto_play, *delay_ms, *gap_frames,
+        ),
+        _ => return Action::Continue,
+    };
+
+    let role = CONVERGE_ROLES[selected_field.min(CONVERGE_ROLES.len() - 1)];
+
+    macro_rules! rebuild {
+        ($editing:expr, $cursor:expr, $field:expr) => {
+            converge_mode(members.clone(), $field, $editing, $cursor,
+                to, to_y, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames)
+        };
+    }
+
+    // -- Editing a numeric field value -----------------------------------------
+    if let Some(mut buf) = editing {
+        let (new_editing, new_cursor): (Option<String>, usize) = match key.code {
+            KeyCode::Enter => {
+                // `from`/`from_y` are per-object; pass throwaway locals.
+                let (mut f, mut fy) = (0u16, 0u16);
+                if let Some(msg) = anim_apply_edit(
+                    role, &buf, &mut f, &mut to, &mut fy, &mut to_y,
+                    &mut start_frame, &mut end_frame, &mut delay_ms, &mut gap_frames,
+                ) {
+                    state.status_message = Some(msg);
+                }
+                (None, 0)
+            }
+            KeyCode::Esc => (None, 0),
+            KeyCode::Left if key.modifiers == KeyModifiers::NONE => (Some(buf), cursor.saturating_sub(1)),
+            KeyCode::Right if key.modifiers == KeyModifiers::NONE => {
+                let c = (cursor + 1).min(buf.chars().count());
+                (Some(buf), c)
+            }
+            KeyCode::Backspace => {
+                if cursor > 0 {
+                    let s = char_to_byte_idx(&buf, cursor - 1);
+                    let e = char_to_byte_idx(&buf, cursor);
+                    buf.drain(s..e);
+                    (Some(buf), cursor - 1)
+                } else {
+                    (Some(buf), cursor)
+                }
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let byte_idx = char_to_byte_idx(&buf, cursor);
+                buf.insert(byte_idx, c);
+                (Some(buf), cursor + 1)
+            }
+            _ => return Action::Continue,
+        };
+        state.mode = rebuild!(new_editing, new_cursor, selected_field);
+        return Action::Redraw;
+    }
+
+    // -- Browsing fields -------------------------------------------------------
+    match key.code {
+        KeyCode::Up if key.modifiers == KeyModifiers::NONE => {
+            let new_sel = if selected_field == 0 { CONVERGE_ROLES.len() - 1 } else { selected_field - 1 };
+            state.mode = rebuild!(None, 0, new_sel);
+            return Action::Redraw;
+        }
+        KeyCode::Down if key.modifiers == KeyModifiers::NONE => {
+            let new_sel = (selected_field + 1) % CONVERGE_ROLES.len();
+            state.mode = rebuild!(None, 0, new_sel);
+            return Action::Redraw;
+        }
+        KeyCode::Char(' ') | KeyCode::Enter if role.is_toggle() => {
+            match role {
+                AnimRole::AddFrames => add_frames = !add_frames,
+                AnimRole::AutoPlay => auto_play = !auto_play,
+                _ => {}
+            }
+            state.mode = rebuild!(None, 0, selected_field);
+            return Action::Redraw;
+        }
+        KeyCode::Enter => {
+            let init = anim_role_value(role, 0, to, 0, to_y, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
+            let new_cursor = init.chars().count();
+            state.mode = rebuild!(Some(init), new_cursor, selected_field);
+            return Action::Redraw;
+        }
+        // [s] apply → converge every member onto the shared point.
+        KeyCode::Char('s') if key.modifiers == KeyModifiers::NONE => {
+            apply_converge(state, &members, to, to_y, start_frame, end_frame,
+                add_frames, auto_play, delay_ms, gap_frames);
+            state.mode = Mode::Normal;
+            return Action::Redraw;
+        }
+        KeyCode::Esc => {
+            state.mode = Mode::Normal;
+            return Action::Redraw;
+        }
+        _ => {}
+    }
+
+    Action::Continue
+}
+
+/// Apply a converge animation: every member animates from wherever it sits at
+/// `start_frame` to the shared `(to, to_y)` point over the span. Inserts the
+/// spanned frames once (if `add_frames`), animates each member's axes (whichever
+/// it has), records **one** shared `Animation` sidecar, and strobes each member
+/// when `gap_frames > 0`.
+#[allow(clippy::too_many_arguments)]
+fn apply_converge(
+    state: &mut EditorState, members: &[usize], to: u16, to_y: u16,
+    start_frame: usize, end_frame: usize,
+    add_frames: bool, auto_play: bool, delay_ms: u64, gap_frames: usize,
+) {
+    if start_frame >= end_frame {
+        state.status_message = Some("Converge needs end after start".into());
+        return;
+    }
+    let end_excl = end_frame + 1;
+    let span_exists = state.source.objects.iter().any(|o| {
+        matches!(o, SceneObject::Animation(a) if a.frames.start == start_frame && a.frames.end == end_excl)
+    });
+
+    // Clear each member's prior gap-strobe copies (by its *current* coords)
+    // before we change anything, so re-applying is idempotent.
+    for &idx in members {
+        if let Some((lo, hi)) = super::state::scene_object_animation_span(&mut state.source.objects[idx]) {
+            super::state::clear_gap_clones(&mut state.source, idx, lo, hi.saturating_sub(1));
+        }
+    }
+
+    // Insert + share the spanned frames once (a new span only).
+    if add_frames && !span_exists {
+        super::state::add_frames_and_share(&mut state.source, state.current_frame, start_frame, end_frame);
+    }
+
+    // Each member animates whichever of x/y it has toward the shared target.
+    let mut animated: Vec<usize> = Vec::new();
+    let mut errors = 0;
+    for &idx in members {
+        let obj = &state.source.objects[idx];
+        let fx = properties::get_coord(obj, "x").map(|c| c.evaluate(start_frame));
+        let fy = properties::get_coord(obj, "y").map(|c| c.evaluate(start_frame));
+        let res = match (fx, fy) {
+            (Some(fx), Some(fy)) =>
+                set_object_animation(&mut state.source, idx, "x", fx, to, fy, to_y, true, start_frame, end_frame),
+            (Some(fx), None) =>
+                set_object_animation(&mut state.source, idx, "x", fx, to, 0, 0, false, start_frame, end_frame),
+            (None, Some(fy)) =>
+                set_object_animation(&mut state.source, idx, "y", fy, to_y, 0, 0, false, start_frame, end_frame),
+            (None, None) => continue, // no coordinate to converge (Group/Loop/etc.)
+        };
+        match res {
+            Ok(()) => animated.push(idx),
+            Err(_) => errors += 1,
+        }
+    }
+
+    if animated.is_empty() {
+        state.status_message = Some("Nothing to converge (selected objects have no position)".into());
+        return;
+    }
+    state.dirty = true;
+
+    // One shared Animation sidecar for the whole convergence.
+    super::state::upsert_animation(&mut state.source, start_frame, end_excl, auto_play, delay_ms, gap_frames);
+
+    if gap_frames > 0 {
+        for &idx in &animated {
+            super::state::apply_gap(&mut state.source, idx, start_frame, end_frame, gap_frames);
+        }
+    }
+
+    let n = animated.len();
+    let mut msg = format!("Converged {n} object{}", if n == 1 { "" } else { "s" });
+    if errors > 0 {
+        msg.push_str(&format!(" ({errors} failed)"));
+    }
+    state.status_message = Some(match state.source.validate_loops() {
+        Ok(()) => msg,
+        Err(e) => format!("{msg} — ⚠ {e}"),
     });
 }
 
@@ -3372,5 +3664,71 @@ mod tests {
         // spanning the whole span again, no orphans.
         apply_animation(&mut state, 0, "x", 0, 9, 0, 0, false, 0, 9, false, true, 500, 0);
         assert_eq!(count_labels(&state), 1, "gap 0 should remove the strobe copies");
+    }
+
+    #[test]
+    fn converge_field_rows_omits_the_per_object_from_fields() {
+        // Converge only edits the shared target + span/toggles — no x/y "from",
+        // since each object's from is its own current position.
+        let rows = converge_field_rows(20, 10, 0, 9, false, true, 500, 0);
+        let labels: Vec<&str> = rows.iter().map(|(n, _)| *n).collect();
+        assert_eq!(
+            labels,
+            vec!["x to", "y to", "start", "end", "add frames", "auto play", "delay ms", "gap frames"]
+        );
+        assert_eq!(rows[0].1, "20"); // shared x target
+        assert_eq!(rows[1].1, "10"); // shared y target
+        assert_eq!(rows[4].1, "[ ]"); // add frames off by default
+    }
+
+    #[test]
+    fn converge_animates_each_object_from_its_own_spot_to_the_shared_point() {
+        use crate::editor::object_defaults::create_default;
+        use crate::editor::properties::{get_coord, set_coordinate};
+        use crate::editor::state::scene_object_frame_range_mut;
+        use crate::engine::source::{Coordinate, SceneObject};
+
+        let mut state = EditorState::open("/tmp/bs_converge_absent_91.json").unwrap();
+        state.source.frame_count = 10;
+        state.current_frame = 0;
+
+        // Two labels at distinct spots, both spanning the whole deck.
+        let mut a = create_default(0, 0);
+        let mut b = create_default(0, 0);
+        for (obj, x, y) in [(&mut a, 2.0, 3.0), (&mut b, 40.0, 18.0)] {
+            set_coordinate(obj, "x", Coordinate::Fixed(x)).unwrap();
+            set_coordinate(obj, "y", Coordinate::Fixed(y)).unwrap();
+            if let Some(fr) = scene_object_frame_range_mut(obj) {
+                fr.start = 0;
+                fr.end = 10;
+            }
+        }
+        state.source.objects = vec![a, b];
+
+        // Converge both onto (20, 10) over frames 0..9, no inserted frames.
+        apply_converge(&mut state, &[0, 1], 20, 10, 0, 9, false, true, 500, 0);
+
+        // Each object keeps its own `from` but shares the `to` target.
+        let check = |idx: usize, fx: u16, fy: u16| {
+            match (get_coord(&state.source.objects[idx], "x"), get_coord(&state.source.objects[idx], "y")) {
+                (
+                    Some(Coordinate::Animated { from: xf, to: xt, start_frame, end_frame }),
+                    Some(Coordinate::Animated { from: yf, to: yt, .. }),
+                ) => {
+                    assert_eq!((xf, xt), (fx, 20), "object {idx} x");
+                    assert_eq!((yf, yt), (fy, 10), "object {idx} y");
+                    assert_eq!((start_frame, end_frame), (0, 9));
+                }
+                other => panic!("object {idx} not animated on both axes: {other:?}"),
+            }
+        };
+        check(0, 2, 3);
+        check(1, 40, 18);
+
+        // Exactly one shared Animation sidecar covers the span.
+        let anims: Vec<_> = state.source.objects.iter()
+            .filter_map(|o| match o { SceneObject::Animation(an) => Some((an.frames.start, an.frames.end)), _ => None })
+            .collect();
+        assert_eq!(anims, vec![(0, 10)], "one shared animation over the span");
     }
 }

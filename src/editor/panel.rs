@@ -317,6 +317,7 @@ pub fn render_right_panel(
         draw_header(stdout, match purpose {
             MultiSelectPurpose::Group => "Add Group",
             MultiSelectPurpose::Copy => "Copy Objects",
+            MultiSelectPurpose::Converge => "Converge",
         })?;
         // Only the current slide's objects are groupable; `selected` and the
         // [+]/[ ] markers are keyed off the real object index in `visible`.
@@ -408,6 +409,69 @@ pub fn render_right_panel(
         if hint_y < cy + layout.canvas_height {
             queue!(stdout, cursor::MoveTo(panel_x + 2, hint_y))?;
             let hint: String = "[Space]toggle [s]save [x]\u{2192}fixed"
+                .chars()
+                .take(max_width)
+                .collect();
+            queue!(
+                stdout,
+                style::SetAttribute(style::Attribute::Dim),
+                style::Print(hint),
+                style::SetAttribute(style::Attribute::Reset),
+            )?;
+        }
+
+        return Ok(());
+    }
+
+    // ConvergeConfig panel
+    if let Mode::ConvergeConfig {
+        members, selected_field, editing, cursor,
+        to, to_y, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames,
+    } = &state.mode {
+        let (selected_field, cursor) = (*selected_field, *cursor);
+        let title: String = format!("Converge: {} obj", members.len())
+            .chars().take((pw - 2) as usize).collect();
+        draw_header(stdout, &title)?;
+
+        let rows = super::input::converge_field_rows(
+            *to, *to_y, *start_frame, *end_frame, *add_frames, *auto_play, *delay_ms, *gap_frames,
+        );
+
+        for (i, (name, value)) in rows.iter().enumerate() {
+            let y = cy + (i as u16 + 2);
+            if y >= cy + layout.canvas_height {
+                break;
+            }
+            let (display, caret): (String, Option<usize>) = if i == selected_field {
+                if let Some(buf) = editing {
+                    let cur = cursor.min(buf.chars().count());
+                    let prefix = format!("{name}: ");
+                    let plen = prefix.chars().count();
+                    let display: String =
+                        format!("{prefix}{buf}").chars().take(max_width).collect();
+                    (display, Some(plen + cur))
+                } else {
+                    let display: String = format!("{name}: {value}")
+                        .chars().take(max_width).collect();
+                    (display, None)
+                }
+            } else {
+                let display: String = format!("{name}: {value}")
+                    .chars().take(max_width).collect();
+                (display, None)
+            };
+
+            if i == selected_field {
+                draw_caret_line(stdout, panel_x + 2, y, &display, caret, true, max_width)?;
+            } else {
+                queue!(stdout, cursor::MoveTo(panel_x + 2, y), style::Print(display))?;
+            }
+        }
+
+        let hint_y = cy + 2 + rows.len() as u16;
+        if hint_y < cy + layout.canvas_height {
+            queue!(stdout, cursor::MoveTo(panel_x + 2, hint_y))?;
+            let hint: String = "[Space]toggle [s]save [Esc]cancel"
                 .chars()
                 .take(max_width)
                 .collect();

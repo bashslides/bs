@@ -30,6 +30,7 @@ fn focus_indices(state: &EditorState) -> Option<Vec<usize>> {
             }
         }
         Mode::AnimateProperty { object_index, .. } => Some(vec![*object_index]),
+        Mode::ConvergeConfig { members, .. } => Some(members.clone()),
         Mode::SelectObject { selected } => {
             let visible = state.objects_on_current_frame();
             visible.get(*selected).copied().and_then(|i| {

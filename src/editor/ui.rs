@@ -42,6 +42,7 @@ impl Layout {
         let right = match mode {
             Mode::EditProperties { .. }
             | Mode::AnimateProperty { .. }
+            | Mode::ConvergeConfig { .. }
             | Mode::AddObject { .. }
             | Mode::SelectObject { .. }
             | Mode::Confirm { .. }

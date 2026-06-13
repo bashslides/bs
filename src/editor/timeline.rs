@@ -97,7 +97,9 @@ pub fn render_timeline(
         Mode::MultiSelect { purpose, .. } => match purpose {
             super::state::MultiSelectPurpose::Group => "ADD GROUP",
             super::state::MultiSelectPurpose::Copy => "COPY SELECT",
+            super::state::MultiSelectPurpose::Converge => "CONVERGE SELECT",
         },
+        Mode::ConvergeConfig { .. } => "CONVERGE",
         Mode::PastePlacing { .. } => "PASTE",
         Mode::AddArt { .. } => "ADD ART",
         Mode::LoadArtFile { .. } => "LOAD ART",

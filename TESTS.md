@@ -287,6 +287,9 @@ reconstructed character grid (some also assert on cell styles).
 | `animate_two_axis_layout_exposes_x_and_y_fields` | A position (two-axis) animation lists `x from/to` and `y from/to` (10 fields), values per axis |
 | `animate_single_axis_layout_has_one_from_to_pair` | A 1-D coordinate (width/height) lists a single `from/to` pair (8 fields) |
 | `gap_strobes_even_without_add_frames` | `apply_animation` with gap > 0 strobes the element onto every `gap+1`th frame even when `add frames` is off (works on existing frames) |
+| `re_applying_a_gapped_animation_does_not_stack_orphan_copies` | Re-applying clears prior strobe copies first (idempotent); gap 0 removes them entirely |
+| `converge_field_rows_omits_the_per_object_from_fields` | The Converge config lists only the shared `x to`/`y to` + span/toggles (8 fields) — no per-object `from` |
+| `converge_animates_each_object_from_its_own_spot_to_the_shared_point` | `apply_converge` animates each member's x/y from its own current position to the shared target, recording one shared `Animation` sidecar over the span |
 
 ### Frame operations — `src/editor/state.rs`
 

@@ -71,6 +71,8 @@ pub enum MultiSelectPurpose {
     Group,
     /// Copy the toggled objects to the clipboard.
     Copy,
+    /// Animate the toggled objects so they converge on a shared point.
+    Converge,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,6 +139,34 @@ pub enum Mode {
         delay_ms: u64,
         /// Show the animated element only every `gap_frames`-th frame of the span
         /// (a stop-motion strobe with empty gaps between). `1` = every frame (off).
+        gap_frames: usize,
+    },
+    /// Configuring a *converge* animation: a set of objects (`members`) each
+    /// animate from wherever they sit at the span start to one shared target
+    /// point (`to`, `to_y`). Mirrors [`Mode::AnimateProperty`] but the `from`
+    /// values are per-object (seeded at apply time), so only the shared target
+    /// and span/auto-play config are edited here.
+    ConvergeConfig {
+        /// Objects that will converge (real `objects` indices).
+        members: Vec<usize>,
+        /// Highlighted field (index into `CONVERGE_ROLES`).
+        selected_field: usize,
+        /// Text being typed into the selected field, if actively editing.
+        editing: Option<String>,
+        cursor: usize,
+        /// Shared target column / row every member animates toward.
+        to: u16,
+        to_y: u16,
+        start_frame: usize,
+        end_frame: usize,
+        /// Insert the spanned frames (and share the current frame's elements)
+        /// on apply. Default off for converge (animate over existing frames).
+        add_frames: bool,
+        /// Auto-advance across the span at play time. Default on.
+        auto_play: bool,
+        /// Auto-play delay between frames, in milliseconds. Default 500.
+        delay_ms: u64,
+        /// Stop-motion strobe: empty frames between appearances (0 = off).
         gap_frames: usize,
     },
     Confirm {

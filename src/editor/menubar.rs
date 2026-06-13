@@ -178,7 +178,20 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             match purpose {
                 super::state::MultiSelectPurpose::Group => "[Enter] create group",
                 super::state::MultiSelectPurpose::Copy => "[Enter] copy",
+                super::state::MultiSelectPurpose::Converge => "[Enter] set target",
             },
+            "[Esc] cancel",
+        ],
+        Mode::ConvergeConfig { editing: None, .. } => vec![
+            "[↑][↓] field",
+            "[Enter] edit",
+            "[Space] toggle",
+            "[s]ave converge",
+            "[Esc] cancel",
+        ],
+        Mode::ConvergeConfig { editing: Some(_), .. } => vec![
+            "[←][→] cursor",
+            "[Enter] apply",
             "[Esc] cancel",
         ],
         Mode::PastePlacing { linked, .. } => vec![

@@ -21,6 +21,10 @@ pub struct KeyBindings {
     /// Paste: place the clipboard's clones as a movable, re-stampable ghost.
     #[serde(default = "default_paste")]
     pub paste: String,
+    /// Converge: pick a set of objects on this frame and animate them onto one
+    /// shared target point (each starts from wherever it sits).
+    #[serde(default = "default_converge")]
+    pub converge: String,
     pub save: String,
     /// Save under a new filename (prompts for the path).
     #[serde(default = "default_save_as")]
@@ -100,6 +104,8 @@ fn default_copy() -> String { "c".into() }
 // terminal supported keyboard-enhancement, so it silently did nothing elsewhere.
 fn default_save_as() -> String { "S".into() }
 fn default_paste() -> String { "v".into() }
+// Capital `C` (Shift+c): distinct from lowercase `c` (copy) on every terminal.
+fn default_converge() -> String { "C".into() }
 fn default_frame_menu() -> String { "f".into() }
 fn default_frame_add() -> String { "a".into() }
 fn default_frame_copy() -> String { "c".into() }
@@ -122,6 +128,7 @@ impl Default for EditorConfig {
                 delete_object: "d".into(),
                 copy: default_copy(),
                 paste: default_paste(),
+                converge: default_converge(),
                 save: "Ctrl-s".into(),
                 save_as: default_save_as(),
                 quit: "q".into(),
