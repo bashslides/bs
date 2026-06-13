@@ -5,6 +5,104 @@ use crate::types::{DrawOp, Style};
 use super::super::source::{Coordinate, FrameRange, Position, deserialize_coord_compat};
 use super::Resolve;
 
+/// Horizontal alignment of text within the label's `width`. Only meaningful when
+/// `width > 0` (there is a box to align within); with auto width it is a no-op.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TextAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+/// Vertical alignment of text within the label's `height`. Only meaningful when
+/// `height > 0`; with auto height it is a no-op.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum VerticalAlign {
+    #[default]
+    Top,
+    Center,
+    Bottom,
+}
+
+impl TextAlign {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TextAlign::Left => "left",
+            TextAlign::Center => "center",
+            TextAlign::Right => "right",
+        }
+    }
+    pub fn from_str_opt(s: &str) -> Option<Self> {
+        match s.trim() {
+            "left" => Some(TextAlign::Left),
+            "center" => Some(TextAlign::Center),
+            "right" => Some(TextAlign::Right),
+            _ => None,
+        }
+    }
+    fn is_default(&self) -> bool {
+        matches!(self, TextAlign::Left)
+    }
+}
+
+impl VerticalAlign {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            VerticalAlign::Top => "top",
+            VerticalAlign::Center => "center",
+            VerticalAlign::Bottom => "bottom",
+        }
+    }
+    pub fn from_str_opt(s: &str) -> Option<Self> {
+        match s.trim() {
+            "top" => Some(VerticalAlign::Top),
+            "center" => Some(VerticalAlign::Center),
+            "bottom" => Some(VerticalAlign::Bottom),
+            _ => None,
+        }
+    }
+    fn is_default(&self) -> bool {
+        matches!(self, VerticalAlign::Top)
+    }
+    /// Number of empty rows above `n` content rows inside an `h`-row box.
+    fn top_pad(self, h: usize, n: usize) -> usize {
+        match self {
+            VerticalAlign::Top => 0,
+            VerticalAlign::Center => h.saturating_sub(n) / 2,
+            VerticalAlign::Bottom => h.saturating_sub(n),
+        }
+    }
+}
+
+/// Re-place a wrapped, width-`w` row's content according to `align`. `Left`
+/// returns the row untouched (preserving any list-continuation indent); `Center`
+/// and `Right` trim the content to its non-space span and re-seat it within `w`.
+fn align_row(row: Vec<char>, w: usize, align: TextAlign) -> Vec<char> {
+    if align == TextAlign::Left {
+        return row;
+    }
+    let Some(lo) = row.iter().position(|&c| c != ' ') else {
+        return row; // blank row — nothing to align
+    };
+    let hi = row.iter().rposition(|&c| c != ' ').unwrap() + 1;
+    let content_len = hi - lo;
+    let start = match align {
+        TextAlign::Center => w.saturating_sub(content_len) / 2,
+        TextAlign::Right => w.saturating_sub(content_len),
+        TextAlign::Left => 0,
+    };
+    let mut out = vec![' '; w];
+    for (i, &c) in row[lo..hi].iter().enumerate() {
+        if start + i < w {
+            out[start + i] = c;
+        }
+    }
+    out
+}
+
 fn draw_frame(ops: &mut Vec<DrawOp>, fx: u16, fy: u16, fw: usize, fh: usize, style: &Style, z_order: i32) {
     if fw < 2 || fh < 2 {
         return;
@@ -82,6 +180,12 @@ pub struct Label {
     /// the label's own `style`.  Only `fg` and `bg` are relevant for the border.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frame_style: Option<Style>,
+    /// Horizontal alignment of the text within `width` (no-op when `width == 0`).
+    #[serde(default, skip_serializing_if = "TextAlign::is_default")]
+    pub align: TextAlign,
+    /// Vertical alignment of the text within `height` (no-op when `height == 0`).
+    #[serde(default, skip_serializing_if = "VerticalAlign::is_default")]
+    pub valign: VerticalAlign,
     #[serde(default)]
     pub style: Style,
     pub frames: FrameRange,
@@ -126,15 +230,20 @@ impl Resolve for Label {
                     if h > 0 && row >= h {
                         break 'lines;
                     }
-                    rows.push(wrapped_row);
+                    rows.push(align_row(wrapped_row, w, self.align));
                     row += 1;
                 }
             }
-            // If height is set, pad remaining rows
+            // Vertical alignment within an explicit height: offset the content
+            // rows by the top padding and fill the rest of the box with blanks.
             if h > 0 {
-                while rows.len() < h {
-                    rows.push(Vec::new());
+                let n = rows.len().min(h);
+                let pad_top = self.valign.top_pad(h, n);
+                let mut padded: Vec<Vec<char>> = vec![Vec::new(); h];
+                for (i, r) in rows.into_iter().take(n).enumerate() {
+                    padded[pad_top + i] = r;
                 }
+                rows = padded;
             }
             // Emit DrawOps for all cells
             for (r, row_chars) in rows.iter().enumerate() {
@@ -166,13 +275,14 @@ impl Resolve for Label {
                 );
             }
         } else {
-            // No wrapping — emit chars directly, no fill
-            let mut row: usize = 0;
+            // No wrapping (auto width) — emit chars directly, no fill. Horizontal
+            // alignment has no box to act in here, but vertical alignment still
+            // does when a height is set: offset the rows by the top padding.
+            let lines: Vec<&str> = self.text.split('\n').collect();
+            let visible = if h > 0 { lines.len().min(h) } else { lines.len() };
+            let pad_top = if h > 0 { self.valign.top_pad(h, visible) } else { 0 };
             let mut max_len: usize = 0;
-            for line in self.text.split('\n') {
-                if h > 0 && row >= h {
-                    break;
-                }
+            for (row, line) in lines.iter().take(visible).enumerate() {
                 let line_len = line.chars().count();
                 if line_len > max_len {
                     max_len = line_len;
@@ -180,13 +290,12 @@ impl Resolve for Label {
                 for (col, ch) in line.chars().enumerate() {
                     ops.push(DrawOp {
                         x: draw_x + col as u16,
-                        y: draw_y + row as u16,
+                        y: draw_y + (pad_top + row) as u16,
                         ch,
                         style: self.style.clone(),
                         z_order: self.z_order,
                     });
                 }
-                row += 1;
             }
             if self.framed {
                 let border_style = self.frame_style.as_ref().unwrap_or(&self.style);
@@ -195,7 +304,7 @@ impl Resolve for Label {
                     frame_x,
                     frame_y,
                     max_len + 2,
-                    (if h > 0 { h } else { row }) + 2,
+                    (if h > 0 { h } else { visible }) + 2,
                     border_style,
                     self.z_order,
                 );

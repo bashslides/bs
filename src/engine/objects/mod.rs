@@ -52,7 +52,7 @@ pub use command::Command;
 pub use group::Group;
 pub use header::Header;
 pub use hline::HLine;
-pub use label::Label;
+pub use label::{Label, TextAlign, VerticalAlign};
 pub use list::List;
 pub use looping::Loop;
 pub use morph::{Morph, MorphMode};

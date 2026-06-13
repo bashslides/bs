@@ -56,6 +56,11 @@ reconstructed character grid (some also assert on cell styles).
 | Test | Verifies |
 |------|----------|
 | `framed_label_draws_a_border_one_cell_outside_the_text` | `framed` draws a border one cell outside the text |
+| `framed_label_at_the_origin_keeps_its_text_visible_inside_the_border` | A framed label at (0,0) shifts its text inside the border instead of hiding under it |
+| `align_center_centres_text_within_the_width` | `align: center` centres each row within `width` |
+| `align_right_pushes_text_to_the_right_edge` | `align: right` right-aligns text within `width` |
+| `valign_center_offsets_text_down_within_the_height` | `valign: center` vertically centres the rows within `height` |
+| `valign_bottom_places_text_on_the_last_row` | `valign: bottom` pushes the rows to the bottom of `height` |
 | `frame_style_colours_the_border_independently_of_the_text` | `frame_style` colours the border, not the text |
 | `background_fills_the_box_and_pads_to_height` | A background fills the box and pads to the height |
 | `height_clips_extra_lines` | An explicit height clips extra lines |

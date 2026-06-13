@@ -67,6 +67,83 @@ fn framed_label_at_the_origin_keeps_its_text_visible_inside_the_border() {
 }
 
 #[test]
+fn align_center_centres_text_within_the_width() {
+    let p = render_json(
+        r#"{
+            "width": 8, "height": 2, "frame_count": 1,
+            "objects": [
+                { "type": "label", "text": "Hi", "align": "center",
+                  "width": { "fixed": 6 },
+                  "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+                  "frames": { "start": 0, "end": 1 } }
+            ]
+        }"#,
+    );
+    // "Hi" (len 2) centred in width 6 → starts at col (6-2)/2 = 2.
+    assert_eq!(char_at(&p, 0, 0, 0), ' ');
+    assert_eq!(char_at(&p, 0, 2, 0), 'H');
+    assert_eq!(char_at(&p, 0, 3, 0), 'i');
+}
+
+#[test]
+fn align_right_pushes_text_to_the_right_edge() {
+    let p = render_json(
+        r#"{
+            "width": 8, "height": 2, "frame_count": 1,
+            "objects": [
+                { "type": "label", "text": "Hi", "align": "right",
+                  "width": { "fixed": 6 },
+                  "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+                  "frames": { "start": 0, "end": 1 } }
+            ]
+        }"#,
+    );
+    // "Hi" right-aligned in width 6 → starts at col 6-2 = 4.
+    assert_eq!(char_at(&p, 0, 4, 0), 'H');
+    assert_eq!(char_at(&p, 0, 5, 0), 'i');
+    assert_eq!(char_at(&p, 0, 0, 0), ' ');
+}
+
+#[test]
+fn valign_center_offsets_text_down_within_the_height() {
+    let p = render_json(
+        r#"{
+            "width": 8, "height": 4, "frame_count": 1,
+            "objects": [
+                { "type": "label", "text": "Hi", "valign": "center",
+                  "width": { "fixed": 6 }, "height": { "fixed": 3 },
+                  "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+                  "frames": { "start": 0, "end": 1 } }
+            ]
+        }"#,
+    );
+    // 1 content row in height 3 → 1 empty row above (pad_top = (3-1)/2 = 1).
+    assert_eq!(char_at(&p, 0, 0, 0), ' ');
+    assert_eq!(char_at(&p, 0, 0, 1), 'H');
+    assert_eq!(char_at(&p, 0, 1, 1), 'i');
+}
+
+#[test]
+fn valign_bottom_places_text_on_the_last_row() {
+    let p = render_json(
+        r#"{
+            "width": 8, "height": 4, "frame_count": 1,
+            "objects": [
+                { "type": "label", "text": "Hi", "valign": "bottom",
+                  "width": { "fixed": 6 }, "height": { "fixed": 3 },
+                  "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+                  "frames": { "start": 0, "end": 1 } }
+            ]
+        }"#,
+    );
+    // 1 content row pushed to the bottom of height 3 (pad_top = 3-1 = 2).
+    assert_eq!(char_at(&p, 0, 0, 0), ' ');
+    assert_eq!(char_at(&p, 0, 0, 1), ' ');
+    assert_eq!(char_at(&p, 0, 0, 2), 'H');
+    assert_eq!(char_at(&p, 0, 1, 2), 'i');
+}
+
+#[test]
 fn frame_style_colours_the_border_independently_of_the_text() {
     let p = render_json(
         r#"{

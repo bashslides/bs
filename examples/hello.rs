@@ -7,7 +7,7 @@ use bs::{
     engine::{
         source::{
             Coordinate, FrameRange, HLine, Header, Label, Position, Rect, SceneObject,
-            SourcePresentation,
+            SourcePresentation, TextAlign, VerticalAlign,
         },
         Engine,
     },
@@ -48,6 +48,8 @@ fn main() -> anyhow::Result<()> {
                 height: Coordinate::Fixed(0.0),
                 framed: false,
                 frame_style: None,
+                align: TextAlign::Left,
+                valign: VerticalAlign::Top,
                 style: Style {
                     dim: true,
                     ..Default::default()
@@ -81,6 +83,8 @@ fn main() -> anyhow::Result<()> {
                 height: Coordinate::Fixed(0.0),
                 framed: false,
                 frame_style: None,
+                align: TextAlign::Left,
+                valign: VerticalAlign::Top,
                 style: Style {
                     dim: true,
                     ..Default::default()
@@ -101,6 +105,8 @@ fn main() -> anyhow::Result<()> {
                 height: Coordinate::Fixed(0.0),
                 framed: false,
                 frame_style: None,
+                align: TextAlign::Left,
+                valign: VerticalAlign::Top,
                 style: Style {
                     bold: true,
                     ..Default::default()
@@ -137,6 +143,8 @@ fn main() -> anyhow::Result<()> {
                 height: Coordinate::Fixed(0.0),
                 framed: false,
                 frame_style: None,
+                align: TextAlign::Left,
+                valign: VerticalAlign::Top,
                 style: Style {
                     fg: Some(Color::Named(NamedColor::Green)),
                     bold: true,
@@ -172,6 +180,8 @@ fn main() -> anyhow::Result<()> {
                 height: Coordinate::Fixed(0.0),
                 framed: false,
                 frame_style: None,
+                align: TextAlign::Left,
+                valign: VerticalAlign::Top,
                 style: Style::default(),
                 frames: FrameRange { start: 18, end: 25 },
                 z_order: 1,
@@ -187,6 +197,8 @@ fn main() -> anyhow::Result<()> {
                 height: Coordinate::Fixed(0.0),
                 framed: false,
                 frame_style: None,
+                align: TextAlign::Left,
+                valign: VerticalAlign::Top,
                 style: Style {
                     dim: true,
                     ..Default::default()

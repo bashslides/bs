@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 
 use crate::engine::source::{
     Animation, Arrow, Art, Command, Coordinate, FrameRange, Group, HLine, Header, Label, List,
-    Loop, Morph, MorphMode, Rect, SceneObject, Table,
+    Loop, Morph, MorphMode, Rect, SceneObject, Table, TextAlign, VerticalAlign,
 };
 use crate::types::{Color, NamedColor};
 
@@ -31,6 +31,10 @@ pub enum PropertyKind {
     BodyChar,
     /// Dropdown for a morph's transition mode.
     MorphMode,
+    /// Dropdown for a label's horizontal text alignment.
+    TextAlign,
+    /// Dropdown for a label's vertical alignment.
+    VerticalAlign,
     /// Table column width (stored as percentage 0..100).
     TableColWidth,
 }
@@ -70,15 +74,19 @@ pub const HEAD_CHAR_OPTIONS: &[&str] = &[">", "▶", "→", "◆", "●", "★",
 pub const BODY_CHAR_OPTIONS: &[&str] = &["─", "═", "·", "~", "=", "custom"];
 pub const MORPH_MODE_OPTIONS: &[&str] =
     &["dissolve", "wipe-right", "wipe-left", "wipe-down", "wipe-up"];
+pub const TEXT_ALIGN_OPTIONS: &[&str] = &["left", "center", "right"];
+pub const VERTICAL_ALIGN_OPTIONS: &[&str] = &["top", "center", "bottom"];
 
 /// Returns the dropdown option list for a property kind, if it uses a dropdown.
 pub fn dropdown_options_for(kind: &PropertyKind) -> Option<&'static [&'static str]> {
     match kind {
-        PropertyKind::Color     => Some(COLOR_OPTIONS),
-        PropertyKind::HeadChar  => Some(HEAD_CHAR_OPTIONS),
-        PropertyKind::BodyChar  => Some(BODY_CHAR_OPTIONS),
-        PropertyKind::MorphMode => Some(MORPH_MODE_OPTIONS),
-        _                       => None,
+        PropertyKind::Color         => Some(COLOR_OPTIONS),
+        PropertyKind::HeadChar      => Some(HEAD_CHAR_OPTIONS),
+        PropertyKind::BodyChar      => Some(BODY_CHAR_OPTIONS),
+        PropertyKind::MorphMode     => Some(MORPH_MODE_OPTIONS),
+        PropertyKind::TextAlign     => Some(TEXT_ALIGN_OPTIONS),
+        PropertyKind::VerticalAlign => Some(VERTICAL_ALIGN_OPTIONS),
+        _                           => None,
     }
 }
 
@@ -397,6 +405,8 @@ impl Editable for Label {
             Property { name: "y", value: format_coordinate(&self.position.y), kind: PropertyKind::Coordinate },
             Property { name: "width", value: format_coordinate(&self.width), kind: PropertyKind::Coordinate },
             Property { name: "height", value: format_coordinate(&self.height), kind: PropertyKind::Coordinate },
+            Property { name: "align", value: self.align.as_str().to_string(), kind: PropertyKind::TextAlign },
+            Property { name: "valign", value: self.valign.as_str().to_string(), kind: PropertyKind::VerticalAlign },
             Property { name: "framed", value: self.framed.to_string(), kind: PropertyKind::Bool },
             Property { name: "frame_fg_color", value: format_opt_color(&self.frame_style.as_ref().and_then(|s| s.fg.clone())), kind: PropertyKind::Color },
             Property { name: "frame_bg_color", value: format_opt_color(&self.frame_style.as_ref().and_then(|s| s.bg.clone())), kind: PropertyKind::Color },
@@ -417,6 +427,14 @@ impl Editable for Label {
             "y" => self.position.y = parse_coordinate(value)?,
             "width" => self.width = parse_coordinate(value)?,
             "height" => self.height = parse_coordinate(value)?,
+            "align" => {
+                self.align = TextAlign::from_str_opt(value)
+                    .ok_or_else(|| anyhow::anyhow!("Unknown alignment: {value}"))?
+            }
+            "valign" => {
+                self.valign = VerticalAlign::from_str_opt(value)
+                    .ok_or_else(|| anyhow::anyhow!("Unknown vertical alignment: {value}"))?
+            }
             "framed" => self.framed = parse_bool(value)?,
             "frame_fg_color" => {
                 let color = parse_opt_color(value)?;

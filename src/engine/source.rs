@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 // Re-export object types so they remain accessible via `engine::source::*`.
 pub use super::objects::{
     Animation, Arrow, Art, Command, Group, HLine, Header, Label, List, Loop, Morph, MorphMode,
-    Rect, Table,
+    Rect, Table, TextAlign, VerticalAlign,
 };
 
 use crate::types::{AnimationRegion, CommandRegion, LoopRegion};

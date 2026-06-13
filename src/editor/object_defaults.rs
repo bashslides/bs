@@ -83,6 +83,8 @@ pub fn create_default(type_index: usize, current_frame: usize) -> SceneObject {
             height: Coordinate::Fixed(0.0),
             framed: false,
             frame_style: None,
+            align: TextAlign::default(),
+            valign: VerticalAlign::default(),
             style: Style::default(),
             frames,
             z_order: 0,
