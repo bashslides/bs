@@ -17,42 +17,73 @@ pub fn render_timeline(
     let frame_count = state.source.frame_count;
     let current = state.current_frame;
 
-    // Row 1: Frame numbers — or, for the jump/select inputs, the typed prompt.
+    // Row 1: the frame bar (slide range indicator) — always shown, including
+    // while typing a jump/select, where it live-previews the chosen slides.
     queue!(
         stdout,
         cursor::MoveTo(0, y),
         terminal::Clear(terminal::ClearType::CurrentLine),
     )?;
 
-    let frame_input = match &state.mode {
-        Mode::FrameJump { buf, cursor } => Some(("Jump to frame: ", buf, *cursor)),
-        Mode::FrameSelectInput { buf, cursor } => Some(("Select frames: ", buf, *cursor)),
-        _ => None,
-    };
-    if let Some((prefix, buf, cursor)) = frame_input {
-        let display = format!("{prefix}{buf}");
-        let caret = prefix.chars().count() + cursor;
-        super::panel::draw_caret_line(stdout, 0, y, &display, Some(caret), false, width)?;
-    } else if frame_count == 0 {
+    if frame_count == 0 {
         queue!(stdout, style::Print(" (no frames)"))?;
     } else {
         let segs = build_segments(state);
-        // In `FrameSelected`/`FrameRangePlace`, the chosen frames are highlighted
-        // alongside the current (scroll-cursor) frame.
-        let selected: &[usize] = match &state.mode {
-            Mode::FrameSelected { frames } => frames,
-            Mode::FrameRangePlace { frames, .. } => frames,
-            _ => &[],
+        // Frames highlighted alongside the current (scroll-cursor) frame: an
+        // explicit selection, a range being placed, or — while typing a frame
+        // jump/select — a live preview of the slides the input resolves to (so
+        // the frame bar stays put and shows what's about to be selected).
+        let live: Vec<usize> = match &state.mode {
+            Mode::FrameSelected { frames } | Mode::FrameRangePlace { frames, .. } => frames.clone(),
+            Mode::FrameSelectInput { buf, .. } => {
+                super::state::parse_frame_selection(buf, frame_count).unwrap_or_default()
+            }
+            Mode::FrameJump { buf, .. } => buf
+                .trim()
+                .parse::<usize>()
+                .ok()
+                .filter(|&n| (1..=frame_count).contains(&n))
+                .map(|n| vec![n - 1])
+                .unwrap_or_default(),
+            _ => Vec::new(),
         };
-        render_frame_bar(stdout, width, &segs, current, selected)?;
+        render_frame_bar(stdout, width, &segs, current, &live)?;
     }
 
-    // Row 2: Mode + status
+    // Row 2: Mode + status — or, while typing a frame jump/select, the input
+    // field with its instructions sitting on the same row right behind it.
     queue!(
         stdout,
         cursor::MoveTo(0, y + 1),
         terminal::Clear(terminal::ClearType::CurrentLine),
     )?;
+
+    let input_field = match &state.mode {
+        Mode::FrameJump { buf, cursor } => Some((
+            "Jump to frame: ",
+            buf.clone(),
+            *cursor,
+            format!("(1-{frame_count} · Enter: jump · Esc: cancel)"),
+        )),
+        Mode::FrameSelectInput { buf, cursor } => Some((
+            "Select frames: ",
+            buf.clone(),
+            *cursor,
+            "(e.g. 1,2,3 or 5-12 · Enter: select · Esc: cancel)".to_string(),
+        )),
+        _ => None,
+    };
+    if let Some((prefix, buf, cursor, instructions)) = input_field {
+        // A parse error (⚠) takes the trailing slot; otherwise the static hint.
+        let trailing = match state.status_message.as_deref() {
+            Some(s) if s.starts_with('\u{26a0}') => s.to_string(),
+            _ => instructions,
+        };
+        let display = format!("{prefix}{buf}   {trailing}");
+        let caret = prefix.chars().count() + cursor;
+        super::panel::draw_caret_line(stdout, 0, y + 1, &display, Some(caret), false, width)?;
+        return Ok(());
+    }
 
     let mode_str = match &state.mode {
         Mode::Normal => "NORMAL",

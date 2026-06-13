@@ -730,6 +730,9 @@ fn handle_frame_jump(state: &mut EditorState, key: KeyEvent) -> Action {
         return Action::Redraw;
     }
     if frame_text_key(&key, &mut buf, &mut cursor) {
+        // Editing clears any stale prompt/error so the row-2 hint (and the live
+        // frame-bar preview) reflect the current input.
+        state.status_message = None;
         state.mode = Mode::FrameJump { buf, cursor };
         return Action::Redraw;
     }
@@ -764,6 +767,9 @@ fn handle_frame_select_input(state: &mut EditorState, key: KeyEvent) -> Action {
         return Action::Redraw;
     }
     if frame_text_key(&key, &mut buf, &mut cursor) {
+        // Editing clears any stale ⚠ error so the row-2 hint (and the live
+        // frame-bar preview) reflect the current input.
+        state.status_message = None;
         state.mode = Mode::FrameSelectInput { buf, cursor };
         return Action::Redraw;
     }
