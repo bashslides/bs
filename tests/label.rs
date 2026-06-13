@@ -42,6 +42,31 @@ fn framed_label_draws_a_border_one_cell_outside_the_text() {
 }
 
 #[test]
+fn framed_label_at_the_origin_keeps_its_text_visible_inside_the_border() {
+    // A framed label at (0,0) (the default new-label position): there's no room
+    // to draw the border one cell outside, so the text shifts in by one and stays
+    // inside the box instead of vanishing under the top/left border.
+    let p = render_json(
+        r#"{
+            "width": 6, "height": 4, "frame_count": 1,
+            "objects": [
+                { "type": "label", "text": "Hi", "framed": true,
+                  "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+                  "frames": { "start": 0, "end": 1 } }
+            ]
+        }"#,
+    );
+    // Border anchored at the origin.
+    assert_eq!(char_at(&p, 0, 0, 0), '┌');
+    assert_eq!(char_at(&p, 0, 3, 0), '┐');
+    assert_eq!(char_at(&p, 0, 0, 2), '└');
+    assert_eq!(char_at(&p, 0, 3, 2), '┘');
+    // Text sits inside the box (shifted in by one), not hidden under the border.
+    assert_eq!(char_at(&p, 0, 1, 1), 'H');
+    assert_eq!(char_at(&p, 0, 2, 1), 'i');
+}
+
+#[test]
 fn frame_style_colours_the_border_independently_of_the_text() {
     let p = render_json(
         r#"{

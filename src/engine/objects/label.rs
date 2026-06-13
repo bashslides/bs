@@ -101,6 +101,18 @@ impl Resolve for Label {
 
         let has_bg = self.style.bg.is_some();
 
+        // The border sits one cell outside the text. Normally the text keeps its
+        // declared position; but at the canvas edge (base 0) there is no room
+        // outside, so the border would land *on* the text and hide it. There we
+        // shift the text in by one instead, keeping it inside the border. Away
+        // from the edge `draw_*` equals `base_*`, so positions are unchanged.
+        let (frame_x, frame_y) = (base_x.saturating_sub(1), base_y.saturating_sub(1));
+        let (draw_x, draw_y) = if self.framed {
+            (frame_x + 1, frame_y + 1)
+        } else {
+            (base_x, base_y)
+        };
+
         // Build a grid of characters when width > 0, so we can fill
         // remaining cells in the bounding box with bg-colored spaces.
         if w > 0 {
@@ -133,8 +145,8 @@ impl Resolve for Label {
                         continue;
                     }
                     ops.push(DrawOp {
-                        x: base_x + col as u16,
-                        y: base_y + r as u16,
+                        x: draw_x + col as u16,
+                        y: draw_y + r as u16,
                         ch,
                         style: self.style.clone(),
                         z_order: self.z_order,
@@ -145,8 +157,8 @@ impl Resolve for Label {
                 let border_style = self.frame_style.as_ref().unwrap_or(&self.style);
                 draw_frame(
                     ops,
-                    base_x.saturating_sub(1),
-                    base_y.saturating_sub(1),
+                    frame_x,
+                    frame_y,
                     w + 2,
                     rows.len() + 2,
                     border_style,
@@ -167,8 +179,8 @@ impl Resolve for Label {
                 }
                 for (col, ch) in line.chars().enumerate() {
                     ops.push(DrawOp {
-                        x: base_x + col as u16,
-                        y: base_y + row as u16,
+                        x: draw_x + col as u16,
+                        y: draw_y + row as u16,
                         ch,
                         style: self.style.clone(),
                         z_order: self.z_order,
@@ -180,8 +192,8 @@ impl Resolve for Label {
                 let border_style = self.frame_style.as_ref().unwrap_or(&self.style);
                 draw_frame(
                     ops,
-                    base_x.saturating_sub(1),
-                    base_y.saturating_sub(1),
+                    frame_x,
+                    frame_y,
                     max_len + 2,
                     (if h > 0 { h } else { row }) + 2,
                     border_style,
