@@ -260,8 +260,23 @@ pub fn matches_binding(binding: &str, event: &KeyEvent) -> bool {
                     return event.code == KeyCode::F(n);
                 }
             }
-            // Single character binding
+            // Single character binding. Letter bindings are *shift-aware* so they
+            // work across terminals that report Shift+letter differently — as
+            // `Char('S')` with no flag (no enhancement), `Char('S')+SHIFT`, or
+            // `Char('s')+SHIFT` (Kitty/enhanced terminals send the base keysym).
             if let Some(c) = s.chars().next() {
+                let shift = event.modifiers.contains(KeyModifiers::SHIFT);
+                if c.is_ascii_uppercase() {
+                    // A capital-letter binding = that letter with Shift, however
+                    // the terminal encodes it.
+                    return matches!(event.code,
+                        KeyCode::Char(k) if k == c || (shift && k.eq_ignore_ascii_case(&c)));
+                }
+                if c.is_ascii_lowercase() {
+                    // A plain letter; Shift+letter is a *different* binding, so a
+                    // shifted press must not trigger the lowercase action.
+                    return !shift && event.code == KeyCode::Char(c);
+                }
                 event.code == KeyCode::Char(c)
             } else {
                 false
@@ -291,15 +306,27 @@ mod tests {
     }
 
     #[test]
-    fn default_save_as_is_a_reliable_capital_s() {
-        // The default save-as binding must fire on a plain Shift+S — reported by
-        // every terminal (no keyboard-enhancement needed), the same way `F`
-        // drives fullscreen — without colliding with lowercase `s` or Ctrl-s.
-        let save_as = default_save_as();
-        assert!(matches_binding(&save_as, &ev(KeyCode::Char('S'), KeyModifiers::SHIFT)));
-        assert!(matches_binding(&save_as, &ev(KeyCode::Char('S'), KeyModifiers::NONE)));
-        // Does not fire on lowercase `s` (select-object) or Ctrl-s (save).
-        assert!(!matches_binding(&save_as, &ev(KeyCode::Char('s'), KeyModifiers::NONE)));
-        assert!(!matches_binding(&save_as, &ev(KeyCode::Char('s'), KeyModifiers::CONTROL)));
+    fn capital_letter_binding_matches_every_shift_encoding() {
+        // A capital-letter binding (e.g. save-as `S`) must fire on Shift+S
+        // however the terminal reports it: `Char('S')` with no flag, with SHIFT,
+        // or `Char('s')+SHIFT` (Kitty/enhanced terminals send the base keysym).
+        let s = "S";
+        assert!(matches_binding(s, &ev(KeyCode::Char('S'), KeyModifiers::NONE)));
+        assert!(matches_binding(s, &ev(KeyCode::Char('S'), KeyModifiers::SHIFT)));
+        assert!(matches_binding(s, &ev(KeyCode::Char('s'), KeyModifiers::SHIFT)));
+        // But never on a plain (unshifted) `s`, nor with Ctrl held.
+        assert!(!matches_binding(s, &ev(KeyCode::Char('s'), KeyModifiers::NONE)));
+        assert!(!matches_binding(s, &ev(KeyCode::Char('s'), KeyModifiers::CONTROL)));
+        assert_eq!(default_save_as(), s); // the save-as default is exactly this
+    }
+
+    #[test]
+    fn lowercase_binding_does_not_fire_on_a_shifted_letter() {
+        // Lowercase `s` (select-object) must match a plain `s` but NOT Shift+S —
+        // otherwise a shifted press meant for the capital-`S` binding would be
+        // swallowed by the lowercase one (the save-as "no popup" bug).
+        assert!(matches_binding("s", &ev(KeyCode::Char('s'), KeyModifiers::NONE)));
+        assert!(!matches_binding("s", &ev(KeyCode::Char('s'), KeyModifiers::SHIFT)));
+        assert!(!matches_binding("s", &ev(KeyCode::Char('S'), KeyModifiers::SHIFT)));
     }
 }
