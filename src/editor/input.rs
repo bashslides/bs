@@ -35,6 +35,7 @@ fn mode_accepts_text(mode: &Mode) -> bool {
         | Mode::TableAddColumn { .. }
         | Mode::TableRemoveColumn { .. }
         | Mode::LoadArtFile { .. }
+        | Mode::SaveAs { .. }
         | Mode::FrameJump { .. }
         | Mode::FrameSelectInput { .. } => true,
         Mode::TableEditCellProps { sub_state, .. } => match sub_state {
@@ -74,6 +75,7 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
 
     match &state.mode {
         Mode::Normal => handle_normal(state, key),
+        Mode::SaveAs { .. } => handle_save_as(state, key),
         Mode::FrameMenu => handle_frame_menu(state, key),
         Mode::FrameJump { .. } => handle_frame_jump(state, key),
         Mode::FrameSelectInput { .. } => handle_frame_select_input(state, key),
@@ -533,6 +535,16 @@ fn handle_normal(state: &mut EditorState, key: KeyEvent) -> Action {
         }
         return Action::Redraw;
     }
+    // Save-as is checked before plain save: on terminals that report it,
+    // Ctrl+Shift+S also carries CONTROL so the plain Ctrl-s binding would match
+    // it too — order gives the more specific binding priority.
+    if matches_binding(&bindings.save_as, &key) {
+        let buf = state.file_path.clone();
+        let cursor = buf.chars().count();
+        state.mode = Mode::SaveAs { buf, cursor };
+        state.status_message = Some("Save as — type a filename".into());
+        return Action::Redraw;
+    }
     if matches_binding(&bindings.save, &key) {
         match state.save() {
             Ok(()) => {}
@@ -650,6 +662,43 @@ fn handle_frame_menu(state: &mut EditorState, key: KeyEvent) -> Action {
         return Action::Redraw;
     }
 
+    Action::Continue
+}
+
+/// "Save as" filename input: type a path, Enter writes the deck there (adopting
+/// the new path), Esc cancels.
+fn handle_save_as(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+    let (mut buf, mut cursor) = match &state.mode {
+        Mode::SaveAs { buf, cursor } => (buf.clone(), *cursor),
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::Normal;
+        state.status_message = Some("Save as cancelled".into());
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.confirm, &key) {
+        let path = buf.trim();
+        if path.is_empty() {
+            state.status_message = Some("Enter a filename".into());
+            return Action::Redraw;
+        }
+        match state.save_as(path) {
+            Ok(()) => state.mode = Mode::Normal,
+            // Stay in the input so the path can be corrected.
+            Err(e) => {
+                state.status_message = Some(format!("Save failed: {e}"));
+                state.mode = Mode::SaveAs { buf, cursor };
+            }
+        }
+        return Action::Redraw;
+    }
+    if frame_text_key(&key, &mut buf, &mut cursor) {
+        state.mode = Mode::SaveAs { buf, cursor };
+        return Action::Redraw;
+    }
     Action::Continue
 }
 

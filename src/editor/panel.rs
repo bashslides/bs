@@ -964,3 +964,49 @@ pub fn render_text_overlay(
     Ok(())
 }
 
+/// Render the centred "Save As" popup: a single-line filename input with a
+/// title on the top edge and a hint on the bottom edge.
+pub fn render_save_as_overlay(
+    stdout: &mut io::Stdout,
+    layout: &Layout,
+    state: &EditorState,
+) -> anyhow::Result<()> {
+    let (buf, cursor) = match &state.mode {
+        Mode::SaveAs { buf, cursor } => (buf.clone(), *cursor),
+        _ => return Ok(()),
+    };
+
+    let (bx, by, bw, bh) = super::ui::save_as_overlay(layout);
+    if bw < 4 || bh < 3 {
+        return Ok(());
+    }
+    let inner_w = (bw - 2) as usize;
+
+    // Horizontal scroll so the caret stays in view on a long path.
+    let chars: Vec<char> = buf.chars().collect();
+    let h_off = if cursor >= inner_w { cursor - inner_w + 1 } else { 0 };
+    let window: String = (0..inner_w).map(|c| chars.get(h_off + c).copied().unwrap_or(' ')).collect();
+    let caret = cursor - h_off;
+
+    let title: String = " Save As ".chars().take(inner_w).collect();
+    let hint: String = " Enter: save · Esc: cancel ".chars().take(inner_w).collect();
+    let top: String = std::iter::once('\u{250c}')
+        .chain(title.chars())
+        .chain(std::iter::repeat('\u{2500}').take(inner_w.saturating_sub(title.chars().count())))
+        .chain(std::iter::once('\u{2510}'))
+        .collect();
+    let bottom: String = std::iter::once('\u{2514}')
+        .chain(hint.chars())
+        .chain(std::iter::repeat('\u{2500}').take(inner_w.saturating_sub(hint.chars().count())))
+        .chain(std::iter::once('\u{2518}'))
+        .collect();
+
+    queue!(stdout, cursor::MoveTo(bx, by), style::Print(top))?;
+    queue!(stdout, cursor::MoveTo(bx, by + 1), style::Print("\u{2502}"))?;
+    draw_caret_line(stdout, bx + 1, by + 1, &window, Some(caret), false, inner_w)?;
+    queue!(stdout, cursor::MoveTo(bx + 1 + inner_w as u16, by + 1), style::Print("\u{2502}"))?;
+    queue!(stdout, cursor::MoveTo(bx, by + 2), style::Print(bottom))?;
+
+    Ok(())
+}
+

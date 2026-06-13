@@ -215,6 +215,12 @@ pub enum Mode {
         /// Text cursor within the selected field's buffer.
         cursor: usize,
     },
+    /// "Save as" — a centred popup for typing the filename to write to. Enter
+    /// saves (and adopts the new path); Esc cancels.
+    SaveAs {
+        buf: String,
+        cursor: usize,
+    },
     /// Frame operations sub-menu (opened with [f]rame from Normal): add a
     /// blank frame, copy/delete the current frame, jump, select, or move it.
     FrameMenu,
@@ -321,6 +327,14 @@ impl EditorState {
             .with_context(|| format!("Failed to write {}", self.file_path))?;
         self.dirty = false;
         self.status_message = Some("Saved".into());
+        Ok(())
+    }
+
+    /// Save to `path`, adopting it as the deck's file so later saves go there too.
+    pub fn save_as(&mut self, path: &str) -> Result<()> {
+        self.file_path = path.to_string();
+        self.save()?;
+        self.status_message = Some(format!("Saved as {path}"));
         Ok(())
     }
 
@@ -1429,6 +1443,24 @@ mod tests {
         assert!(parse_frame_selection("7-3", 10).is_err()); // reversed range
         assert!(parse_frame_selection("", 10).is_err()); // nothing
         assert!(parse_frame_selection("20-30", 10).is_err()); // all out of range
+    }
+
+    #[test]
+    fn save_as_writes_the_file_and_adopts_the_path() {
+        let target = std::env::temp_dir().join("bs_save_as_unit_test.json");
+        let target = target.to_str().unwrap().to_string();
+        let _ = std::fs::remove_file(&target);
+
+        let mut state = EditorState::open("/tmp/bs_save_as_orig_absent_99.json").unwrap();
+        state.save_as(&target).unwrap();
+
+        assert_eq!(state.file_path, target); // adopted the new path
+        assert!(std::path::Path::new(&target).exists());
+        assert!(!state.dirty);
+        // It's valid JSON for a SourcePresentation.
+        let json = std::fs::read_to_string(&target).unwrap();
+        let _: SourcePresentation = serde_json::from_str(&json).unwrap();
+        let _ = std::fs::remove_file(&target);
     }
 
     #[test]

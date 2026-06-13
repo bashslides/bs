@@ -22,8 +22,14 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[f]rame",
             "settin[g]s",
             "[Ctrl-s]ave",
+            "[Ctrl-Shift-s] save as",
             "[q]uit",
             "[F]ull",
+        ],
+        Mode::SaveAs { .. } => vec![
+            "[type] filename",
+            "[Enter] save",
+            "[Esc] cancel",
         ],
         Mode::FrameMenu => vec![
             "[a]dd blank",

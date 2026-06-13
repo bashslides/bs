@@ -72,6 +72,7 @@ pub fn render_timeline(
         Mode::TableAddColumn { .. } => "ADD COL",
         Mode::TableRemoveColumn { .. } => "REMOVE COL",
         Mode::TableEditCellProps { .. } => "EDIT CELLS",
+        Mode::SaveAs { .. } => "SAVE AS",
         Mode::FrameMenu => "FRAME",
         Mode::FrameJump { .. } => "JUMP",
         Mode::FrameSelectInput { .. } => "SELECT FRAMES",

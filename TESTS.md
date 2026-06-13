@@ -267,6 +267,12 @@ reconstructed character grid (some also assert on cell styles).
 | `create_default_covers_every_object_type` | `create_default` builds the expected variant for every `OBJECT_TYPES` index |
 | `every_type_has_a_unique_shortcut_key` | Each type has a unique quick-add key (case-insensitive, not the global `f`) aligned with `OBJECT_TYPES` |
 
+### Key bindings — `src/editor/config.rs`
+
+| Test | Verifies |
+|------|----------|
+| `ctrl_shift_binding_requires_both_modifiers` | `Ctrl-Shift-` bindings need both modifiers (char case-insensitive); Ctrl-only still matches the plain `Ctrl-` binding |
+
 ### Animate sub-menu fields — `src/editor/input.rs`
 
 | Test | Verifies |
@@ -295,6 +301,7 @@ reconstructed character grid (some also assert on cell styles).
 | `parse_frame_selection_handles_lists_ranges_and_mixes` | `1,2,3` / `5-12` / mixes parse to 0-based, sorted, de-duplicated, clamped indices |
 | `parse_frame_selection_rejects_bad_input` | Frame 0, non-numbers, reversed ranges, empty, and all-out-of-range are rejected |
 | `delete_frames_removes_highest_first_and_keeps_one` | Multi-delete removes highest index first and never empties the deck (keeps ≥1) |
+| `save_as_writes_the_file_and_adopts_the_path` | `save_as` writes valid JSON to the new path, adopts it as `file_path`, and clears `dirty` |
 | `animation_span_unions_animated_coordinates_and_makes_end_exclusive` | `scene_object_animation_span` unions every animated coordinate's window into an exclusive `[start, end)`; `None` when nothing is animated |
 | `add_frames_and_share_grows_the_deck_and_shares_elements` | Animating over N frames inserts N-1 fresh frames and extends every current-frame element to span them (shared object) |
 | `add_frames_and_share_inserts_n_minus_1_fresh_frames` | N-1 *new* frames are always inserted after the current one (existing frames shift back), not reused — even when the deck already has frames in the span |

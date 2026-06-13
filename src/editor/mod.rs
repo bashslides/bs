@@ -180,6 +180,8 @@ impl Editor {
         // Multi-line text editing draws a centred overlay over the canvas; a
         // no-op unless a Text property value is currently being edited.
         panel::render_text_overlay(stdout, &layout, &self.state)?;
+        // The "Save As" filename popup (no-op unless in that mode).
+        panel::render_save_as_overlay(stdout, &layout, &self.state)?;
 
         stdout.flush()?;
         Ok(())

@@ -27,6 +27,16 @@ pub fn text_overlay(layout: &Layout) -> (u16, u16, u16, u16) {
     (x, y, w, h)
 }
 
+/// Centred geometry for the single-line "Save As" popup: `(x, y, w, h)` with a
+/// fixed 3-row height (top border + input line + bottom border).
+pub fn save_as_overlay(layout: &Layout) -> (u16, u16, u16, u16) {
+    let w = layout.canvas_width.min(60).max(16);
+    let h = 3u16;
+    let x = layout.canvas_x + layout.canvas_width.saturating_sub(w) / 2;
+    let y = layout.canvas_y + layout.canvas_height.saturating_sub(h) / 2;
+    (x, y, w, h)
+}
+
 impl Layout {
     pub fn compute(term_width: u16, term_height: u16, mode: &Mode, fullscreen: bool) -> Self {
         let right = match mode {

@@ -22,6 +22,9 @@ pub struct KeyBindings {
     #[serde(default = "default_paste")]
     pub paste: String,
     pub save: String,
+    /// Save under a new filename (prompts for the path).
+    #[serde(default = "default_save_as")]
+    pub save_as: String,
     pub quit: String,
     pub confirm: String,
     pub cancel: String,
@@ -92,6 +95,7 @@ fn default_open_settings() -> String { "g".into() }
 fn default_resize_object() -> String { "r".into() }
 fn default_fullscreen() -> String { "F".into() }
 fn default_copy() -> String { "c".into() }
+fn default_save_as() -> String { "Ctrl-Shift-s".into() }
 fn default_paste() -> String { "v".into() }
 fn default_frame_menu() -> String { "f".into() }
 fn default_frame_add() -> String { "a".into() }
@@ -116,6 +120,7 @@ impl Default for EditorConfig {
                 copy: default_copy(),
                 paste: default_paste(),
                 save: "Ctrl-s".into(),
+                save_as: default_save_as(),
                 quit: "q".into(),
                 confirm: "Enter".into(),
                 cancel: "Esc".into(),
@@ -173,6 +178,23 @@ impl EditorConfig {
 
 /// Check whether a crossterm `KeyEvent` matches a binding string from config.
 pub fn matches_binding(binding: &str, event: &KeyEvent) -> bool {
+    // Handle Ctrl-Shift- prefix (must come before the bare Ctrl- check). Requires
+    // both modifiers; the char is matched case-insensitively since Shift may
+    // upper-case it. Only terminals with keyboard-enhancement report Ctrl+Shift+
+    // letter distinctly — elsewhere it is indistinguishable from Ctrl+letter, so
+    // such a binding silently falls back to colliding with the plain Ctrl- one.
+    if let Some(ch) = binding.strip_prefix("Ctrl-Shift-") {
+        if !(event.modifiers.contains(KeyModifiers::CONTROL)
+            && event.modifiers.contains(KeyModifiers::SHIFT))
+        {
+            return false;
+        }
+        return match ch.chars().next() {
+            Some(c) => matches!(event.code, KeyCode::Char(k) if k.eq_ignore_ascii_case(&c)),
+            None => false,
+        };
+    }
+
     // Handle Alt- prefix
     if let Some(rest) = binding.strip_prefix("Alt-") {
         if !event.modifiers.contains(KeyModifiers::ALT) {
@@ -242,5 +264,26 @@ pub fn matches_binding(binding: &str, event: &KeyEvent) -> bool {
                 false
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ev(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
+        KeyEvent::new(code, mods)
+    }
+
+    #[test]
+    fn ctrl_shift_binding_requires_both_modifiers() {
+        let cs = KeyModifiers::CONTROL | KeyModifiers::SHIFT;
+        // Ctrl+Shift+S matches "Ctrl-Shift-s" (char matched case-insensitively).
+        assert!(matches_binding("Ctrl-Shift-s", &ev(KeyCode::Char('s'), cs)));
+        assert!(matches_binding("Ctrl-Shift-s", &ev(KeyCode::Char('S'), cs)));
+        // Ctrl+S alone (no Shift) does not match the save-as binding...
+        assert!(!matches_binding("Ctrl-Shift-s", &ev(KeyCode::Char('s'), KeyModifiers::CONTROL)));
+        // ...and the plain Ctrl-s binding still matches Ctrl+S.
+        assert!(matches_binding("Ctrl-s", &ev(KeyCode::Char('s'), KeyModifiers::CONTROL)));
     }
 }
