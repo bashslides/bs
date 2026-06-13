@@ -180,12 +180,20 @@ impl Player {
                         // moves on — a slow command (or a loop) can never trap
                         // the deck. Inside a loop, → breaks out to the first
                         // frame after it and ← to the first frame before it.
+                        // On an auto-play animation (no loop), an arrow skips the
+                        // whole animation: → to the first frame past the last-
+                        // ending overlapping span, ← to the slide before the
+                        // earliest-starting one.
                         Right | Char(' ') | Enter => {
                             if let Some(lp) = self.loop_play.take() {
                                 let last = self.presentation.frames.len().saturating_sub(1);
                                 let target = lp.region.end_frame.min(last);
                                 self.nav_to(target, stdout)?;
                                 self.arm_loop(Some(span(&lp.region)));
+                            } else if let Some((_, hi)) = self.animation_cluster(self.current_frame) {
+                                let last = self.presentation.frames.len().saturating_sub(1);
+                                self.nav_to(hi.min(last), stdout)?;
+                                self.arm_loop(None);
                             } else {
                                 self.nav_forward(stdout)?;
                                 self.arm_loop(None);
@@ -196,6 +204,9 @@ impl Player {
                                 let target = lp.region.start_frame.saturating_sub(1);
                                 self.nav_to(target, stdout)?;
                                 self.arm_loop(Some(span(&lp.region)));
+                            } else if let Some((lo, _)) = self.animation_cluster(self.current_frame) {
+                                self.nav_to(lo.saturating_sub(1), stdout)?;
+                                self.arm_loop(None);
                             } else {
                                 self.nav_back(stdout)?;
                                 self.arm_loop(None);
@@ -297,6 +308,55 @@ impl Player {
             .filter(|a| a.auto_play && a.start_frame <= lo && lo + 1 < a.end_frame)
             .map(|a| a.delay_ms)
             .min()
+    }
+
+    /// The merged span `[lo, hi)` of the connected cluster of **auto-play**
+    /// animations covering `frame` — every auto-play animation reachable, by
+    /// overlap, from one that covers `frame`. `None` when no auto-play animation
+    /// covers `frame`. Arrow navigation uses this to skip a whole animation (or a
+    /// chain of overlapping ones) in one keypress: `→` jumps to `hi` (the first
+    /// frame past the last-ending span), `←` to `lo - 1` (the slide before the
+    /// earliest-starting span).
+    fn animation_cluster(&self, frame: usize) -> Option<(usize, usize)> {
+        let auto: Vec<(usize, usize)> = self
+            .presentation
+            .animations
+            .iter()
+            .filter(|a| a.auto_play)
+            .map(|a| (a.start_frame, a.end_frame))
+            .collect();
+        // Seed the cluster with every span covering `frame`.
+        let mut lo = usize::MAX;
+        let mut hi = 0usize;
+        for &(s, e) in &auto {
+            if s <= frame && frame < e {
+                lo = lo.min(s);
+                hi = hi.max(e);
+            }
+        }
+        if lo == usize::MAX {
+            return None;
+        }
+        // Grow across overlaps (`s < hi && lo < e`) until the cluster is closed.
+        loop {
+            let mut grew = false;
+            for &(s, e) in &auto {
+                if s < hi && lo < e {
+                    if s < lo {
+                        lo = s;
+                        grew = true;
+                    }
+                    if e > hi {
+                        hi = e;
+                        grew = true;
+                    }
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        Some((lo, hi))
     }
 
     /// (Re)arm the non-loop auto-advance timer for the current frame. A loop, if
@@ -1005,6 +1065,54 @@ mod tests {
         a.auto_play = false;
         let p = player_with(8, vec![a]);
         assert_eq!(p.auto_advance_delay(3, true), None);
+    }
+
+    #[test]
+    fn animation_cluster_spans_a_single_animation() {
+        // Animation [2,5): every covered frame yields the same span; frames
+        // outside (1 before, 5 = exclusive end) yield None.
+        let p = player_with(8, vec![anim(2, 5, 300)]);
+        assert_eq!(p.animation_cluster(2), Some((2, 5)));
+        assert_eq!(p.animation_cluster(4), Some((2, 5)));
+        assert_eq!(p.animation_cluster(1), None);
+        assert_eq!(p.animation_cluster(5), None);
+    }
+
+    #[test]
+    fn animation_cluster_merges_overlapping_animations() {
+        // [0,6) and [3,8) overlap → one cluster [0,8) for any frame either covers.
+        let p = player_with(10, vec![anim(0, 6, 500), anim(3, 8, 200)]);
+        assert_eq!(p.animation_cluster(1), Some((0, 8))); // only [0,6) covers 1, grown via overlap
+        assert_eq!(p.animation_cluster(7), Some((0, 8))); // only [3,8) covers 7, grown via overlap
+    }
+
+    #[test]
+    fn animation_cluster_keeps_disjoint_and_touching_animations_separate() {
+        // [1,3) and [3,5) touch at the boundary but share no frame → not merged.
+        let p = player_with(8, vec![anim(1, 3, 300), anim(3, 5, 300)]);
+        assert_eq!(p.animation_cluster(2), Some((1, 3)));
+        assert_eq!(p.animation_cluster(3), Some((3, 5)));
+    }
+
+    #[test]
+    fn animation_cluster_ignores_non_auto_play_animations() {
+        let mut a = anim(2, 6, 300);
+        a.auto_play = false;
+        let p = player_with(8, vec![a]);
+        assert_eq!(p.animation_cluster(3), None);
+    }
+
+    #[test]
+    fn animation_cluster_skip_target_clamps_to_the_last_frame() {
+        // 8 frames (0..=7); animation runs to the last frame ([5,8), end == len).
+        // The forward skip target `hi.min(last)` lands on the last frame itself.
+        let p = player_with(8, vec![anim(5, 8, 300)]);
+        let (_, hi) = p.animation_cluster(6).unwrap();
+        let last = 7;
+        assert_eq!(hi.min(last), 7); // "just jump there"
+        // Backward: the slide before the earliest start.
+        let (lo, _) = p.animation_cluster(6).unwrap();
+        assert_eq!(lo.saturating_sub(1), 4);
     }
 
     /// Replay a loop from `start` for `steps` ticks, collecting the frames shown

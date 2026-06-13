@@ -236,6 +236,11 @@ reconstructed character grid (some also assert on cell styles).
 | `auto_advance_delay_takes_the_minimum_over_overlapping_animations` | Where auto-play spans overlap, the boundary delay is the minimum of theirs |
 | `auto_advance_delay_handles_backward_boundaries` | Backward stepping uses the boundary below the frame |
 | `auto_advance_delay_ignores_non_auto_play_animations` | A non-auto-play animation never drives auto-advance |
+| `animation_cluster_spans_a_single_animation` | The skip cluster for a covered frame is the animation's span; frames outside (incl. the exclusive end) yield `None` |
+| `animation_cluster_merges_overlapping_animations` | Overlapping auto-play spans merge into one cluster, so a skip clears them all in one keypress |
+| `animation_cluster_keeps_disjoint_and_touching_animations_separate` | Spans that only touch at a boundary (share no frame) stay separate clusters |
+| `animation_cluster_ignores_non_auto_play_animations` | A non-auto-play animation forms no skip cluster |
+| `animation_cluster_skip_target_clamps_to_the_last_frame` | `→` skip target `hi.min(last)` lands on the last frame when the animation ends there; `←` target is the slide before the earliest start |
 
 ### Word-wrap — `src/engine/objects/wrap.rs`
 
@@ -354,4 +359,5 @@ These run only in the interactive TUI / at play time and are verified manually.
 |------|--------|
 | `Command` run-loop | Spawn, piped I/O, timeout, ✓/✗ status — runs at play time in the TUI |
 | `Loop` run-loop | Timer-based auto-advance, bounce playback, arrow-key break-out — play time in the TUI (the pure `loop_next` step fn is unit-tested) |
+| `Animation` run-loop | Auto-advance across spans + arrow-key skip — play time in the TUI (the pure `auto_advance_delay` and `animation_cluster` are unit-tested) |
 | Editor | Mode FSM transitions, immediate-edit-on-add, panel rendering — interactive TUI |

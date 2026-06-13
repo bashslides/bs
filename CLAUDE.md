@@ -82,7 +82,10 @@ baked into the frames via the objects' `Coordinate::Animated` fields. An
 `Animation` records the *span* those coordinates play over (`frames`) plus its
 **auto-play** config (`auto_play`, `delay_ms`) and emits an `AnimationRegion`
 sidecar. When `auto_play` is set, the `Player` auto-advances across the span on a
-timer. Unlike loops, animations **may overlap** freely — where several auto-play
+timer, and an arrow key **skips** the whole span — `→` to the first frame past
+the last-ending overlapping animation (clamped to the last frame), `←` to the
+slide before the earliest-starting one (`Player::animation_cluster`). Unlike
+loops, animations **may overlap** freely — where several auto-play
 animations cover the same frame boundary, the effective advance delay is the
 **minimum** of their `delay_ms` (`Player::auto_advance_delay`). Animations are
 created by the editor's **animate sub-menu** (not Add Object); they are still
@@ -130,7 +133,7 @@ auto groups (their members shift instead).
 | `src/engine/objects/` | Thirteen `SceneObject` types: `Label`, `HLine`, `Rect`, `Header`, `Group`, `Arrow`, `Table`, `Art`, `Command`, `List`, `Loop`, `Morph`, `Animation` — each implements `Resolve`. See the module-doc checklist in `mod.rs` for every site a new type touches. `List` (ordered/unordered) shares `Label`'s text-editing UX and the shared `wrap` helper. `Loop` (like `Group`) draws nothing; its `frames` range is the loop range and it emits a `LoopRegion` sidecar. `Morph` blends two inline ASCII-art grids (`from`→`to`) across its `frames` range — each cell flips to the `to` glyph once playback progress passes that cell's per-cell threshold (`MorphMode`: `dissolve` or four directional wipes). Fully baked into static frames in `resolve`, so the editor preview shows it for free. `Animation` (also draws nothing) marks an auto-play *span* and emits an `AnimationRegion` sidecar; it is created by the animate sub-menu, not the Add-Object menu (the only type absent from `OBJECT_TYPES`) |
 | `src/art_library.rs` | Built-in + user ASCII-art palette (`~/.config/bs/art/`, one file per piece); pieces are copied into self-contained `Art` objects when added. Includes a matched `ball`/`square` pair used as the default `Morph` endpoints. The picker (`Mode::AddArt`/`LoadArtFile`) carries an `ArtPick` purpose so the same flow serves a standalone `Art` or the two-stage `from`/`to` pick of a `Morph` |
 | `src/renderer/mod.rs` | Rasterizes DrawOps into cell grid; diffs frames |
-| `src/player/mod.rs` | Playback loop, keyboard nav (arrows, space, q, f=fullscreen); runs `Command` objects (piped, async, timeout) and overlays output; drives `Loop` regions (timer-based auto-advance + bounce + arrow-key break-out) via the pure `loop_next` step fn; auto-advances across auto-play `Animation` spans (`auto_deadline`), using `auto_advance_delay` = the **min** `delay_ms` over the animations covering each boundary, with the loop's own delay as the fallback for gaps inside a loop |
+| `src/player/mod.rs` | Playback loop, keyboard nav (arrows, space, q, f=fullscreen); runs `Command` objects (piped, async, timeout) and overlays output; drives `Loop` regions (timer-based auto-advance + bounce + arrow-key break-out) via the pure `loop_next` step fn; auto-advances across auto-play `Animation` spans (`auto_deadline`), using `auto_advance_delay` = the **min** `delay_ms` over the animations covering each boundary, with the loop's own delay as the fallback for gaps inside a loop. On an auto-play animation (no loop), an arrow **skips** the whole span: `→` jumps to the first frame past the last-ending overlapping animation (clamped to the last frame), `←` to the slide before the earliest-starting one — the merged cluster comes from `animation_cluster` (connected by overlap) |
 | `src/editor/mod.rs` | Editor lifecycle, raw mode setup, main loop |
 | `src/editor/state.rs` | `EditorState` (incl. `clipboard` + `clipboard_sources` for copy/paste), `Mode` enum (~27 variants, incl. table sub-modes, art picker, frame sub-menu/move/overlay/jump/select/range-place, `MultiSelect`, `PastePlacing`). Frame ops: `insert_blank_frame` + `insert_blank_frames_at` (N-frame generalisation), `copy_frame` (deep-clone duplicate into a *new* frame), `overlay_frame` (deep-clone paste onto an *existing* frame, no new frame), `move_frame`/`move_frames` (relocate one frame or a block — both via the shared `remap_ranges_through_pos` permutation), `copy_frames` (duplicate a contiguous block as new frames), `parse_frame_selection` (`1,2,3`/`5-12` → indices) + `delete_frames` (multi-delete, highest-first, keeps ≥1). Copy/paste helpers: `expand_selection` (pull in a group's members), `clone_selection` (self-contained deep clone with selection-local member remap). Object delete fixes both `Group.members` and `links` families (`adjust_group_members_after_delete`) as objects are pruned |
 | `src/editor/config.rs` | `KeyBindings` — all bindings configurable via `~/.config/bs/editor.json`. `matches_binding` parses `Ctrl-`, `Alt-`, and `Ctrl-Shift-` prefixes (the last requires keyboard-enhancement to be distinguishable) |
@@ -322,10 +325,11 @@ Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
 `engine/objects/wrap.rs`, `editor/textedit.rs`, `editor/object_defaults.rs`,
 `editor/state.rs` — frame copy/blank-insert/move/delete + `add_frames_and_share`
 + `upsert_animation`, `player/mod.rs` — `loop_next` bounce/wrap stepping +
-`auto_advance_delay` min-over-overlap; copy/paste `expand_selection` +
+`auto_advance_delay` min-over-overlap + `animation_cluster` overlap-merging;
+copy/paste `expand_selection` +
 `clone_selection` + `link_siblings` + link-family delete maintenance). The suite
-totals 189 tests (100 integration
-+ 89 inline); `TESTS.md` is the authoritative per-test list.
+totals 194 tests (100 integration
++ 94 inline); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the
