@@ -351,37 +351,28 @@ pub fn render_right_panel(
 
     // AnimateProperty panel
     if matches!(state.mode, Mode::AnimateProperty { .. }) {
-        let (property_name, selected_field, editing, cursor, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames) =
+        let (property_name, selected_field, editing, cursor, from, to, from_y, to_y, two_axis, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames) =
             match &state.mode {
                 Mode::AnimateProperty {
                     property_name, selected_field, editing, cursor,
-                    from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames, ..
-                } => (*property_name, *selected_field, editing, *cursor, *from, *to, *start_frame, *end_frame, *add_frames, *auto_play, *delay_ms, *gap_frames),
+                    from, to, from_y, to_y, two_axis, start_frame, end_frame,
+                    add_frames, auto_play, delay_ms, gap_frames, ..
+                } => (*property_name, *selected_field, editing, *cursor, *from, *to, *from_y, *to_y, *two_axis, *start_frame, *end_frame, *add_frames, *auto_play, *delay_ms, *gap_frames),
                 _ => unreachable!(),
             };
 
-        let title = format!("Animate: {property_name}");
+        let title = if two_axis { "Animate: position".to_string() } else { format!("Animate: {property_name}") };
         let title: String = title.chars().take((pw - 2) as usize).collect();
         draw_header(stdout, &title)?;
 
-        let checkbox = |b: bool| if b { "[x]" } else { "[ ]" };
-        let field_names = ["from", "to", "start", "end", "add frames", "auto play", "delay ms", "gap frames"];
-        // `start`/`end` are shown 1-based to match the property panel's
-        // first_frame/last_frame (an animation through 0-based `end_frame` reads
-        // as slide `end_frame + 1`). `from`/`to` are coordinate values, shown raw.
-        // `add frames`/`auto play` render as checkboxes (toggled, never typed).
-        let field_values = [
-            from.to_string(),
-            to.to_string(),
-            (start_frame + 1).to_string(),
-            (end_frame + 1).to_string(),
-            checkbox(add_frames).to_string(),
-            checkbox(auto_play).to_string(),
-            delay_ms.to_string(),
-            gap_frames.to_string(),
-        ];
+        // The (label, value) rows come from the shared role layout (input.rs):
+        // two-axis sessions show x/y from/to; `add frames`/`auto play` are
+        // checkboxes; `start`/`end` are shown 1-based.
+        let rows = super::input::anim_field_rows(
+            two_axis, from, to, from_y, to_y, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames,
+        );
 
-        for i in 0..field_names.len() {
+        for (i, (name, value)) in rows.iter().enumerate() {
             let y = cy + (i as u16 + 2);
             if y >= cy + layout.canvas_height {
                 break;
@@ -389,18 +380,18 @@ pub fn render_right_panel(
             let (display, caret): (String, Option<usize>) = if i == selected_field {
                 if let Some(buf) = editing {
                     let cur = cursor.min(buf.chars().count());
-                    let prefix = format!("{}: ", field_names[i]);
+                    let prefix = format!("{name}: ");
                     let plen = prefix.chars().count();
                     let display: String =
                         format!("{prefix}{buf}").chars().take(max_width).collect();
                     (display, Some(plen + cur))
                 } else {
-                    let display: String = format!("{}: {}", field_names[i], field_values[i])
+                    let display: String = format!("{name}: {value}")
                         .chars().take(max_width).collect();
                     (display, None)
                 }
             } else {
-                let display: String = format!("{}: {}", field_names[i], field_values[i])
+                let display: String = format!("{name}: {value}")
                     .chars().take(max_width).collect();
                 (display, None)
             };
@@ -413,7 +404,7 @@ pub fn render_right_panel(
         }
 
         // Hint row, just below the field list.
-        let hint_y = cy + 2 + field_names.len() as u16;
+        let hint_y = cy + 2 + rows.len() as u16;
         if hint_y < cy + layout.canvas_height {
             queue!(stdout, cursor::MoveTo(panel_x + 2, hint_y))?;
             let hint: String = "[Space]toggle [s]save [x]\u{2192}fixed"

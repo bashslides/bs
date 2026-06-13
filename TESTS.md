@@ -267,6 +267,13 @@ reconstructed character grid (some also assert on cell styles).
 | `create_default_covers_every_object_type` | `create_default` builds the expected variant for every `OBJECT_TYPES` index |
 | `every_type_has_a_unique_shortcut_key` | Each type has a unique quick-add key (case-insensitive, not the global `f`) aligned with `OBJECT_TYPES` |
 
+### Animate sub-menu fields — `src/editor/input.rs`
+
+| Test | Verifies |
+|------|----------|
+| `animate_two_axis_layout_exposes_x_and_y_fields` | A position (two-axis) animation lists `x from/to` and `y from/to` (10 fields), values per axis |
+| `animate_single_axis_layout_has_one_from_to_pair` | A 1-D coordinate (width/height) lists a single `from/to` pair (8 fields) |
+
 ### Frame operations — `src/editor/state.rs`
 
 | Test | Verifies |

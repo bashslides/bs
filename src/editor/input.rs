@@ -1614,11 +1614,8 @@ fn handle_edit_properties(state: &mut EditorState, key: KeyEvent) -> Action {
             state.mode = ep_dropdown(object_index, selected_property, dd_sel, panel_scroll);
         } else if prop_kind == PropertyKind::Coordinate {
             if let Some(coord) = properties::get_coord(&state.source.objects[object_index], prop_name) {
-                if let Coordinate::Animated { from, to, start_frame, end_frame } = &coord {
-                    state.mode = enter_animate(
-                        state, object_index, selected_property, prop_name,
-                        *from, *to, *start_frame, *end_frame,
-                    );
+                if matches!(coord, Coordinate::Animated { .. }) {
+                    state.mode = enter_animate(state, object_index, selected_property, prop_name);
                 } else {
                     let cursor = prop_value.chars().count();
                     state.mode = ep_editing(object_index, selected_property, prop_value, cursor, 0, panel_scroll);
@@ -1690,23 +1687,8 @@ fn handle_edit_properties(state: &mut EditorState, key: KeyEvent) -> Action {
     // [a]nimate: open AnimateProperty panel for Coordinate properties
     if matches_binding(&bindings.animate, &key) {
         if prop_kind == PropertyKind::Coordinate {
-            if let Some(coord) = properties::get_coord(&state.source.objects[object_index], prop_name) {
-                let (from, to, start_frame, end_frame) = match &coord {
-                    Coordinate::Fixed(v) => (
-                        v.floor() as u16, v.floor() as u16,
-                        state.current_frame,
-                        state.source.frame_count.saturating_sub(1),
-                    ),
-                    Coordinate::Animated { from, to, start_frame, end_frame } => {
-                        (*from, *to, *start_frame, *end_frame)
-                    }
-                };
-                state.mode = enter_animate(
-                    state, object_index, selected_property, prop_name,
-                    from, to, start_frame, end_frame,
-                );
-                return Action::Redraw;
-            }
+            state.mode = enter_animate(state, object_index, selected_property, prop_name);
+            return Action::Redraw;
         }
     }
 
@@ -1857,34 +1839,170 @@ fn handle_dropdown(state: &mut EditorState, key: KeyEvent) -> Action {
     }
 }
 
-/// Number of fields in the Animate sub-menu: from, to, start, end, add_frames,
-/// auto_play, delay_ms, gap_frames.
-const ANIM_FIELDS: usize = 8;
+/// One field in the Animate sub-menu. `XFrom`/`XTo` are the primary axis (x, or
+/// width/height for a 1-D coordinate); `YFrom`/`YTo` appear only for a two-axis
+/// (position) animation, so x and y can be set in one go.
+#[derive(Clone, Copy, PartialEq)]
+enum AnimRole {
+    XFrom,
+    XTo,
+    YFrom,
+    YTo,
+    Start,
+    End,
+    AddFrames,
+    AutoPlay,
+    Delay,
+    Gap,
+}
+
+const ANIM_ROLES_2D: &[AnimRole] = &[
+    AnimRole::XFrom, AnimRole::XTo, AnimRole::YFrom, AnimRole::YTo, AnimRole::Start,
+    AnimRole::End, AnimRole::AddFrames, AnimRole::AutoPlay, AnimRole::Delay, AnimRole::Gap,
+];
+const ANIM_ROLES_1D: &[AnimRole] = &[
+    AnimRole::XFrom, AnimRole::XTo, AnimRole::Start, AnimRole::End,
+    AnimRole::AddFrames, AnimRole::AutoPlay, AnimRole::Delay, AnimRole::Gap,
+];
+
+fn anim_roles(two_axis: bool) -> &'static [AnimRole] {
+    if two_axis { ANIM_ROLES_2D } else { ANIM_ROLES_1D }
+}
+
+impl AnimRole {
+    fn is_toggle(self) -> bool {
+        matches!(self, AnimRole::AddFrames | AnimRole::AutoPlay)
+    }
+    fn label(self, two_axis: bool) -> &'static str {
+        match self {
+            AnimRole::XFrom => if two_axis { "x from" } else { "from" },
+            AnimRole::XTo => if two_axis { "x to" } else { "to" },
+            AnimRole::YFrom => "y from",
+            AnimRole::YTo => "y to",
+            AnimRole::Start => "start",
+            AnimRole::End => "end",
+            AnimRole::AddFrames => "add frames",
+            AnimRole::AutoPlay => "auto play",
+            AnimRole::Delay => "delay ms",
+            AnimRole::Gap => "gap frames",
+        }
+    }
+}
+
+/// The display value of a role (a checkbox for the toggles, the number otherwise).
+#[allow(clippy::too_many_arguments)]
+fn anim_role_value(
+    role: AnimRole, from: u16, to: u16, from_y: u16, to_y: u16,
+    start_frame: usize, end_frame: usize, add_frames: bool, auto_play: bool,
+    delay_ms: u64, gap_frames: usize,
+) -> String {
+    let cb = |b| if b { "[x]".to_string() } else { "[ ]".to_string() };
+    match role {
+        AnimRole::XFrom => from.to_string(),
+        AnimRole::XTo => to.to_string(),
+        AnimRole::YFrom => from_y.to_string(),
+        AnimRole::YTo => to_y.to_string(),
+        // start/end shown 1-based (matching first/last_frame).
+        AnimRole::Start => (start_frame + 1).to_string(),
+        AnimRole::End => (end_frame + 1).to_string(),
+        AnimRole::AddFrames => cb(add_frames),
+        AnimRole::AutoPlay => cb(auto_play),
+        AnimRole::Delay => delay_ms.to_string(),
+        AnimRole::Gap => gap_frames.to_string(),
+    }
+}
+
+/// The Animate sub-menu's `(label, value)` rows, in display order — used by the
+/// panel to render the fields without duplicating the role layout.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn anim_field_rows(
+    two_axis: bool, from: u16, to: u16, from_y: u16, to_y: u16,
+    start_frame: usize, end_frame: usize, add_frames: bool, auto_play: bool,
+    delay_ms: u64, gap_frames: usize,
+) -> Vec<(&'static str, String)> {
+    anim_roles(two_axis)
+        .iter()
+        .map(|&r| {
+            (
+                r.label(two_axis),
+                anim_role_value(r, from, to, from_y, to_y, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames),
+            )
+        })
+        .collect()
+}
+
+/// Apply an edited numeric value for `role` into the matching local. Returns an
+/// error message string on a parse failure (toggles are never edited here).
+#[allow(clippy::too_many_arguments)]
+fn anim_apply_edit(
+    role: AnimRole, buf: &str, from: &mut u16, to: &mut u16, from_y: &mut u16, to_y: &mut u16,
+    start_frame: &mut usize, end_frame: &mut usize, delay_ms: &mut u64, gap_frames: &mut usize,
+) -> Option<String> {
+    let bad = |e: std::num::ParseIntError| format!("Invalid number: {e}");
+    match role {
+        AnimRole::XFrom => buf.trim().parse::<u16>().map(|v| *from = v).err().map(bad),
+        AnimRole::XTo => buf.trim().parse::<u16>().map(|v| *to = v).err().map(bad),
+        AnimRole::YFrom => buf.trim().parse::<u16>().map(|v| *from_y = v).err().map(bad),
+        AnimRole::YTo => buf.trim().parse::<u16>().map(|v| *to_y = v).err().map(bad),
+        AnimRole::Start => buf.trim().parse::<usize>().map(|v| *start_frame = v.saturating_sub(1)).err().map(bad),
+        AnimRole::End => buf.trim().parse::<usize>().map(|v| *end_frame = v.saturating_sub(1)).err().map(bad),
+        AnimRole::Delay => buf.trim().parse::<u64>().map(|v| *delay_ms = v).err().map(bad),
+        // gap of 0 is meaningless; clamp to 1 (every frame).
+        AnimRole::Gap => buf.trim().parse::<usize>().map(|v| *gap_frames = v.max(1)).err().map(bad),
+        AnimRole::AddFrames | AnimRole::AutoPlay => None,
+    }
+}
 
 /// Build the `AnimateProperty` mode in one place (the variant has many fields).
 #[allow(clippy::too_many_arguments)]
 fn anim_mode(
     object_index: usize, return_property: usize, property_name: &'static str,
     selected_field: usize, editing: Option<String>, cursor: usize,
-    from: u16, to: u16, start_frame: usize, end_frame: usize,
+    from: u16, to: u16, from_y: u16, to_y: u16, two_axis: bool,
+    start_frame: usize, end_frame: usize,
     add_frames: bool, auto_play: bool, delay_ms: u64, gap_frames: usize,
 ) -> Mode {
     Mode::AnimateProperty {
         object_index, return_property, property_name, selected_field, editing, cursor,
-        from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames,
+        from, to, from_y, to_y, two_axis, start_frame, end_frame,
+        add_frames, auto_play, delay_ms, gap_frames,
     }
 }
 
-/// Open the Animate sub-menu, seeding the add-frames / auto-play / delay config
-/// from an Animation span that exactly matches `[start_frame, end_frame + 1)` —
-/// so re-animating that span (or adding a second coordinate to it) keeps its
-/// current auto-play settings — else the defaults (add frames on, auto-play on,
-/// 500 ms).
-#[allow(clippy::too_many_arguments)]
+/// Open the Animate sub-menu for `property_name`, reading the object's current
+/// coordinate(s) to seed the fields. Animating `x` or `y` on an object that has
+/// both becomes a **two-axis** session (x and y set together); every other
+/// coordinate (width/height) stays single-axis. The span and auto-play config
+/// are seeded from an existing animation on the coordinate / matching span.
 fn enter_animate(
-    state: &EditorState, object_index: usize, return_property: usize,
-    property_name: &'static str, from: u16, to: u16, start_frame: usize, end_frame: usize,
+    state: &EditorState, object_index: usize, return_property: usize, property_name: &'static str,
 ) -> Mode {
+    let obj = &state.source.objects[object_index];
+    let read = |name: &str| -> (u16, u16, Option<(usize, usize)>) {
+        match properties::get_coord(obj, name) {
+            Some(Coordinate::Fixed(v)) => {
+                let n = v.max(0.0).floor() as u16;
+                (n, n, None)
+            }
+            Some(Coordinate::Animated { from, to, start_frame, end_frame }) => {
+                (from, to, Some((start_frame, end_frame)))
+            }
+            None => (0, 0, None),
+        }
+    };
+    let two_axis = (property_name == "x" || property_name == "y")
+        && properties::get_coord(obj, "x").is_some()
+        && properties::get_coord(obj, "y").is_some();
+    let (from, to, from_y, to_y, span) = if two_axis {
+        let (xf, xt, xs) = read("x");
+        let (yf, yt, ys) = read("y");
+        (xf, xt, yf, yt, xs.or(ys))
+    } else {
+        let (f, t, s) = read(property_name);
+        (f, t, 0, 0, s)
+    };
+    let (start_frame, end_frame) =
+        span.unwrap_or((state.current_frame, state.source.frame_count.saturating_sub(1)));
     let end_excl = end_frame + 1;
     let (auto_play, delay_ms) = state
         .source
@@ -1901,136 +2019,131 @@ fn enter_animate(
         .unwrap_or((true, 500));
     anim_mode(
         object_index, return_property, property_name, 0, None, 0,
-        from, to, start_frame, end_frame, true, auto_play, delay_ms, 1,
+        from, to, from_y, to_y, two_axis, start_frame, end_frame, true, auto_play, delay_ms, 1,
     )
 }
 
 fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
     let (object_index, return_property, property_name, selected_field, editing, cursor,
-         mut from, mut to, mut start_frame, mut end_frame, mut add_frames, mut auto_play, mut delay_ms, mut gap_frames) =
+         mut from, mut to, mut from_y, mut to_y, two_axis,
+         mut start_frame, mut end_frame, mut add_frames, mut auto_play, mut delay_ms, mut gap_frames) =
         match &state.mode {
             Mode::AnimateProperty {
                 object_index, return_property, property_name, selected_field, editing, cursor,
-                from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames,
+                from, to, from_y, to_y, two_axis, start_frame, end_frame,
+                add_frames, auto_play, delay_ms, gap_frames,
             } => (
                 *object_index, *return_property, *property_name, *selected_field,
-                editing.clone(), *cursor, *from, *to, *start_frame, *end_frame,
-                *add_frames, *auto_play, *delay_ms, *gap_frames,
+                editing.clone(), *cursor, *from, *to, *from_y, *to_y, *two_axis,
+                *start_frame, *end_frame, *add_frames, *auto_play, *delay_ms, *gap_frames,
             ),
             _ => return Action::Continue,
         };
 
+    let roles = anim_roles(two_axis);
+    let role = roles[selected_field.min(roles.len() - 1)];
+
+    // Rebuild the mode from the (possibly mutated) locals.
+    macro_rules! rebuild {
+        ($editing:expr, $cursor:expr, $field:expr) => {
+            anim_mode(object_index, return_property, property_name, $field, $editing, $cursor,
+                from, to, from_y, to_y, two_axis, start_frame, end_frame,
+                add_frames, auto_play, delay_ms, gap_frames)
+        };
+    }
+
     // -- Editing a numeric field value -----------------------------------------
     if let Some(mut buf) = editing {
-        match key.code {
+        let (new_editing, new_cursor): (Option<String>, usize) = match key.code {
             KeyCode::Enter => {
-                // `start`/`end` are entered 1-based (matching first/last_frame).
-                let err: Option<String> = match selected_field {
-                    0 => buf.parse::<u16>().map(|v| from = v).err().map(|e| format!("Invalid number: {e}")),
-                    1 => buf.parse::<u16>().map(|v| to = v).err().map(|e| format!("Invalid number: {e}")),
-                    2 => buf.trim().parse::<usize>().map(|v| start_frame = v.saturating_sub(1)).err().map(|e| format!("Invalid number: {e}")),
-                    3 => buf.trim().parse::<usize>().map(|v| end_frame = v.saturating_sub(1)).err().map(|e| format!("Invalid number: {e}")),
-                    6 => buf.trim().parse::<u64>().map(|v| delay_ms = v).err().map(|e| format!("Invalid number: {e}")),
-                    // gap of 0 is meaningless; clamp to 1 (every frame).
-                    _ => buf.trim().parse::<usize>().map(|v| gap_frames = v.max(1)).err().map(|e| format!("Invalid number: {e}")),
-                };
-                if let Some(msg) = err {
+                if let Some(msg) = anim_apply_edit(
+                    role, &buf, &mut from, &mut to, &mut from_y, &mut to_y,
+                    &mut start_frame, &mut end_frame, &mut delay_ms, &mut gap_frames,
+                ) {
                     state.status_message = Some(msg);
                 }
-                state.mode = anim_mode(object_index, return_property, property_name, selected_field,
-                    None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
-                return Action::Redraw;
+                (None, 0)
             }
-            KeyCode::Esc => {
-                state.mode = anim_mode(object_index, return_property, property_name, selected_field,
-                    None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
-                return Action::Redraw;
-            }
-            KeyCode::Left if key.modifiers == KeyModifiers::NONE => {
-                let new_cursor = cursor.saturating_sub(1);
-                state.mode = anim_mode(object_index, return_property, property_name, selected_field,
-                    Some(buf), new_cursor, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
-                return Action::Redraw;
-            }
+            KeyCode::Esc => (None, 0),
+            KeyCode::Left if key.modifiers == KeyModifiers::NONE => (Some(buf), cursor.saturating_sub(1)),
             KeyCode::Right if key.modifiers == KeyModifiers::NONE => {
-                let new_cursor = (cursor + 1).min(buf.chars().count());
-                state.mode = anim_mode(object_index, return_property, property_name, selected_field,
-                    Some(buf), new_cursor, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
-                return Action::Redraw;
+                let c = (cursor + 1).min(buf.chars().count());
+                (Some(buf), c)
             }
             KeyCode::Backspace => {
                 if cursor > 0 {
                     let s = char_to_byte_idx(&buf, cursor - 1);
                     let e = char_to_byte_idx(&buf, cursor);
                     buf.drain(s..e);
-                    state.mode = anim_mode(object_index, return_property, property_name, selected_field,
-                        Some(buf), cursor - 1, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
-                    return Action::Redraw;
+                    (Some(buf), cursor - 1)
+                } else {
+                    (Some(buf), cursor)
                 }
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 let byte_idx = char_to_byte_idx(&buf, cursor);
                 buf.insert(byte_idx, c);
-                state.mode = anim_mode(object_index, return_property, property_name, selected_field,
-                    Some(buf), cursor + 1, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
-                return Action::Redraw;
+                (Some(buf), cursor + 1)
             }
-            _ => {}
-        }
-        return Action::Continue;
+            _ => return Action::Continue,
+        };
+        state.mode = rebuild!(new_editing, new_cursor, selected_field);
+        return Action::Redraw;
     }
 
     // -- Browsing fields -------------------------------------------------------
-    let is_toggle = selected_field == 4 || selected_field == 5;
     match key.code {
         KeyCode::Up if key.modifiers == KeyModifiers::NONE => {
-            let new_sel = if selected_field == 0 { ANIM_FIELDS - 1 } else { selected_field - 1 };
-            state.mode = anim_mode(object_index, return_property, property_name, new_sel,
-                None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
+            let new_sel = if selected_field == 0 { roles.len() - 1 } else { selected_field - 1 };
+            state.mode = rebuild!(None, 0, new_sel);
             return Action::Redraw;
         }
         KeyCode::Down if key.modifiers == KeyModifiers::NONE => {
-            let new_sel = (selected_field + 1) % ANIM_FIELDS;
-            state.mode = anim_mode(object_index, return_property, property_name, new_sel,
-                None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
+            let new_sel = (selected_field + 1) % roles.len();
+            state.mode = rebuild!(None, 0, new_sel);
             return Action::Redraw;
         }
         // Space / Enter on a boolean field toggles it in place (no text detour).
-        KeyCode::Char(' ') | KeyCode::Enter if is_toggle => {
-            if selected_field == 4 { add_frames = !add_frames; } else { auto_play = !auto_play; }
-            state.mode = anim_mode(object_index, return_property, property_name, selected_field,
-                None, 0, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
+        KeyCode::Char(' ') | KeyCode::Enter if role.is_toggle() => {
+            match role {
+                AnimRole::AddFrames => add_frames = !add_frames,
+                AnimRole::AutoPlay => auto_play = !auto_play,
+                _ => {}
+            }
+            state.mode = rebuild!(None, 0, selected_field);
             return Action::Redraw;
         }
         KeyCode::Enter => {
-            // Start editing the selected numeric field. start/end shown 1-based.
-            let init = match selected_field {
-                0 => from.to_string(),
-                1 => to.to_string(),
-                2 => (start_frame + 1).to_string(),
-                3 => (end_frame + 1).to_string(),
-                6 => delay_ms.to_string(),
-                _ => gap_frames.to_string(),
-            };
+            // Start editing the selected numeric field (seed with its value).
+            let init = anim_role_value(role, from, to, from_y, to_y, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
             let new_cursor = init.chars().count();
-            state.mode = anim_mode(object_index, return_property, property_name, selected_field,
-                Some(init), new_cursor, from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
+            state.mode = rebuild!(Some(init), new_cursor, selected_field);
             return Action::Redraw;
         }
-        // [s] apply → animate the coordinate (+ optional add-frames + auto-play).
+        // [s] apply → animate the coordinate(s) (+ optional add-frames/auto-play).
         KeyCode::Char('s') if key.modifiers == KeyModifiers::NONE => {
-            apply_animation(state, object_index, property_name,
-                from, to, start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
+            apply_animation(state, object_index, property_name, from, to, from_y, to_y, two_axis,
+                start_frame, end_frame, add_frames, auto_play, delay_ms, gap_frames);
             state.mode = ep_browse(object_index, return_property, 0);
             return Action::Redraw;
         }
-        // [x] clear → Fixed coordinate (does not touch any Animation span).
+        // [x] clear → Fixed coordinate(s) (does not touch any Animation span).
         KeyCode::Char('x') if key.modifiers == KeyModifiers::NONE => {
-            let coord = Coordinate::Fixed(from as f64);
-            match properties::set_coordinate(&mut state.source.objects[object_index], property_name, coord) {
+            let obj = &mut state.source.objects[object_index];
+            let res = if two_axis {
+                properties::set_coordinate(obj, "x", Coordinate::Fixed(from as f64))
+                    .and_then(|_| properties::set_coordinate(obj, "y", Coordinate::Fixed(from_y as f64)))
+            } else {
+                properties::set_coordinate(obj, property_name, Coordinate::Fixed(from as f64))
+            };
+            match res {
                 Ok(()) => {
                     state.dirty = true;
-                    state.status_message = Some(format!("Fixed {property_name} = {from}"));
+                    state.status_message = Some(if two_axis {
+                        format!("Fixed position = ({from}, {from_y})")
+                    } else {
+                        format!("Fixed {property_name} = {from}")
+                    });
                 }
                 Err(e) => state.status_message = Some(format!("Error: {e}")),
             }
@@ -2052,23 +2165,30 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
 /// animated coordinate, keep the object's own range in lock-step with its
 /// animation, and create/update the Animation span entity (auto-play config).
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn apply_animation(
     state: &mut EditorState, object_index: usize, property_name: &'static str,
-    from: u16, to: u16, start_frame: usize, end_frame: usize,
+    from: u16, to: u16, from_y: u16, to_y: u16, two_axis: bool,
+    start_frame: usize, end_frame: usize,
     add_frames: bool, auto_play: bool, delay_ms: u64, gap_frames: usize,
 ) {
     let animate = start_frame < end_frame;
     let end_excl = end_frame + 1;
-    let coord = if animate {
-        Coordinate::Animated { from, to, start_frame, end_frame }
-    } else {
-        Coordinate::Fixed(from as f64)
+    // A coordinate is Animated only when the span is valid *and* the value moves;
+    // an unchanged axis (from == to) stays Fixed so a 2-axis session can animate
+    // just one axis.
+    let coord = |f: u16, t: u16| {
+        if animate && f != t {
+            Coordinate::Animated { from: f, to: t, start_frame, end_frame }
+        } else {
+            Coordinate::Fixed(f as f64)
+        }
     };
 
     // "Add frames" gives the animation its own fresh frames (inserting N-1 after
     // the current one and sharing the current frame's elements across them, so
     // editing one edits all). Only for a *new* span, though: re-applying over a
-    // span that already exists — animating Y after X, or re-saving an animation —
+    // span that already exists — animating again, or re-saving an animation —
     // must not insert frames again, so guard on whether the span already exists.
     let span_exists = state.source.objects.iter().any(|o| {
         matches!(o, SceneObject::Animation(a) if a.frames.start == start_frame && a.frames.end == end_excl)
@@ -2077,7 +2197,16 @@ fn apply_animation(
         super::state::add_frames_and_share(&mut state.source, state.current_frame, start_frame, end_frame);
     }
 
-    if let Err(e) = properties::set_coordinate(&mut state.source.objects[object_index], property_name, coord) {
+    // Set the animated coordinate(s): both x and y for a two-axis session, else
+    // the single named property.
+    let obj = &mut state.source.objects[object_index];
+    let res = if two_axis {
+        properties::set_coordinate(obj, "x", coord(from, to))
+            .and_then(|_| properties::set_coordinate(obj, "y", coord(from_y, to_y)))
+    } else {
+        properties::set_coordinate(obj, property_name, coord(from, to))
+    };
+    if let Err(e) = res {
         state.status_message = Some(format!("Error: {e}"));
         return;
     }
@@ -2107,9 +2236,10 @@ fn apply_animation(
 
     // A new animation can collide with a loop (a loop may not bisect an
     // animation); surface that live, the way property edits do.
+    let what = if two_axis { "position" } else { property_name };
     state.status_message = Some(match state.source.validate_loops() {
-        Ok(()) => format!("Animated {property_name}"),
-        Err(e) => format!("Animated {property_name} — ⚠ {e}"),
+        Ok(()) => format!("Animated {what}"),
+        Err(e) => format!("Animated {what} — ⚠ {e}"),
     });
 }
 
@@ -2780,5 +2910,39 @@ fn apply_cell_style(
             }
         }
         state.dirty = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn animate_two_axis_layout_exposes_x_and_y_fields() {
+        // A two-axis (position) session shows x from/to AND y from/to, then the
+        // span/toggles/delay/gap — 10 fields.
+        let rows = anim_field_rows(true, 1, 9, 2, 8, 0, 4, true, true, 500, 1);
+        let labels: Vec<&str> = rows.iter().map(|(n, _)| *n).collect();
+        assert_eq!(
+            labels,
+            vec!["x from", "x to", "y from", "y to", "start", "end", "add frames", "auto play", "delay ms", "gap frames"]
+        );
+        // Values are taken from the right axis.
+        assert_eq!(rows[0].1, "1"); // x from
+        assert_eq!(rows[1].1, "9"); // x to
+        assert_eq!(rows[2].1, "2"); // y from
+        assert_eq!(rows[3].1, "8"); // y to
+        assert_eq!(rows[6].1, "[x]"); // add frames checkbox
+    }
+
+    #[test]
+    fn animate_single_axis_layout_has_one_from_to_pair() {
+        // A 1-D coordinate (e.g. width) shows just from/to — 8 fields.
+        let rows = anim_field_rows(false, 3, 7, 0, 0, 0, 4, true, true, 500, 1);
+        let labels: Vec<&str> = rows.iter().map(|(n, _)| *n).collect();
+        assert_eq!(
+            labels,
+            vec!["from", "to", "start", "end", "add frames", "auto play", "delay ms", "gap frames"]
+        );
     }
 }

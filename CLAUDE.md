@@ -154,13 +154,19 @@ Normal ──a──→ AddObject ──Enter──→ Normal (object added)
 - **SelectedObject**: move (arrows), `r` → resize mode, `e` → edit props, `d` delete; Shift+arrows also grow
 - **ResizeObject**: arrow-key resize (←→ width, ↑↓ height) — a terminal-robust path since many terminals capture Shift+↑/↓ for scrollback; Enter/Esc exit
 - **EditProperties**: edit typed properties; color fields show dropdown; text fields support multi-line (Alt-Enter = newline); property list scrolls vertically
-- **AnimateProperty**: eight fields — `from`/`to`/`start`/`end` (the coordinate
-  animation), `add frames`/`auto play` (toggles, Space/Enter), `delay ms`, and
-  `gap frames`. `[s]` applies via `input::apply_animation`: optionally inserts the
-  spanned frames + shares the current frame's elements (`state::add_frames_and_share`),
-  sets the `Coordinate::Animated`, keeps the object's own range in lock-step
+- **AnimateProperty**: a role-based field list (`input::anim_roles`/`AnimRole`).
+  Animating `x` or `y` on an object that has **both** becomes a *two-axis* session
+  — fields `x from`/`x to`/`y from`/`y to` so x and y are set together; every other
+  coordinate (width/height, or `y` on an `HLine`) stays single-axis with `from`/`to`.
+  Then `start`/`end`, `add frames`/`auto play` (toggles, Space/Enter), `delay ms`,
+  and `gap frames`. `enter_animate` seeds every value from the object's current
+  coordinate(s), so an untouched axis is preserved on apply (a `Fixed` stays fixed,
+  an `Animated` stays animated). `[s]` applies via `input::apply_animation`:
+  optionally inserts the spanned frames + shares the current frame's elements
+  (`state::add_frames_and_share`), sets the `Coordinate::Animated` on each moving
+  axis (`from != to`), keeps the object's own range in lock-step
   (`scene_object_animation_span`), and creates/updates the `Animation` span
-  entity (`state::upsert_animation`, reuse-by-span so X+Y stay one animation).
+  entity (`state::upsert_animation`, reuse-by-span so x+y stay one animation).
   `gap frames` > 1 then strobes the element via `state::apply_gap`: it shows only
   on every Nth frame of the span (single-frame samples at the interpolated
   position, empty gaps between — a stop-motion look). Gap clones are independent
@@ -299,8 +305,8 @@ Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
 + `upsert_animation`, `player/mod.rs` — `loop_next` bounce/wrap stepping +
 `auto_advance_delay` min-over-overlap; copy/paste `expand_selection` +
 `clone_selection` + `link_siblings` + link-family delete maintenance). The suite
-totals 167 tests (100 integration
-+ 67 inline); `TESTS.md` is the authoritative per-test list.
+totals 169 tests (100 integration
++ 69 inline); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the

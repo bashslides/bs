@@ -114,8 +114,16 @@ pub enum Mode {
         /// Text being typed into the selected field, if actively editing.
         editing: Option<String>,
         cursor: usize,
+        /// `from`/`to` are the animated values of the primary axis (x, or
+        /// width/height); `from_y`/`to_y` the y axis when `two_axis` is set (the
+        /// object has both an x and a y coordinate, so both animate together).
         from: u16,
         to: u16,
+        from_y: u16,
+        to_y: u16,
+        /// Whether this session animates both x and y (a position coordinate on an
+        /// object that has both). When false, only the named property animates.
+        two_axis: bool,
         start_frame: usize,
         end_frame: usize,
         /// Insert the frames the animation spans (and share the current frame's
