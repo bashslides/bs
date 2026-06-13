@@ -22,7 +22,7 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[f]rame",
             "settin[g]s",
             "[Ctrl-s]ave",
-            "[Ctrl-Shift-s] save as",
+            "[S]ave as",
             "[q]uit",
             "[F]ull",
         ],

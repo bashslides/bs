@@ -277,6 +277,7 @@ reconstructed character grid (some also assert on cell styles).
 | Test | Verifies |
 |------|----------|
 | `ctrl_shift_binding_requires_both_modifiers` | `Ctrl-Shift-` bindings need both modifiers (char case-insensitive); Ctrl-only still matches the plain `Ctrl-` binding |
+| `default_save_as_is_a_reliable_capital_s` | The default save-as binding (`S`) fires on Shift+S on any terminal and never collides with lowercase `s` or `Ctrl-s` |
 
 ### Animate sub-menu fields — `src/editor/input.rs`
 

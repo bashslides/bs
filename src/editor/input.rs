@@ -536,9 +536,9 @@ fn handle_normal(state: &mut EditorState, key: KeyEvent) -> Action {
         }
         return Action::Redraw;
     }
-    // Save-as is checked before plain save: on terminals that report it,
-    // Ctrl+Shift+S also carries CONTROL so the plain Ctrl-s binding would match
-    // it too — order gives the more specific binding priority.
+    // Save-as (default `S`) is checked before plain save. Order also keeps a
+    // custom `Ctrl-Shift-s` binding working on enhanced terminals, where it would
+    // otherwise also satisfy the plain `Ctrl-s` check.
     if matches_binding(&bindings.save_as, &key) {
         let buf = state.file_path.clone();
         let cursor = buf.chars().count();

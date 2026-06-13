@@ -95,7 +95,10 @@ fn default_open_settings() -> String { "g".into() }
 fn default_resize_object() -> String { "r".into() }
 fn default_fullscreen() -> String { "F".into() }
 fn default_copy() -> String { "c".into() }
-fn default_save_as() -> String { "Ctrl-Shift-s".into() }
+// A plain capital `S` (like `F` for fullscreen): reliably reported by every
+// terminal. `Ctrl-Shift-s` was indistinguishable from `Ctrl-s` unless the
+// terminal supported keyboard-enhancement, so it silently did nothing elsewhere.
+fn default_save_as() -> String { "S".into() }
 fn default_paste() -> String { "v".into() }
 fn default_frame_menu() -> String { "f".into() }
 fn default_frame_add() -> String { "a".into() }
@@ -285,5 +288,18 @@ mod tests {
         assert!(!matches_binding("Ctrl-Shift-s", &ev(KeyCode::Char('s'), KeyModifiers::CONTROL)));
         // ...and the plain Ctrl-s binding still matches Ctrl+S.
         assert!(matches_binding("Ctrl-s", &ev(KeyCode::Char('s'), KeyModifiers::CONTROL)));
+    }
+
+    #[test]
+    fn default_save_as_is_a_reliable_capital_s() {
+        // The default save-as binding must fire on a plain Shift+S — reported by
+        // every terminal (no keyboard-enhancement needed), the same way `F`
+        // drives fullscreen — without colliding with lowercase `s` or Ctrl-s.
+        let save_as = default_save_as();
+        assert!(matches_binding(&save_as, &ev(KeyCode::Char('S'), KeyModifiers::SHIFT)));
+        assert!(matches_binding(&save_as, &ev(KeyCode::Char('S'), KeyModifiers::NONE)));
+        // Does not fire on lowercase `s` (select-object) or Ctrl-s (save).
+        assert!(!matches_binding(&save_as, &ev(KeyCode::Char('s'), KeyModifiers::NONE)));
+        assert!(!matches_binding(&save_as, &ev(KeyCode::Char('s'), KeyModifiers::CONTROL)));
     }
 }
