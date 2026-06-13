@@ -70,6 +70,12 @@ pub struct KeyBindings {
     /// on top of another existing frame.
     #[serde(default = "default_frame_overlay")]
     pub frame_overlay: String,
+    /// Within the frame sub-menu: jump to a frame by number.
+    #[serde(default = "default_frame_jump")]
+    pub frame_jump: String,
+    /// Within the frame sub-menu: select multiple frames (list/range).
+    #[serde(default = "default_frame_select")]
+    pub frame_select: String,
     /// While placing a moved frame: drop it *before* the shown frame
     /// (Enter drops it after).
     #[serde(default = "default_frame_move_before")]
@@ -93,6 +99,8 @@ fn default_frame_copy() -> String { "c".into() }
 fn default_frame_delete() -> String { "d".into() }
 fn default_frame_move() -> String { "m".into() }
 fn default_frame_overlay() -> String { "o".into() }
+fn default_frame_jump() -> String { "j".into() }
+fn default_frame_select() -> String { "s".into() }
 fn default_frame_move_before() -> String { "b".into() }
 
 impl Default for EditorConfig {
@@ -130,6 +138,8 @@ impl Default for EditorConfig {
                 frame_delete: default_frame_delete(),
                 frame_move: default_frame_move(),
                 frame_overlay: default_frame_overlay(),
+                frame_jump: default_frame_jump(),
+                frame_select: default_frame_select(),
                 frame_move_before: default_frame_move_before(),
             },
         }

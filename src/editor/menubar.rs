@@ -29,9 +29,26 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[a]dd blank",
             "[c]opy",
             "[o]verlay onto",
+            "[j]ump",
+            "[s]elect",
             "[d]elete",
             "[m]ove",
             "[Esc] back",
+            "[F]ull",
+        ],
+        Mode::FrameJump { .. } => vec![
+            "[type] frame #",
+            "[Enter] jump",
+            "[Esc] cancel",
+        ],
+        Mode::FrameSelectInput { .. } => vec![
+            "[type] 1, 2, 3 or 5-12",
+            "[Enter] select",
+            "[Esc] cancel",
+        ],
+        Mode::FrameSelected { .. } => vec![
+            "[d]elete selected",
+            "[Esc] cancel",
             "[F]ull",
         ],
         Mode::FrameMove { .. } => vec![

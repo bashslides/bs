@@ -42,7 +42,7 @@ fn draw_color_swatch(stdout: &mut io::Stdout, x: u16, y: u16, value: &str) -> an
 /// The two attributes are orthogonal and compose, so an active field still
 /// shows its caret. `display` is expected to be pre-composed by the caller
 /// (prefixes, horizontal scroll already applied); this helper only rasterizes.
-fn draw_caret_line(
+pub(crate) fn draw_caret_line(
     stdout: &mut io::Stdout,
     x: u16,
     y: u16,

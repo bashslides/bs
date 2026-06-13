@@ -17,18 +17,32 @@ pub fn render_timeline(
     let frame_count = state.source.frame_count;
     let current = state.current_frame;
 
-    // Row 1: Frame numbers
+    // Row 1: Frame numbers — or, for the jump/select inputs, the typed prompt.
     queue!(
         stdout,
         cursor::MoveTo(0, y),
         terminal::Clear(terminal::ClearType::CurrentLine),
     )?;
 
-    if frame_count == 0 {
+    let frame_input = match &state.mode {
+        Mode::FrameJump { buf, cursor } => Some(("Jump to frame: ", buf, *cursor)),
+        Mode::FrameSelectInput { buf, cursor } => Some(("Select frames: ", buf, *cursor)),
+        _ => None,
+    };
+    if let Some((prefix, buf, cursor)) = frame_input {
+        let display = format!("{prefix}{buf}");
+        let caret = prefix.chars().count() + cursor;
+        super::panel::draw_caret_line(stdout, 0, y, &display, Some(caret), false, width)?;
+    } else if frame_count == 0 {
         queue!(stdout, style::Print(" (no frames)"))?;
     } else {
         let segs = build_segments(state);
-        render_frame_bar(stdout, width, &segs, current)?;
+        // In `FrameSelected`, the chosen frames are highlighted alongside current.
+        let selected: &[usize] = match &state.mode {
+            Mode::FrameSelected { frames } => frames,
+            _ => &[],
+        };
+        render_frame_bar(stdout, width, &segs, current, selected)?;
     }
 
     // Row 2: Mode + status
@@ -59,6 +73,9 @@ pub fn render_timeline(
         Mode::TableRemoveColumn { .. } => "REMOVE COL",
         Mode::TableEditCellProps { .. } => "EDIT CELLS",
         Mode::FrameMenu => "FRAME",
+        Mode::FrameJump { .. } => "JUMP",
+        Mode::FrameSelectInput { .. } => "SELECT FRAMES",
+        Mode::FrameSelected { .. } => "FRAMES SELECTED",
         Mode::FrameMove { .. } | Mode::FrameMovePlace { .. } => "MOVE FRAME",
         Mode::FrameOverlay { .. } => "OVERLAY FRAME",
     };
@@ -158,6 +175,7 @@ fn render_frame_bar(
     width: usize,
     segs: &[Seg],
     current: usize,
+    selected: &[usize],
 ) -> anyhow::Result<()> {
     queue!(stdout, style::Print(" "))?;
 
@@ -165,7 +183,7 @@ fn render_frame_bar(
     let total: usize = segs.iter().map(|s| s.label().chars().count() + 1).sum::<usize>() + 1;
     if total <= width {
         for seg in segs {
-            render_seg(stdout, seg, current)?;
+            render_seg(stdout, seg, current, selected)?;
         }
         return Ok(());
     }
@@ -193,15 +211,16 @@ fn render_frame_bar(
                 queue!(stdout, style::Print("... "))?;
             }
         }
-        render_seg(stdout, &segs[i], current)?;
+        render_seg(stdout, &segs[i], current, selected)?;
         prev = Some(i);
     }
     Ok(())
 }
 
-fn render_seg(stdout: &mut io::Stdout, seg: &Seg, current: usize) -> anyhow::Result<()> {
+fn render_seg(stdout: &mut io::Stdout, seg: &Seg, current: usize, selected: &[usize]) -> anyhow::Result<()> {
     let label = seg.label();
-    if seg.contains(current) {
+    let highlight = seg.contains(current) || selected.iter().any(|&f| seg.contains(f));
+    if highlight {
         queue!(
             stdout,
             style::SetAttribute(style::Attribute::Reverse),

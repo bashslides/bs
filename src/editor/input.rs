@@ -34,7 +34,9 @@ fn mode_accepts_text(mode: &Mode) -> bool {
         Mode::Settings { .. }
         | Mode::TableAddColumn { .. }
         | Mode::TableRemoveColumn { .. }
-        | Mode::LoadArtFile { .. } => true,
+        | Mode::LoadArtFile { .. }
+        | Mode::FrameJump { .. }
+        | Mode::FrameSelectInput { .. } => true,
         Mode::TableEditCellProps { sub_state, .. } => match sub_state {
             TableCellSubState::EditingContent { .. } => true,
             TableCellSubState::EditingStyle { editing_value, .. } => editing_value.is_some(),
@@ -73,6 +75,9 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
     match &state.mode {
         Mode::Normal => handle_normal(state, key),
         Mode::FrameMenu => handle_frame_menu(state, key),
+        Mode::FrameJump { .. } => handle_frame_jump(state, key),
+        Mode::FrameSelectInput { .. } => handle_frame_select_input(state, key),
+        Mode::FrameSelected { .. } => handle_frame_selected(state, key),
         Mode::FrameMove { .. } => handle_frame_move(state, key),
         Mode::FrameMovePlace { .. } => handle_frame_move_place(state, key),
         Mode::FrameOverlay { .. } => handle_frame_overlay(state, key),
@@ -634,8 +639,145 @@ fn handle_frame_menu(state: &mut EditorState, key: KeyEvent) -> Action {
         }
         return Action::Redraw;
     }
+    if matches_binding(&bindings.frame_jump, &key) {
+        state.mode = Mode::FrameJump { buf: String::new(), cursor: 0 };
+        state.status_message = Some(format!("Jump to frame (1-{})", state.source.frame_count));
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.frame_select, &key) {
+        state.mode = Mode::FrameSelectInput { buf: String::new(), cursor: 0 };
+        state.status_message = Some("Select frames: e.g. 1, 2, 3 or 5-12".into());
+        return Action::Redraw;
+    }
 
     Action::Continue
+}
+
+/// Typing a 1-based frame number to jump to. Enter jumps (clamped to the deck);
+/// Esc returns to the frame menu.
+fn handle_frame_jump(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+    let (mut buf, mut cursor) = match &state.mode {
+        Mode::FrameJump { buf, cursor } => (buf.clone(), *cursor),
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::FrameMenu;
+        state.status_message = None;
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.confirm, &key) {
+        match buf.trim().parse::<usize>() {
+            Ok(n) if n >= 1 => {
+                let target = (n - 1).min(state.source.frame_count.saturating_sub(1));
+                state.current_frame = target;
+                state.mode = Mode::Normal;
+                state.status_message = Some(format!("Jumped to frame {}", target + 1));
+            }
+            _ => state.status_message = Some("Enter a frame number (1-based)".into()),
+        }
+        return Action::Redraw;
+    }
+    if frame_text_key(&key, &mut buf, &mut cursor) {
+        state.mode = Mode::FrameJump { buf, cursor };
+        return Action::Redraw;
+    }
+    Action::Continue
+}
+
+/// Typing a multi-frame selection (`1, 2, 3` or `5-12`). Enter parses it into
+/// `FrameSelected`; Esc returns to the frame menu.
+fn handle_frame_select_input(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+    let (mut buf, mut cursor) = match &state.mode {
+        Mode::FrameSelectInput { buf, cursor } => (buf.clone(), *cursor),
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::FrameMenu;
+        state.status_message = None;
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.confirm, &key) {
+        match super::state::parse_frame_selection(&buf, state.source.frame_count) {
+            Ok(frames) => {
+                state.status_message = Some(format!(
+                    "Selected {} frame(s) — [d] delete, [Esc] cancel",
+                    frames.len()
+                ));
+                state.mode = Mode::FrameSelected { frames };
+            }
+            Err(e) => state.status_message = Some(format!("⚠ {e}")),
+        }
+        return Action::Redraw;
+    }
+    if frame_text_key(&key, &mut buf, &mut cursor) {
+        state.mode = Mode::FrameSelectInput { buf, cursor };
+        return Action::Redraw;
+    }
+    Action::Continue
+}
+
+/// A multi-frame selection is active: `d` deletes the set (with confirm); Esc
+/// returns to the frame menu.
+fn handle_frame_selected(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+    let frames = match &state.mode {
+        Mode::FrameSelected { frames } => frames.clone(),
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::FrameMenu;
+        state.status_message = None;
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.frame_delete, &key) {
+        if frames.len() >= state.source.frame_count {
+            state.status_message = Some("Can't delete every frame".into());
+            return Action::Redraw;
+        }
+        state.mode = Mode::Confirm {
+            message: format!("Delete {} selected frame(s)?", frames.len()),
+            selected: 0,
+            action: ConfirmAction::DeleteFrames { frames: frames.clone() },
+            return_mode: Box::new(Mode::FrameSelected { frames }),
+        };
+        return Action::Redraw;
+    }
+    Action::Continue
+}
+
+/// Shared text-buffer key handling for the short single-line frame inputs
+/// (jump / select). Returns `true` if the key edited the buffer or cursor.
+fn frame_text_key(key: &KeyEvent, buf: &mut String, cursor: &mut usize) -> bool {
+    match key.code {
+        KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT => {
+            let byte_idx = char_to_byte_idx(buf, *cursor);
+            buf.insert(byte_idx, c);
+            *cursor += 1;
+            true
+        }
+        KeyCode::Backspace if key.modifiers == KeyModifiers::NONE => {
+            if *cursor > 0 {
+                let byte_idx = char_to_byte_idx(buf, *cursor - 1);
+                buf.remove(byte_idx);
+                *cursor -= 1;
+            }
+            true
+        }
+        KeyCode::Left if key.modifiers == KeyModifiers::NONE => {
+            *cursor = cursor.saturating_sub(1);
+            true
+        }
+        KeyCode::Right if key.modifiers == KeyModifiers::NONE => {
+            *cursor = (*cursor + 1).min(buf.chars().count());
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Scrolling the deck to choose where the moved slide should land.
@@ -1438,6 +1580,19 @@ fn handle_confirm(state: &mut EditorState, key: KeyEvent) -> Action {
                         state.status_message = Some(format!(
                             "Deleted frame {} (now {})",
                             deleted + 1,
+                            state.source.frame_count
+                        ));
+                        Mode::Normal
+                    }
+                    ConfirmAction::DeleteFrames { frames } => {
+                        let removed = super::state::delete_frames(&mut state.source, &frames);
+                        state.clipboard_sources.clear();
+                        if state.current_frame >= state.source.frame_count {
+                            state.current_frame = state.source.frame_count.saturating_sub(1);
+                        }
+                        state.dirty = true;
+                        state.status_message = Some(format!(
+                            "Deleted {removed} frame(s) (now {})",
                             state.source.frame_count
                         ));
                         Mode::Normal

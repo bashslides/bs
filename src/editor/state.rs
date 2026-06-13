@@ -8,6 +8,8 @@ use super::config::EditorConfig;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfirmAction {
     DeleteFrame,
+    /// Delete a multi-selected set of frames (0-based indices).
+    DeleteFrames { frames: Vec<usize> },
     DeleteObject { object_index: usize },
     /// Remove one member from a group (does not delete the underlying object).
     RemoveGroupMember {
@@ -214,8 +216,22 @@ pub enum Mode {
         cursor: usize,
     },
     /// Frame operations sub-menu (opened with [f]rame from Normal): add a
-    /// blank frame, copy/delete the current frame, or move it.
+    /// blank frame, copy/delete the current frame, jump, select, or move it.
     FrameMenu,
+    /// Typing a (1-based) frame number to jump the deck to.
+    FrameJump {
+        buf: String,
+        cursor: usize,
+    },
+    /// Typing a multi-frame selection (`1, 2, 3` or a range `5-12`, mixable).
+    FrameSelectInput {
+        buf: String,
+        cursor: usize,
+    },
+    /// A set of frames has been selected (0-based indices); `d` deletes them.
+    FrameSelected {
+        frames: Vec<usize>,
+    },
     /// Relocating the current slide. Left/Right scroll the deck to a target
     /// slide (tracked by `current_frame`); Enter then opens `FrameMovePlace`.
     FrameMove {
@@ -831,6 +847,59 @@ pub fn move_frame(
     pos[from]
 }
 
+/// Parse a multi-frame selection string into 0-based, sorted, de-duplicated
+/// frame indices clamped to the deck. Accepts comma-separated tokens, each a
+/// single 1-based number (`3`) or an inclusive 1-based range (`5-12`), mixable
+/// (`1, 3, 5-8`). Returns an error message on a malformed token or empty result.
+pub fn parse_frame_selection(input: &str, frame_count: usize) -> Result<Vec<usize>, String> {
+    let mut out: Vec<usize> = Vec::new();
+    for token in input.split(',') {
+        let t = token.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if let Some((a, b)) = t.split_once('-') {
+            let a: usize = a.trim().parse().map_err(|_| format!("bad range '{t}'"))?;
+            let b: usize = b.trim().parse().map_err(|_| format!("bad range '{t}'"))?;
+            if a == 0 || b == 0 || a > b {
+                return Err(format!("bad range '{t}'"));
+            }
+            out.extend((a..=b).map(|n| n - 1));
+        } else {
+            let n: usize = t.parse().map_err(|_| format!("bad number '{t}'"))?;
+            if n == 0 {
+                return Err("frames are numbered from 1".into());
+            }
+            out.push(n - 1);
+        }
+    }
+    out.retain(|&f| f < frame_count);
+    out.sort_unstable();
+    out.dedup();
+    if out.is_empty() {
+        return Err("no valid frames in range".into());
+    }
+    Ok(out)
+}
+
+/// Delete a set of frames (0-based), highest index first so the lower indices
+/// stay valid as the deck shrinks. Always keeps at least one frame — once the
+/// deck is down to a single frame, further deletions are skipped. Returns the
+/// number of frames actually removed.
+pub fn delete_frames(source: &mut SourcePresentation, frames: &[usize]) -> usize {
+    let mut fs: Vec<usize> = frames.to_vec();
+    fs.sort_unstable();
+    fs.dedup();
+    let mut removed = 0;
+    for &f in fs.iter().rev() {
+        if source.frame_count > 1 && f < source.frame_count {
+            adjust_frames_after_delete(source, f);
+            removed += 1;
+        }
+    }
+    removed
+}
+
 /// Adjust all frame indices after frame `deleted` has been removed.
 pub fn adjust_frames_after_delete(source: &mut SourcePresentation, deleted: usize) {
     source.frame_count -= 1;
@@ -1342,5 +1411,39 @@ mod tests {
         let new_index = move_frame(&mut p, 1, 1, false);
         assert_eq!(new_index, 1);
         assert_eq!(range(&p.objects[0]), (0, 1));
+    }
+
+    #[test]
+    fn parse_frame_selection_handles_lists_ranges_and_mixes() {
+        // 1-based input → 0-based, sorted, de-duplicated, clamped to the deck.
+        assert_eq!(parse_frame_selection("1, 2, 3", 10).unwrap(), vec![0, 1, 2]);
+        assert_eq!(parse_frame_selection("5-12", 10).unwrap(), vec![4, 5, 6, 7, 8, 9]);
+        assert_eq!(parse_frame_selection("1, 3, 5-7", 10).unwrap(), vec![0, 2, 4, 5, 6]);
+        assert_eq!(parse_frame_selection("3, 1, 1", 10).unwrap(), vec![0, 2]); // sort + dedup
+    }
+
+    #[test]
+    fn parse_frame_selection_rejects_bad_input() {
+        assert!(parse_frame_selection("0", 10).is_err()); // frames are 1-based
+        assert!(parse_frame_selection("abc", 10).is_err());
+        assert!(parse_frame_selection("7-3", 10).is_err()); // reversed range
+        assert!(parse_frame_selection("", 10).is_err()); // nothing
+        assert!(parse_frame_selection("20-30", 10).is_err()); // all out of range
+    }
+
+    #[test]
+    fn delete_frames_removes_highest_first_and_keeps_one() {
+        // 5 single-frame labels (one per frame). Delete frames 2 and 4 (0-based
+        // 1 and 3): two removed, the survivors keep their relative order.
+        let mut p = pres(5, vec![label(0, 1), label(1, 2), label(2, 3), label(3, 4), label(4, 5)]);
+        let removed = delete_frames(&mut p, &[1, 3]);
+        assert_eq!(removed, 2);
+        assert_eq!(p.frame_count, 3);
+
+        // Deleting every frame keeps the last one (never empties the deck).
+        let mut q = pres(3, vec![label(0, 1), label(1, 2), label(2, 3)]);
+        let removed = delete_frames(&mut q, &[0, 1, 2]);
+        assert_eq!(removed, 2);
+        assert_eq!(q.frame_count, 1);
     }
 }
