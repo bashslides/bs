@@ -37,9 +37,11 @@ pub fn render_timeline(
         queue!(stdout, style::Print(" (no frames)"))?;
     } else {
         let segs = build_segments(state);
-        // In `FrameSelected`, the chosen frames are highlighted alongside current.
+        // In `FrameSelected`/`FrameRangePlace`, the chosen frames are highlighted
+        // alongside the current (scroll-cursor) frame.
         let selected: &[usize] = match &state.mode {
             Mode::FrameSelected { frames } => frames,
+            Mode::FrameRangePlace { frames, .. } => frames,
             _ => &[],
         };
         render_frame_bar(stdout, width, &segs, current, selected)?;
@@ -77,6 +79,8 @@ pub fn render_timeline(
         Mode::FrameJump { .. } => "JUMP",
         Mode::FrameSelectInput { .. } => "SELECT FRAMES",
         Mode::FrameSelected { .. } => "FRAMES SELECTED",
+        Mode::FrameRangePlace { copy: false, .. } => "MOVE RANGE",
+        Mode::FrameRangePlace { copy: true, .. } => "COPY RANGE",
         Mode::FrameMove { .. } | Mode::FrameMovePlace { .. } => "MOVE FRAME",
         Mode::FrameOverlay { .. } => "OVERLAY FRAME",
     };

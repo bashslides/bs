@@ -80,6 +80,7 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
         Mode::FrameJump { .. } => handle_frame_jump(state, key),
         Mode::FrameSelectInput { .. } => handle_frame_select_input(state, key),
         Mode::FrameSelected { .. } => handle_frame_selected(state, key),
+        Mode::FrameRangePlace { .. } => handle_frame_range_place(state, key),
         Mode::FrameMove { .. } => handle_frame_move(state, key),
         Mode::FrameMovePlace { .. } => handle_frame_move_place(state, key),
         Mode::FrameOverlay { .. } => handle_frame_overlay(state, key),
@@ -753,7 +754,7 @@ fn handle_frame_select_input(state: &mut EditorState, key: KeyEvent) -> Action {
         match super::state::parse_frame_selection(&buf, state.source.frame_count) {
             Ok(frames) => {
                 state.status_message = Some(format!(
-                    "Selected {} frame(s) — [d] delete, [Esc] cancel",
+                    "Selected {} frame(s) — [d] delete, [m] move, [c] copy, [Esc] cancel",
                     frames.len()
                 ));
                 state.mode = Mode::FrameSelected { frames };
@@ -796,7 +797,110 @@ fn handle_frame_selected(state: &mut EditorState, key: KeyEvent) -> Action {
         };
         return Action::Redraw;
     }
+    // [m]ove / [c]opy the selected block. Both need a *contiguous* range — moving
+    // or duplicating a scattered set as a block has no clear meaning.
+    let copy = matches_binding(&bindings.frame_copy, &key);
+    if copy || matches_binding(&bindings.frame_move, &key) {
+        if !is_contiguous_range(&frames) {
+            state.status_message =
+                Some("Select a contiguous range (e.g. 5-12) to move/copy".into());
+            return Action::Redraw;
+        }
+        if !copy && frames.len() >= state.source.frame_count {
+            state.status_message = Some("Nowhere to move every frame".into());
+            return Action::Redraw;
+        }
+        // Start the scroll cursor at the block so the target is easy to pick.
+        state.current_frame = frames[0];
+        let verb = if copy { "Copy" } else { "Move" };
+        state.status_message = Some(format!(
+            "{verb} {} frame(s) — ←/→ pick target, [Enter] after / [b] before",
+            frames.len()
+        ));
+        state.mode = Mode::FrameRangePlace { frames, copy };
+        return Action::Redraw;
+    }
     Action::Continue
+}
+
+/// A sorted, de-duplicated frame selection is contiguous iff it spans exactly its
+/// own length (no gaps) — `parse_frame_selection` already sorts and dedups.
+fn is_contiguous_range(frames: &[usize]) -> bool {
+    match (frames.first(), frames.last()) {
+        (Some(&lo), Some(&hi)) => hi - lo + 1 == frames.len(),
+        _ => false,
+    }
+}
+
+/// Scrolling the deck to place a moved/copied contiguous frame block: ←/→ pick a
+/// target slide, Enter drops the block after it, `b` before it.
+fn handle_frame_range_place(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+    let (frames, copy) = match &state.mode {
+        Mode::FrameRangePlace { frames, copy } => (frames.clone(), *copy),
+        _ => return Action::Continue,
+    };
+    let (lo, hi) = (frames[0], frames[frames.len() - 1]);
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.status_message = Some("Cancelled".into());
+        state.mode = Mode::FrameSelected { frames };
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.next_frame, &key) {
+        let last = state.source.frame_count.saturating_sub(1);
+        if state.current_frame < last {
+            state.current_frame += 1;
+        }
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.prev_frame, &key) {
+        if state.current_frame > 0 {
+            state.current_frame -= 1;
+        }
+        return Action::Redraw;
+    }
+
+    let before = if matches_binding(&bindings.confirm, &key) {
+        false // Enter = after
+    } else if matches_binding(&bindings.frame_move_before, &key) {
+        true // b = before
+    } else {
+        return Action::Continue;
+    };
+
+    let target = state.current_frame;
+    if copy {
+        let (new_current, count) =
+            super::state::copy_frames(&mut state.source, lo, hi, target, before);
+        state.current_frame = new_current;
+        state.clipboard_sources.clear();
+        state.dirty = true;
+        state.status_message = Some(format!(
+            "Copied {count} frame(s) {} frame {}",
+            if before { "before" } else { "after" },
+            target + 1
+        ));
+        state.mode = Mode::Normal;
+        return Action::Redraw;
+    }
+    // Move: the target can't sit inside the block being moved.
+    if target >= lo && target <= hi {
+        state.status_message = Some("Pick a slide outside the moved range (←/→)".into());
+        return Action::Redraw;
+    }
+    let new_index = super::state::move_frames(&mut state.source, &frames, target, before);
+    state.current_frame = new_index;
+    state.clipboard_sources.clear();
+    state.dirty = true;
+    state.status_message = Some(format!(
+        "Moved {} frame(s) {} frame {}",
+        frames.len(),
+        if before { "before" } else { "after" },
+        target + 1
+    ));
+    state.mode = Mode::Normal;
+    Action::Redraw
 }
 
 /// Shared text-buffer key handling for the short single-line frame inputs

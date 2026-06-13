@@ -54,6 +54,15 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
         ],
         Mode::FrameSelected { .. } => vec![
             "[d]elete selected",
+            "[m]ove range",
+            "[c]opy range",
+            "[Esc] cancel",
+            "[F]ull",
+        ],
+        Mode::FrameRangePlace { copy, .. } => vec![
+            "[←][→] pick target",
+            if *copy { "[Enter] copy after" } else { "[Enter] move after" },
+            "[b]efore",
             "[Esc] cancel",
             "[F]ull",
         ],

@@ -298,6 +298,13 @@ reconstructed character grid (some also assert on cell styles).
 | `move_frame_relocates_before_target` | Moving a frame before a target remaps ranges and returns the new index |
 | `move_frame_keeps_a_whole_deck_object_spanning_the_whole_deck` | A whole-deck object still spans the whole deck after a move |
 | `move_frame_is_a_noop_onto_itself` | Moving a frame relative to itself is a no-op |
+| `move_frames_relocates_a_contiguous_block_after_target` | `move_frames` relocates a multi-frame block after the target, remapping ranges and returning the block's new first index |
+| `move_frames_block_before_target` | A frame block dropped before the target lands ahead of it, pushing later frames right |
+| `move_frames_target_inside_block_is_a_noop` | Moving a block onto a target *within* it is rejected (no reorder) |
+| `move_frames_keeps_a_deck_wide_background_spanning` | A deck-wide object still spans the whole deck after a block move |
+| `copy_frames_duplicates_a_block_after_target` | `copy_frames` inserts `count` new frames after the target and deep-clones the block's per-frame objects onto them; originals untouched |
+| `copy_frames_before_front_inserts_at_the_start` | Copying a block before frame 0 inserts at the very front, shifting originals right; clones land on the new front frames |
+| `copy_frames_keeps_an_interior_spanning_background_shared` | A deck-wide background the insert stretches over the new frames stays one object (not duplicated); per-frame objects are cloned |
 | `parse_frame_selection_handles_lists_ranges_and_mixes` | `1,2,3` / `5-12` / mixes parse to 0-based, sorted, de-duplicated, clamped indices |
 | `parse_frame_selection_rejects_bad_input` | Frame 0, non-numbers, reversed ranges, empty, and all-out-of-range are rejected |
 | `delete_frames_removes_highest_first_and_keeps_one` | Multi-delete removes highest index first and never empties the deck (keeps ≥1) |

@@ -234,9 +234,19 @@ pub enum Mode {
         buf: String,
         cursor: usize,
     },
-    /// A set of frames has been selected (0-based indices); `d` deletes them.
+    /// A set of frames has been selected (0-based indices); `d` deletes them,
+    /// and (for a contiguous range) `m` moves or `c` copies them as a block.
     FrameSelected {
         frames: Vec<usize>,
+    },
+    /// Placing a moved/copied contiguous frame block. Left/Right scroll the deck
+    /// to a target slide (tracked by `current_frame`); Enter drops the block
+    /// *after* it, `b` *before* it. `copy` distinguishes duplicate from relocate.
+    FrameRangePlace {
+        /// The contiguous block being placed (0-based indices, ascending).
+        frames: Vec<usize>,
+        /// `true` = duplicate the block (copy); `false` = relocate it (move).
+        copy: bool,
     },
     /// Relocating the current slide. Left/Right scroll the deck to a target
     /// slide (tracked by `current_frame`); Enter then opens `FrameMovePlace`.
@@ -579,6 +589,124 @@ pub fn copy_frame(source: &mut SourcePresentation, current: usize) {
             }
         }
     }
+}
+
+/// Insert `count` blank frames so they occupy indices `[dest, dest + count)`,
+/// shifting every existing frame at or after `dest` up by `count`. Objects (and
+/// animated-coordinate spans) that strictly *cross* `dest` are stretched to cover
+/// the new frames — exactly as a single [`insert_blank_frame`] does for one frame
+/// (this is its `count`-frame generalisation, used by [`copy_frames`]). `count ==
+/// 0` is a no-op; `dest == 0` inserts at the very front.
+fn insert_blank_frames_at(source: &mut SourcePresentation, dest: usize, count: usize) {
+    if count == 0 {
+        return;
+    }
+    source.frame_count += count;
+    for obj in &mut source.objects {
+        if let Some(fr) = scene_object_frame_range_mut(obj) {
+            if fr.end > dest {
+                fr.end += count;
+            }
+            if fr.start >= dest {
+                fr.start += count;
+            }
+        }
+        for coord in scene_object_coordinates_mut(obj) {
+            if let Coordinate::Animated { start_frame, end_frame, .. } = coord {
+                if *end_frame >= dest {
+                    *end_frame += count;
+                }
+                if *start_frame >= dest {
+                    *start_frame += count;
+                }
+            }
+        }
+    }
+}
+
+/// Duplicate the contiguous frame block `[lo, hi]` (inclusive, 0-based) as a new
+/// block placed immediately before (`before`) or after the `target` frame,
+/// growing the deck by `count = hi - lo + 1` frames. Returns `(new_current,
+/// count)`, where `new_current` is the first frame of the inserted copy.
+///
+/// The block's content is deep-cloned: an object local to one block frame lands
+/// on the matching copy frame, an object spanning several block frames stays a
+/// single spanning clone, and animated coordinates are remapped into the new
+/// block (clipped to it). Objects that the insert already stretches across the
+/// seam to cover the new frames (e.g. a deck-wide background) are *not* cloned, so
+/// they aren't duplicated. Cloned groups are re-pointed at their cloned members.
+/// A no-op (returns `(target, 0)`) on an invalid block/target.
+pub fn copy_frames(
+    source: &mut SourcePresentation,
+    lo: usize,
+    hi: usize,
+    target: usize,
+    before: bool,
+) -> (usize, usize) {
+    let n = source.frame_count;
+    if lo > hi || hi >= n || target >= n {
+        return (target, 0);
+    }
+    let count = hi - lo + 1;
+    // New block occupies `[dest, dest + count)` after the insert (same index in
+    // old and new coords, since the insert shifts only frames at/after `dest`).
+    let dest = if before { target } else { target + 1 };
+
+    // Capture clone specs from the *pre-insert* deck: (src_index, clone, new_range).
+    let mut specs: Vec<(usize, SceneObject, usize, usize)> = Vec::new();
+    for i in 0..source.objects.len() {
+        let (a, b) = match scene_object_frame_range(&source.objects[i]) {
+            Some(fr) => (fr.start, fr.end),
+            None => continue, // auto group: its members carry the range
+        };
+        let ov_start = a.max(lo);
+        let ov_end = b.min(hi + 1);
+        if ov_start >= ov_end {
+            continue; // doesn't touch the block
+        }
+        // Skip objects the insert stretches across the seam to cover the new
+        // frames — cloning them too would duplicate them on the copy.
+        if a < dest && b > dest {
+            continue;
+        }
+        let new_start = ov_start - lo + dest;
+        let new_end = ov_end - lo + dest;
+        let mut clone = source.objects[i].clone();
+        for coord in scene_object_coordinates_mut(&mut clone) {
+            if let Coordinate::Animated { start_frame, end_frame, .. } = coord {
+                let s = (*start_frame).clamp(lo, hi) - lo + dest;
+                let e = (*end_frame).clamp(lo, hi) - lo + dest;
+                *start_frame = s.min(e);
+                *end_frame = s.max(e);
+            }
+        }
+        specs.push((i, clone, new_start, new_end));
+    }
+
+    insert_blank_frames_at(source, dest, count);
+
+    // Append the clones with their mapped ranges, then re-point cloned groups.
+    let mut index_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for (src, mut clone, ns, ne) in specs {
+        if let Some(fr) = scene_object_frame_range_mut(&mut clone) {
+            fr.start = ns;
+            fr.end = ne;
+        }
+        let new_index = source.objects.len();
+        source.objects.push(clone);
+        index_map.insert(src, new_index);
+    }
+    for &new_index in index_map.values() {
+        if let SceneObject::Group(g) = &mut source.objects[new_index] {
+            for m in &mut g.members {
+                if let Some(&mapped) = index_map.get(m) {
+                    *m = mapped;
+                }
+            }
+        }
+    }
+
+    (dest, count)
 }
 
 /// Copy every object shown on frame `from` and paste an independent, deep clone
@@ -963,22 +1091,54 @@ pub fn move_frame(
     target: usize,
     before: bool,
 ) -> usize {
+    move_frames(source, &[from], target, before)
+}
+
+/// Reorder the deck so the frames in `frames` (a set of 0-based indices) sit, as
+/// one contiguous block in ascending order, immediately before (`before`) or
+/// after the `target` frame, and return the new index of the block's first frame.
+/// A generalisation of [`move_frame`]: the selected frames are pulled out and
+/// re-inserted together next to `target`. No-op (returns the first selected
+/// frame's index unchanged) when the deck has ≤1 frame, the selection is empty or
+/// out of range, or `target` lies *within* the moved block.
+pub fn move_frames(
+    source: &mut SourcePresentation,
+    frames: &[usize],
+    target: usize,
+    before: bool,
+) -> usize {
     let n = source.frame_count;
-    if n <= 1 || from >= n || target >= n || from == target {
-        return from;
+    let mut sel: Vec<usize> = frames.to_vec();
+    sel.sort_unstable();
+    sel.dedup();
+    let first = sel.first().copied().unwrap_or(0);
+    if n <= 1 || sel.is_empty() || sel.iter().any(|&f| f >= n) || target >= n || sel.contains(&target) {
+        return first;
     }
-    // Build the new ordering: order[new_index] = old_index.
-    let mut order: Vec<usize> = (0..n).filter(|&f| f != from).collect();
+    // Build the new ordering: order[new_index] = old_index — every frame not in
+    // the selection, with the selected block spliced in next to `target`.
+    let mut order: Vec<usize> = (0..n).filter(|f| !sel.contains(f)).collect();
     let target_pos = order.iter().position(|&f| f == target).unwrap_or(0);
     let insert_at = if before { target_pos } else { target_pos + 1 };
-    order.insert(insert_at, from);
+    for (k, &f) in sel.iter().enumerate() {
+        order.insert(insert_at + k, f);
+    }
 
     // Inverse map: pos[old_index] = new_index.
     let mut pos = vec![0usize; n];
     for (new_idx, &old) in order.iter().enumerate() {
         pos[old] = new_idx;
     }
+    remap_ranges_through_pos(source, &pos, n);
+    pos[first]
+}
 
+/// Remap every object frame range and animated-coordinate span through the
+/// frame permutation `pos` (`pos[old_index] = new_index`). Each contiguous range
+/// becomes the contiguous hull of its members' new positions — exact when the
+/// permutation keeps the range's frames together, an inclusive approximation when
+/// a partial span is torn apart. Shared by [`move_frame`]/[`move_frames`].
+fn remap_ranges_through_pos(source: &mut SourcePresentation, pos: &[usize], n: usize) {
     for obj in &mut source.objects {
         if let Some(fr) = scene_object_frame_range_mut(obj) {
             if fr.start < fr.end {
@@ -1006,8 +1166,6 @@ pub fn move_frame(
             }
         }
     }
-
-    pos[from]
 }
 
 /// Parse a multi-frame selection string into 0-based, sorted, de-duplicated
@@ -1649,6 +1807,113 @@ mod tests {
         let mut p = pres(3, vec![label(0, 3)]);
         move_frame(&mut p, 0, 2, false);
         assert_eq!(range(&p.objects[0]), (0, 3));
+    }
+
+    // Build a single-frame label carrying `text`, used to tell originals from
+    // clones in the range copy tests.
+    fn tlabel(text: &str, start: usize, end: usize) -> SceneObject {
+        let mut o = create_default(0, 0);
+        if let SceneObject::Label(l) = &mut o {
+            l.text = text.into();
+            l.frames = FrameRange { start, end };
+        }
+        o
+    }
+
+    #[test]
+    fn move_frames_relocates_a_contiguous_block_after_target() {
+        // Deck 0..5; move block [1,2] to after frame 4 → order 0,3,4,1,2,5.
+        let mut p = pres(6, (0..6).map(|f| label(f, f + 1)).collect());
+        let new_index = move_frames(&mut p, &[1, 2], 4, false);
+        assert_eq!(new_index, 3); // old frame 1 → index 3
+        assert_eq!(range(&p.objects[1]), (3, 4)); // old frame 1
+        assert_eq!(range(&p.objects[2]), (4, 5)); // old frame 2
+        assert_eq!(range(&p.objects[3]), (1, 2)); // old frame 3 shifts left
+        assert_eq!(range(&p.objects[4]), (2, 3)); // old frame 4 shifts left
+        assert_eq!(p.frame_count, 6); // move never changes the count
+    }
+
+    #[test]
+    fn move_frames_block_before_target() {
+        // Deck 0..5; move block [3,4] before frame 1 → order 0,3,4,1,2,5.
+        let mut p = pres(6, (0..6).map(|f| label(f, f + 1)).collect());
+        let new_index = move_frames(&mut p, &[3, 4], 1, true);
+        assert_eq!(new_index, 1);
+        assert_eq!(range(&p.objects[3]), (1, 2));
+        assert_eq!(range(&p.objects[4]), (2, 3));
+        assert_eq!(range(&p.objects[1]), (3, 4)); // old frame 1 pushed right
+    }
+
+    #[test]
+    fn move_frames_target_inside_block_is_a_noop() {
+        let mut p = pres(6, (0..6).map(|f| label(f, f + 1)).collect());
+        // Target 3 is within the moved block [2..4] → no move.
+        let r = move_frames(&mut p, &[2, 3, 4], 3, false);
+        assert_eq!(r, 2);
+        for f in 0..6 {
+            assert_eq!(range(&p.objects[f]), (f, f + 1)); // untouched
+        }
+    }
+
+    #[test]
+    fn move_frames_keeps_a_deck_wide_background_spanning() {
+        let mut p = pres(5, vec![label(0, 5), label(1, 2), label(2, 3)]);
+        move_frames(&mut p, &[1, 2], 4, false);
+        assert_eq!(range(&p.objects[0]), (0, 5)); // background still spans the deck
+    }
+
+    #[test]
+    fn copy_frames_duplicates_a_block_after_target() {
+        // Deck A,B,C,D; copy block [1,2] (B,C) after frame 3 → +2 frames at [4,6).
+        let mut p = pres(4, vec![tlabel("A", 0, 1), tlabel("B", 1, 2), tlabel("C", 2, 3), tlabel("D", 3, 4)]);
+        let (new_current, count) = copy_frames(&mut p, 1, 2, 3, false);
+        assert_eq!((new_current, count), (4, 2));
+        assert_eq!(p.frame_count, 6);
+        // Originals unchanged.
+        assert_eq!(range(&p.objects[1]), (1, 2)); // B
+        assert_eq!(range(&p.objects[2]), (2, 3)); // C
+        // Two new clones at the tail, on the new frames.
+        let clones: Vec<_> = p.objects[4..].iter().filter_map(|o| match o {
+            SceneObject::Label(l) => Some((l.text.clone(), range(o))),
+            _ => None,
+        }).collect();
+        assert_eq!(clones, vec![("B".to_string(), (4, 5)), ("C".to_string(), (5, 6))]);
+    }
+
+    #[test]
+    fn copy_frames_before_front_inserts_at_the_start() {
+        let mut p = pres(4, vec![tlabel("A", 0, 1), tlabel("B", 1, 2), tlabel("C", 2, 3), tlabel("D", 3, 4)]);
+        let (new_current, count) = copy_frames(&mut p, 1, 2, 0, true);
+        assert_eq!((new_current, count), (0, 2));
+        assert_eq!(p.frame_count, 6);
+        // Originals all shifted right by 2.
+        assert_eq!(range(&p.objects[0]), (2, 3)); // A
+        assert_eq!(range(&p.objects[1]), (3, 4)); // B
+        // Clones land on the new front frames 0 and 1.
+        let clones: Vec<_> = p.objects[4..].iter().filter_map(|o| match o {
+            SceneObject::Label(l) => Some((l.text.clone(), range(o))),
+            _ => None,
+        }).collect();
+        assert_eq!(clones, vec![("B".to_string(), (0, 1)), ("C".to_string(), (1, 2))]);
+    }
+
+    #[test]
+    fn copy_frames_keeps_an_interior_spanning_background_shared() {
+        // Deck-wide bg + per-frame B,C. Copy [1,2] after frame 0 (dest strictly
+        // inside the bg span) → the bg stretches over the new frames as ONE object,
+        // not a duplicate; B and C are cloned.
+        let mut p = pres(4, vec![tlabel("bg", 0, 4), tlabel("B", 1, 2), tlabel("C", 2, 3)]);
+        let (new_current, count) = copy_frames(&mut p, 1, 2, 0, false);
+        assert_eq!((new_current, count), (1, 2));
+        assert_eq!(p.frame_count, 6);
+        // The background is still a single object, now spanning the grown deck.
+        let bgs: Vec<_> = p.objects.iter().filter(|o| matches!(o, SceneObject::Label(l) if l.text == "bg")).collect();
+        assert_eq!(bgs.len(), 1, "background not duplicated");
+        assert_eq!(range(bgs[0]), (0, 6));
+        // B and C each have an original + a clone.
+        let count_text = |t: &str| p.objects.iter().filter(|o| matches!(o, SceneObject::Label(l) if l.text == t)).count();
+        assert_eq!(count_text("B"), 2);
+        assert_eq!(count_text("C"), 2);
     }
 
     #[test]
