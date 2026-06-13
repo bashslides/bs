@@ -133,6 +133,7 @@ pub fn create_default(type_index: usize, current_frame: usize) -> SceneObject {
             x2: Coordinate::Fixed(20.0),
             y2: Coordinate::Fixed(5.0),
             head: true,
+            head_start: false,
             head_ch: None,
             body_ch: None,
             style: Style::default(),

@@ -59,9 +59,13 @@ pub struct Arrow {
     pub x2: Coordinate,
     #[serde(deserialize_with = "deserialize_coord_compat")]
     pub y2: Coordinate,
-    /// Whether to draw an ASCII arrowhead at (x2, y2).
+    /// Whether to draw an ASCII arrowhead at the end (x2, y2).
     #[serde(default = "default_true")]
     pub head: bool,
+    /// Whether to draw an ASCII arrowhead at the start (x1, y1), pointing
+    /// outward (opposite the end head). Off by default — a one-ended arrow.
+    #[serde(default)]
+    pub head_start: bool,
     /// Custom arrowhead character; None = auto-select based on direction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub head_ch: Option<char>,
@@ -133,13 +137,24 @@ impl Resolve for Arrow {
             Some(ch) => head_char_v(ch, sy >= 0),
             None     => if sy >= 0 { '▼' } else { '▲' },
         };
+        // Start-end heads point *outward* — the opposite direction from the end
+        // head — so the line reads as a double-headed arrow.
+        let h_head_start = match self.head_ch {
+            Some(ch) => head_char_h(ch, sx < 0),
+            None     => if sx < 0 { '▶' } else { '◀' },
+        };
+        let v_head_start = match self.head_ch {
+            Some(ch) => head_char_v(ch, sy < 0),
+            None     => if sy < 0 { '▼' } else { '▲' },
+        };
         // Body chars: derive vertical counterpart from horizontal for known pairs.
         let h_body = self.body_ch.unwrap_or('─');
         let v_body = self.body_ch.map(body_char_vertical).unwrap_or('│');
 
         // ── Pure vertical ──────────────────────────────────────────────────
         if dx_abs == 0 {
-            let mut y = y1;
+            emit(ops, x1, y1, if self.head_start { v_head_start } else { v_body });
+            let mut y = y1 + sy;
             while y != y2 {
                 emit(ops, x1, y, v_body);
                 y += sy;
@@ -150,7 +165,8 @@ impl Resolve for Arrow {
 
         // ── Pure horizontal ────────────────────────────────────────────────
         if dy_abs == 0 {
-            let mut x = x1;
+            emit(ops, x1, y1, if self.head_start { h_head_start } else { h_body });
+            let mut x = x1 + sx;
             while x != x2 {
                 emit(ops, x, y1, h_body);
                 x += sx;
@@ -175,8 +191,9 @@ impl Resolve for Arrow {
                 _        => '└',
             };
 
-            // Horizontal body: x1 .. x2 (exclusive)
-            let mut x = x1;
+            // Start head / horizontal body: x1 .. x2 (exclusive)
+            emit(ops, x1, y1, if self.head_start { h_head_start } else { h_body });
+            let mut x = x1 + sx;
             while x != x2 {
                 emit(ops, x, y1, h_body);
                 x += sx;
@@ -206,8 +223,9 @@ impl Resolve for Arrow {
                 _        => '┐',
             };
 
-            // Vertical body: y1 .. y2 (exclusive)
-            let mut y = y1;
+            // Start head / vertical body: y1 .. y2 (exclusive)
+            emit(ops, x1, y1, if self.head_start { v_head_start } else { v_body });
+            let mut y = y1 + sy;
             while y != y2 {
                 emit(ops, x1, y, v_body);
                 y += sy;

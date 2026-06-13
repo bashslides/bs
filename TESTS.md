@@ -118,6 +118,11 @@ reconstructed character grid (some also assert on cell styles).
 | `leftward_arrow_with_custom_body_points_left` | A leftward arrow with a custom body points left |
 | `diagonal_h_first_routes_along_y1_then_bends_down` | A diagonal arrow (|dx| ≥ |dy|) routes horizontally then bends down |
 | `head_disabled_draws_body_at_the_endpoint` | `head: false` draws a body char at the endpoint |
+| `horizontal_double_head_points_outward_at_both_ends` | `head_start: true` adds an outward head at (x1,y1): `◀` start, `▶` end |
+| `vertical_double_head_points_outward_at_both_ends` | A vertical double-headed arrow points `▲` at the start, `▼` at the end |
+| `diagonal_double_head_heads_the_horizontal_start` | On an H-first diagonal, the start head sits on the horizontal leg and points outward |
+| `start_head_only_leaves_the_end_as_body` | `head: false` + `head_start: true` draws a head only at the start |
+| `custom_head_char_applies_to_the_start_head_too` | A custom `head_ch` rotates to the outward sibling for the start head |
 | `zero_length_arrow_draws_a_single_point` | A zero-length arrow draws a single point |
 
 ### HLine object — `tests/hline.rs`

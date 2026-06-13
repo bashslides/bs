@@ -329,7 +329,7 @@ targets the pure, deterministic core):
 | `tests/list.rs` | `List` object: ordered/unordered markers, custom bullet, default vs custom inter-item spacing, wrapped-row indentation, multi-digit alignment, height clip, background fill |
 | `tests/command.rs` | `Command` object: compiled `CommandRegion` spec, the placeholder box drawn into the static frame, and `player::layout_output` (ANSI-strip + tail + clip). The spawn/timeout run-loop is TUI and stays manual |
 | `tests/label.rs` | `Label`: `framed` border (incl. at the canvas origin), `frame_style`, background fill + height pad, height clip, width wrap, `align` (left/center/right within `width`) and `valign` (top/center/bottom within `height`) |
-| `tests/arrow.rs` | `Arrow`: horizontal/vertical/leftward body + auto head, diagonal L-routing, head-disabled, zero-length point |
+| `tests/arrow.rs` | `Arrow`: horizontal/vertical/leftward body + auto head, diagonal L-routing, head-disabled, double-headed (`head_start` — outward heads at both ends, incl. custom-char rotation), zero-length point |
 | `tests/hline.rs` | `HLine`: span (end-exclusive) and custom draw char |
 | `tests/header.rs` | `Header`: glyph fill, custom fill char, inter-glyph spacing, canvas-width word wrap |
 | `tests/rect.rs` | `Rect`: border + blank interior, title on the top edge |
@@ -347,7 +347,7 @@ Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
 `auto_advance_delay` min-over-overlap + `animation_cluster` overlap-merging;
 copy/paste `expand_selection` +
 `clone_selection` + `link_siblings` + link-family delete maintenance). The suite
-totals 200 tests (100 integration
+totals 205 tests (105 integration
 + 100 inline); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
