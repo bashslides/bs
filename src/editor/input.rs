@@ -2152,7 +2152,8 @@ fn anim_apply_edit(
         AnimRole::End => buf.trim().parse::<usize>().map(|v| *end_frame = v.saturating_sub(1)).err().map(bad),
         AnimRole::Delay => buf.trim().parse::<u64>().map(|v| *delay_ms = v).err().map(bad),
         // gap of 0 is meaningless; clamp to 1 (every frame).
-        AnimRole::Gap => buf.trim().parse::<usize>().map(|v| *gap_frames = v.max(1)).err().map(bad),
+        // `gap_frames` is the count of empty frames between appearances (0 = off).
+        AnimRole::Gap => buf.trim().parse::<usize>().map(|v| *gap_frames = v).err().map(bad),
         AnimRole::AddFrames | AnimRole::AutoPlay => None,
     }
 }
@@ -2208,7 +2209,7 @@ fn enter_animate(
     let (start_frame, end_frame) =
         span.unwrap_or((state.current_frame, state.source.frame_count.saturating_sub(1)));
     let end_excl = end_frame + 1;
-    let (auto_play, delay_ms) = state
+    let (auto_play, delay_ms, gap_frames) = state
         .source
         .objects
         .iter()
@@ -2216,14 +2217,14 @@ fn enter_animate(
             SceneObject::Animation(a)
                 if a.frames.start == start_frame && a.frames.end == end_excl =>
             {
-                Some((a.auto_play, a.delay_ms))
+                Some((a.auto_play, a.delay_ms, a.gap_frames))
             }
             _ => None,
         })
-        .unwrap_or((true, 500));
+        .unwrap_or((true, 500, 0));
     anim_mode(
         object_index, return_property, property_name, 0, None, 0,
-        from, to, from_y, to_y, two_axis, start_frame, end_frame, true, auto_play, delay_ms, 1,
+        from, to, from_y, to_y, two_axis, start_frame, end_frame, true, auto_play, delay_ms, gap_frames,
     )
 }
 
@@ -2331,8 +2332,12 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
             state.mode = ep_browse(object_index, return_property, 0);
             return Action::Redraw;
         }
-        // [x] clear → Fixed coordinate(s) (does not touch any Animation span).
+        // [x] clear → Fixed coordinate(s). Also removes any gap-strobe copies so
+        // clearing doesn't leave the element scattered on its old sample frames.
         KeyCode::Char('x') if key.modifiers == KeyModifiers::NONE => {
+            if let Some((lo, hi)) = super::state::scene_object_animation_span(&mut state.source.objects[object_index]) {
+                super::state::clear_gap_clones(&mut state.source, object_index, lo, hi.saturating_sub(1));
+            }
             let obj = &mut state.source.objects[object_index];
             let res = if two_axis {
                 properties::set_coordinate(obj, "x", Coordinate::Fixed(from as f64))
@@ -2397,6 +2402,14 @@ fn apply_animation(
     let span_exists = state.source.objects.iter().any(|o| {
         matches!(o, SceneObject::Animation(a) if a.frames.start == start_frame && a.frames.end == end_excl)
     });
+
+    // Remove any prior gap-strobe copies of this element (matched by its *current*
+    // animated coords, before we change them), so re-applying is idempotent —
+    // no orphan copies left over a previous gap setting.
+    if let Some((lo, hi)) = super::state::scene_object_animation_span(&mut state.source.objects[object_index]) {
+        super::state::clear_gap_clones(&mut state.source, object_index, lo, hi.saturating_sub(1));
+    }
+
     if animate && add_frames && !span_exists {
         super::state::add_frames_and_share(&mut state.source, state.current_frame, start_frame, end_frame);
     }
@@ -2425,17 +2438,18 @@ fn apply_animation(
         }
     }
 
-    // Record the animation span + its auto-play config (reusing one that already
-    // covers exactly this span, so X and Y of an object stay one animation).
+    // Record the animation span + its auto-play config + gap (reusing one that
+    // already covers exactly this span, so X and Y of an object stay one
+    // animation). `gap_frames` is editor metadata, recovered when re-animating.
     if animate {
-        super::state::upsert_animation(&mut state.source, start_frame, end_excl, auto_play, delay_ms);
+        super::state::upsert_animation(&mut state.source, start_frame, end_excl, auto_play, delay_ms, gap_frames);
     }
 
-    // Gap-frames: strobe the element onto every Nth frame of the span — whether
-    // or not `add_frames` inserted them, it works on the frames the span covers.
-    // Only on a *fresh* span, though: the clones are independent objects, so
-    // re-applying would stack duplicates (hence the `!span_exists` guard).
-    if animate && !span_exists && gap_frames > 1 {
+    // Gap-frames: strobe the element so it shows every `gap_frames + 1` frames of
+    // the span (i.e. `gap_frames` empty frames between appearances), whether or
+    // not `add_frames` inserted them. Old copies were cleared above, so this is
+    // idempotent on re-apply.
+    if animate && gap_frames > 0 {
         super::state::apply_gap(&mut state.source, object_index, start_frame, end_frame, gap_frames);
     }
 
@@ -3168,8 +3182,9 @@ mod tests {
         state.source.objects = vec![label];
         state.current_frame = 0;
 
-        // Animate x 0→9 over the span with add_frames OFF and gap 4.
-        apply_animation(&mut state, 0, "x", 0, 9, 0, 0, false, 0, 9, false, true, 500, 4);
+        // Animate x 0→9 over the span with add_frames OFF and gap 3 (3 empty
+        // frames between appearances → shows on 0, 4, 8).
+        apply_animation(&mut state, 0, "x", 0, 9, 0, 0, false, 0, 9, false, true, 500, 3);
 
         // The label is strobed into samples (original + clones on frames 4 and 8),
         // not left spanning every frame — so three labels, not one.
@@ -3180,5 +3195,39 @@ mod tests {
             Some(fr) => assert_eq!((fr.start, fr.end), (0, 1)),
             None => panic!(),
         }
+    }
+
+    #[test]
+    fn re_applying_a_gapped_animation_does_not_stack_orphan_copies() {
+        use crate::editor::object_defaults::create_default;
+        use crate::editor::state::scene_object_frame_range_mut;
+        use crate::engine::source::SceneObject;
+
+        let mut state = EditorState::open("/tmp/bs_gap_reapply_absent_77.json").unwrap();
+        state.source.frame_count = 10;
+        let mut label = create_default(0, 0);
+        if let Some(fr) = scene_object_frame_range_mut(&mut label) {
+            fr.start = 0;
+            fr.end = 10;
+        }
+        state.source.objects = vec![label];
+
+        let count_labels = |s: &EditorState| {
+            s.source.objects.iter().filter(|o| matches!(o, SceneObject::Label(_))).count()
+        };
+
+        // First apply: gap 3 → 3 strobe samples (frames 0, 4, 8).
+        apply_animation(&mut state, 0, "x", 0, 9, 0, 0, false, 0, 9, false, true, 500, 3);
+        assert_eq!(count_labels(&state), 3);
+
+        // Re-applying the same animation must not leave orphan copies behind —
+        // the old strobe copies are cleared first, so the count stays 3.
+        apply_animation(&mut state, 0, "x", 0, 9, 0, 0, false, 0, 9, false, true, 500, 3);
+        assert_eq!(count_labels(&state), 3, "re-apply must not stack orphan copies");
+
+        // Re-applying with gap 0 (off) clears the strobe entirely: one label
+        // spanning the whole span again, no orphans.
+        apply_animation(&mut state, 0, "x", 0, 9, 0, 0, false, 0, 9, false, true, 500, 0);
+        assert_eq!(count_labels(&state), 1, "gap 0 should remove the strobe copies");
     }
 }

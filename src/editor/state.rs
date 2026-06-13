@@ -681,16 +681,18 @@ pub fn add_frames_and_share(
 }
 
 /// Turn the just-animated element at `object_index` into a stop-motion strobe:
-/// show it only on every `gap`-th frame of its span (frames `start`,
-/// `start + gap`, `start + 2·gap`, … up to `end_frame`), leaving the frames
-/// between as gaps. The original is kept on the first sample frame; single-frame
-/// clones are added on the later sample frames. Every copy keeps the animated
-/// coordinate, so each evaluates to the element's interpolated position for its
-/// own frame — the motion is sampled, not held.
+/// `gap` is the number of *empty* frames left between appearances, so the element
+/// shows every `gap + 1` frames of its span — at `start`, `start + gap + 1`,
+/// `start + 2·(gap + 1)`, … up to `end_frame` (e.g. `gap = 3` ⇒ frames `start`,
+/// `start + 4`, `start + 8`, with three blank frames between each). The original
+/// is kept on the first sample frame; single-frame clones are added on the later
+/// sample frames. Every copy keeps the animated coordinate, so each evaluates to
+/// the element's interpolated position for its own frame — the motion is sampled,
+/// not held.
 ///
-/// `gap <= 1` is a no-op (the element stays on every frame). Call this only on a
-/// freshly created animation; the clones are independent objects, so re-applying
-/// over the same span would stack duplicates.
+/// `gap == 0` is a no-op (no empty frames ⇒ the element stays on every frame).
+/// Call this only on a freshly created animation; the clones are independent
+/// objects, so re-applying over the same span would stack duplicates.
 pub fn apply_gap(
     source: &mut SourcePresentation,
     object_index: usize,
@@ -698,16 +700,19 @@ pub fn apply_gap(
     end_frame: usize,
     gap: usize,
 ) {
-    if gap <= 1 {
+    if gap == 0 {
         return;
     }
+    // `gap` is the number of *empty* frames between appearances, so the element
+    // appears every `gap + 1` frames: at `start`, `start + gap + 1`, …
+    let step = gap + 1;
     // The original holds the first sample frame.
     if let Some(fr) = scene_object_frame_range_mut(&mut source.objects[object_index]) {
         fr.start = start;
         fr.end = start + 1;
     }
     let proto = source.objects[object_index].clone();
-    let mut f = start + gap;
+    let mut f = start + step;
     while f <= end_frame {
         let mut clone = proto.clone();
         if let Some(fr) = scene_object_frame_range_mut(&mut clone) {
@@ -715,7 +720,64 @@ pub fn apply_gap(
             fr.end = f + 1;
         }
         source.objects.push(clone);
-        f += gap;
+        f += step;
+    }
+}
+
+/// True if `obj` has at least one `Animated` coordinate — only animated elements
+/// are gap-strobed, so a non-animated object can have no strobe copies.
+fn is_animated(obj: &SceneObject) -> bool {
+    let mut clone = obj.clone();
+    scene_object_coordinates_mut(&mut clone)
+        .into_iter()
+        .any(|c| matches!(c, Coordinate::Animated { .. }))
+}
+
+/// A content key that ignores only the frame range: serialize `obj` with its
+/// range normalized to `[0, 1)`. Two objects with this same key are identical in
+/// every field *except* which single frame they occupy — exactly the relationship
+/// between a gap-strobe clone and its source (clones are deep copies of the
+/// source object with only the frame moved). Matching on the whole object — not
+/// just its animated coordinates — keeps strobe copies of *different* elements
+/// distinct even when their motion (from/to/span) coincides, so editing one
+/// overlapping animation never deletes another's gap frames.
+fn gap_clone_key(obj: &SceneObject) -> String {
+    let mut clone = obj.clone();
+    if let Some(fr) = scene_object_frame_range_mut(&mut clone) {
+        fr.start = 0;
+        fr.end = 1;
+    }
+    serde_json::to_string(&clone).unwrap_or_default()
+}
+
+/// Remove the gap-strobe copies of the element at `keep` within `[start,
+/// end_frame]`: single-frame objects (appended *after* `keep`) that are exact
+/// content-copies of it (same key per [`gap_clone_key`], i.e. identical but for
+/// their frame). Makes re-applying or clearing a gapped animation idempotent —
+/// no orphan copies left showing on their old frames — without touching the
+/// strobe copies of a *different* overlapping animation that happens to share the
+/// same motion.
+pub fn clear_gap_clones(
+    source: &mut SourcePresentation,
+    keep: usize,
+    start: usize,
+    end_frame: usize,
+) {
+    if !is_animated(&source.objects[keep]) {
+        return; // not animated → nothing could be a gap copy of it
+    }
+    let key = gap_clone_key(&source.objects[keep]);
+    // Clones are always pushed after `keep`, so scanning indices above it keeps
+    // `keep` (and lower indices) stable as matches are removed.
+    let mut i = source.objects.len();
+    while i > keep + 1 {
+        i -= 1;
+        let single_in_span = scene_object_frame_range(&source.objects[i])
+            .is_some_and(|fr| fr.end == fr.start + 1 && fr.start >= start && fr.start <= end_frame);
+        if single_in_span && gap_clone_key(&source.objects[i]) == key {
+            source.objects.remove(i);
+            adjust_group_members_after_delete(source, i);
+        }
     }
 }
 
@@ -729,12 +791,14 @@ pub fn upsert_animation(
     end_excl: usize,
     auto_play: bool,
     delay_ms: u64,
+    gap_frames: usize,
 ) {
     for obj in &mut source.objects {
         if let SceneObject::Animation(a) = obj {
             if a.frames.start == start && a.frames.end == end_excl {
                 a.auto_play = auto_play;
                 a.delay_ms = delay_ms;
+                a.gap_frames = gap_frames;
                 return;
             }
         }
@@ -743,6 +807,7 @@ pub fn upsert_animation(
         frames: FrameRange { start, end: end_excl },
         auto_play,
         delay_ms,
+        gap_frames,
     }));
 }
 
@@ -1120,16 +1185,16 @@ mod tests {
 
     #[test]
     fn apply_gap_strobes_element_onto_every_nth_frame() {
-        // A label animated over span [0,10). gap=4 → keep the original on the
-        // first sample frame, clone onto frames 4 and 8 (single-frame each); the
-        // frames between are gaps.
+        // A label animated over span [0,10). gap=3 means 3 *empty* frames between
+        // appearances → the element shows every 4th frame: 0, 4, 8. The original
+        // holds the first sample frame; clones occupy frames 4 and 8.
         let mut obj = create_default(0, 0);
         if let SceneObject::Label(l) = &mut obj {
             l.position.x = Coordinate::Animated { from: 0, to: 9, start_frame: 0, end_frame: 9 };
             l.frames = FrameRange { start: 0, end: 10 };
         }
         let mut p = pres(10, vec![obj]);
-        apply_gap(&mut p, 0, 0, 9, 4);
+        apply_gap(&mut p, 0, 0, 9, 3);
         assert_eq!(p.objects.len(), 3); // original + 2 clones
         assert_eq!(range(&p.objects[0]), (0, 1));
         assert_eq!(range(&p.objects[1]), (4, 5));
@@ -1146,15 +1211,70 @@ mod tests {
     }
 
     #[test]
-    fn apply_gap_of_one_is_a_noop() {
+    fn apply_gap_of_zero_is_a_noop() {
+        // gap 0 = no empty frames = off: the element stays spanning every frame.
         let mut obj = create_default(0, 0);
         if let SceneObject::Label(l) = &mut obj {
             l.frames = FrameRange { start: 0, end: 10 };
         }
         let mut p = pres(10, vec![obj]);
-        apply_gap(&mut p, 0, 0, 9, 1);
+        apply_gap(&mut p, 0, 0, 9, 0);
         assert_eq!(p.objects.len(), 1);
         assert_eq!(range(&p.objects[0]), (0, 10)); // untouched
+    }
+
+    #[test]
+    fn clear_gap_clones_removes_only_matching_copies() {
+        // Build a gapped element by hand: a label animated [0,10), strobed so it
+        // shows on 0, 4, 8 (original + 2 clones), plus an unrelated label.
+        let mut anim = create_default(0, 0);
+        if let SceneObject::Label(l) = &mut anim {
+            l.position.x = Coordinate::Animated { from: 0, to: 9, start_frame: 0, end_frame: 9 };
+            l.frames = FrameRange { start: 0, end: 10 };
+        }
+        let mut p = pres(10, vec![anim, label(0, 10)]); // index 0 = animated, 1 = other
+        apply_gap(&mut p, 0, 0, 9, 3); // → index 0 ([0,1)), clones appended at 2,3
+        assert_eq!(p.objects.len(), 4);
+
+        clear_gap_clones(&mut p, 0, 0, 9);
+        // The two clones are gone; the original (0) and the unrelated label (1) stay.
+        assert_eq!(p.objects.len(), 2);
+        assert_eq!(range(&p.objects[0]), (0, 1)); // original untouched
+        assert_eq!(range(&p.objects[1]), (0, 10)); // unrelated label untouched
+    }
+
+    #[test]
+    fn clear_gap_clones_spares_a_different_animation_with_the_same_motion() {
+        // Two distinct elements (different text) that animate *identically* — same
+        // from/to/span — and are both strobed over the same frames. Clearing one
+        // must not delete the other's gap copies (the bug: matching strobe copies
+        // by motion alone wiped an overlapping animation that shared it).
+        let mut a = create_default(0, 0);
+        let mut b = create_default(0, 0);
+        if let SceneObject::Label(l) = &mut a {
+            l.text = "A".into();
+            l.position.x = Coordinate::Animated { from: 0, to: 9, start_frame: 0, end_frame: 9 };
+            l.frames = FrameRange { start: 0, end: 10 };
+        }
+        if let SceneObject::Label(l) = &mut b {
+            l.text = "B".into();
+            l.position.x = Coordinate::Animated { from: 0, to: 9, start_frame: 0, end_frame: 9 };
+            l.frames = FrameRange { start: 0, end: 10 };
+        }
+        let mut p = pres(10, vec![a, b]); // index 0 = A, 1 = B
+        apply_gap(&mut p, 0, 0, 9, 3); // strobe A → A clones appended (indices 2,3)
+        // B's index shifts only if A clones were inserted before it; they are
+        // pushed to the tail, so B is still findable by its text.
+        let b_idx = p.objects.iter().position(|o| matches!(o, SceneObject::Label(l) if l.text == "B")).unwrap();
+        apply_gap(&mut p, b_idx, 0, 9, 3); // strobe B → B clones appended
+        // 2 originals + 2 A-clones + 2 B-clones.
+        assert_eq!(p.objects.len(), 6);
+
+        // Clear A's clones (e.g. re-editing animation A). B's strobe must survive.
+        clear_gap_clones(&mut p, 0, 0, 9);
+        let count = |t: &str| p.objects.iter().filter(|o| matches!(o, SceneObject::Label(l) if l.text == t)).count();
+        assert_eq!(count("A"), 1, "A's clones should be cleared (just the original left)");
+        assert_eq!(count("B"), 3, "B's three strobe samples must be untouched");
     }
 
     #[test]
@@ -1391,8 +1511,8 @@ mod tests {
     fn upsert_animation_reuses_a_matching_span() {
         // Animating X then Y over the same span keeps a single Animation entity.
         let mut p = pres(10, vec![label(0, 10)]);
-        upsert_animation(&mut p, 0, 10, true, 500);
-        upsert_animation(&mut p, 0, 10, false, 200); // same span → update in place
+        upsert_animation(&mut p, 0, 10, true, 500, 0);
+        upsert_animation(&mut p, 0, 10, false, 200, 0); // same span → update in place
         let anims: Vec<_> = p
             .objects
             .iter()
@@ -1409,8 +1529,8 @@ mod tests {
     #[test]
     fn upsert_animation_appends_a_distinct_span() {
         let mut p = pres(10, vec![label(0, 10)]);
-        upsert_animation(&mut p, 0, 5, true, 500);
-        upsert_animation(&mut p, 3, 9, true, 500); // overlapping but distinct span
+        upsert_animation(&mut p, 0, 5, true, 500, 0);
+        upsert_animation(&mut p, 3, 9, true, 500, 0); // overlapping but distinct span
         let count = p
             .objects
             .iter()

@@ -42,6 +42,15 @@ pub struct Animation {
     /// Delay between auto-advanced frames, in milliseconds.
     #[serde(default = "default_delay_ms")]
     pub delay_ms: u64,
+    /// Editor metadata: the gap-frames strobe used (0 = none). The strobe itself
+    /// is baked into the frames as single-frame copies of the element; this just
+    /// records the setting so the animate menu can recover it. Ignored at runtime.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub gap_frames: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 impl Animation {

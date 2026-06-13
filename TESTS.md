@@ -279,7 +279,7 @@ reconstructed character grid (some also assert on cell styles).
 |------|----------|
 | `animate_two_axis_layout_exposes_x_and_y_fields` | A position (two-axis) animation lists `x from/to` and `y from/to` (10 fields), values per axis |
 | `animate_single_axis_layout_has_one_from_to_pair` | A 1-D coordinate (width/height) lists a single `from/to` pair (8 fields) |
-| `gap_strobes_even_without_add_frames` | `apply_animation` with gap > 1 strobes the element onto every Nth frame even when `add frames` is off (works on existing frames) |
+| `gap_strobes_even_without_add_frames` | `apply_animation` with gap > 0 strobes the element onto every `gap+1`th frame even when `add frames` is off (works on existing frames) |
 
 ### Frame operations — `src/editor/state.rs`
 
@@ -307,8 +307,10 @@ reconstructed character grid (some also assert on cell styles).
 | `add_frames_and_share_inserts_n_minus_1_fresh_frames` | N-1 *new* frames are always inserted after the current one (existing frames shift back), not reused — even when the deck already has frames in the span |
 | `upsert_animation_reuses_a_matching_span` | Animating X then Y over the same span keeps one `Animation` (updated in place) |
 | `upsert_animation_appends_a_distinct_span` | A different (even overlapping) span creates a second `Animation` |
-| `apply_gap_strobes_element_onto_every_nth_frame` | `gap_frames` keeps the original on the first sample frame and clones the element onto every Nth frame (single-frame samples keeping the animated coordinate); frames between are gaps |
-| `apply_gap_of_one_is_a_noop` | A gap of 1 leaves the element spanning every frame (off) |
+| `apply_gap_strobes_element_onto_every_nth_frame` | `gap_frames` keeps the original on the first sample frame and clones the element onto every `gap+1`th frame (single-frame samples keeping the animated coordinate); the `gap` frames between are blanks |
+| `apply_gap_of_zero_is_a_noop` | A gap of 0 (no empty frames) leaves the element spanning every frame (off) |
+| `clear_gap_clones_removes_only_matching_copies` | Clearing an element's strobe removes its single-frame clones in span but leaves the original and unrelated objects |
+| `clear_gap_clones_spares_a_different_animation_with_the_same_motion` | Matching strobe copies by whole-object content (not motion alone): clearing one animation leaves an overlapping animation's gap frames intact even when both share the same from/to/span |
 | `flatten_coordinates_converts_animated_to_fixed_at_frame` | Pasting flattens an animated coordinate to a `Fixed` value sampled at the frame, so the copy is static and arrow-movable on both axes |
 | `expand_selection_pulls_in_group_members` | Copying a group expands the selection to include its members (deduped/sorted) |
 | `clone_selection_remaps_members_locally_and_is_independent` | A cloned group points at its cloned members (selection-local); clones are independent of the originals |
