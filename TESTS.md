@@ -273,6 +273,7 @@ reconstructed character grid (some also assert on cell styles).
 |------|----------|
 | `animate_two_axis_layout_exposes_x_and_y_fields` | A position (two-axis) animation lists `x from/to` and `y from/to` (10 fields), values per axis |
 | `animate_single_axis_layout_has_one_from_to_pair` | A 1-D coordinate (width/height) lists a single `from/to` pair (8 fields) |
+| `gap_strobes_even_without_add_frames` | `apply_animation` with gap > 1 strobes the element onto every Nth frame even when `add frames` is off (works on existing frames) |
 
 ### Frame operations — `src/editor/state.rs`
 

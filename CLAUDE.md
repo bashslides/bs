@@ -169,9 +169,11 @@ Normal ──a──→ AddObject ──Enter──→ Normal (object added)
   entity (`state::upsert_animation`, reuse-by-span so x+y stay one animation).
   `gap frames` > 1 then strobes the element via `state::apply_gap`: it shows only
   on every Nth frame of the span (single-frame samples at the interpolated
-  position, empty gaps between — a stop-motion look). Gap clones are independent
-  objects, so it runs only on a freshly-created span (same `!span_exists` guard as
-  add-frames). `[x]` reverts the coordinate to `Fixed`. Defaults: add-frames on,
+  position, empty gaps between — a stop-motion look). It works on whatever frames
+  the span covers, **independent of `add frames`** (inserted or pre-existing); the
+  gap clones are independent objects, so it runs only on a freshly-created span
+  (`!span_exists`, to avoid stacking duplicates). `[x]` reverts the coordinate to
+  `Fixed`. Defaults: add-frames on,
   auto-play on, 500 ms, gap 1 (off). Re-animating a span reseeds its auto-play
   settings (`enter_animate`)
 
@@ -305,8 +307,8 @@ Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
 + `upsert_animation`, `player/mod.rs` — `loop_next` bounce/wrap stepping +
 `auto_advance_delay` min-over-overlap; copy/paste `expand_selection` +
 `clone_selection` + `link_siblings` + link-family delete maintenance). The suite
-totals 169 tests (100 integration
-+ 69 inline); `TESTS.md` is the authoritative per-test list.
+totals 170 tests (100 integration
++ 70 inline); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the

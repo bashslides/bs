@@ -2227,10 +2227,11 @@ fn apply_animation(
         super::state::upsert_animation(&mut state.source, start_frame, end_excl, auto_play, delay_ms);
     }
 
-    // Gap-frames: strobe the element onto every Nth frame of the span (a fresh
-    // animation only — the clones are independent, so re-applying would stack
-    // duplicates; that's why it shares the add-frames "new span" guard).
-    if animate && add_frames && !span_exists && gap_frames > 1 {
+    // Gap-frames: strobe the element onto every Nth frame of the span — whether
+    // or not `add_frames` inserted them, it works on the frames the span covers.
+    // Only on a *fresh* span, though: the clones are independent objects, so
+    // re-applying would stack duplicates (hence the `!span_exists` guard).
+    if animate && !span_exists && gap_frames > 1 {
         super::state::apply_gap(&mut state.source, object_index, start_frame, end_frame, gap_frames);
     }
 
@@ -2944,5 +2945,36 @@ mod tests {
             labels,
             vec!["from", "to", "start", "end", "add frames", "auto play", "delay ms", "gap frames"]
         );
+    }
+
+    #[test]
+    fn gap_strobes_even_without_add_frames() {
+        use crate::editor::object_defaults::create_default;
+        use crate::editor::state::scene_object_frame_range_mut;
+        use crate::engine::source::SceneObject;
+
+        // A 10-frame deck with a label already on every frame (no insertion).
+        let mut state = EditorState::open("/tmp/bs_gap_regression_does_not_exist_42.json").unwrap();
+        state.source.frame_count = 10;
+        let mut label = create_default(0, 0);
+        if let Some(fr) = scene_object_frame_range_mut(&mut label) {
+            fr.start = 0;
+            fr.end = 10;
+        }
+        state.source.objects = vec![label];
+        state.current_frame = 0;
+
+        // Animate x 0→9 over the span with add_frames OFF and gap 4.
+        apply_animation(&mut state, 0, "x", 0, 9, 0, 0, false, 0, 9, false, true, 500, 4);
+
+        // The label is strobed into samples (original + clones on frames 4 and 8),
+        // not left spanning every frame — so three labels, not one.
+        let labels = state.source.objects.iter().filter(|o| matches!(o, SceneObject::Label(_))).count();
+        assert_eq!(labels, 3, "gap must strobe the element even without add_frames");
+        // The strobed original holds only its first sample frame.
+        match scene_object_frame_range_mut(&mut state.source.objects[0]) {
+            Some(fr) => assert_eq!((fr.start, fr.end), (0, 1)),
+            None => panic!(),
+        }
     }
 }
