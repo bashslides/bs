@@ -811,6 +811,90 @@ pub fn upsert_animation(
     }));
 }
 
+/// Does `obj` have at least one coordinate animated over *exactly* the span
+/// `[start, end_frame]` (inclusive end)? Used to find the objects whose motion a
+/// given `Animation` span drives.
+fn has_animation_over(obj: &SceneObject, start: usize, end_frame: usize) -> bool {
+    let mut clone = obj.clone();
+    scene_object_coordinates_mut(&mut clone)
+        .into_iter()
+        .any(|c| matches!(c, Coordinate::Animated { start_frame, end_frame: ef, .. }
+            if *start_frame == start && *ef == end_frame))
+}
+
+/// Flatten every coordinate on `obj` animated over exactly `[start, end_frame]`
+/// back to a static `Fixed` at its `from` value (the position the motion began
+/// at), leaving coordinates on *other* spans alone. Then widen the object's
+/// frame range to cover the whole span (never shrinking it) so a reverted —
+/// possibly gap-strobed — element shows statically across those frames instead
+/// of vanishing onto a single sample frame.
+fn flatten_animation_over(obj: &mut SceneObject, start: usize, end_frame: usize) {
+    for coord in scene_object_coordinates_mut(obj) {
+        if let Coordinate::Animated { from, start_frame, end_frame: ef, .. } = coord {
+            if *start_frame == start && *ef == end_frame {
+                let v = *from;
+                *coord = Coordinate::Fixed(v as f64);
+            }
+        }
+    }
+    if let Some(fr) = scene_object_frame_range_mut(obj) {
+        if fr.start > start {
+            fr.start = start;
+        }
+        if fr.end < end_frame + 1 {
+            fr.end = end_frame + 1;
+        }
+    }
+}
+
+/// Remove the `Animation` whose span is exactly `[start, end_excl)` — the *whole*
+/// animation, both halves: the motion (`Coordinate::Animated` on the objects it
+/// drives) and the auto-play `Animation` sidecar. Every object animated over the
+/// span is reverted to a static `Fixed` position (`flatten_animation_over`), its
+/// gap-strobe copies are dropped, and the sidecar object is deleted. This is what
+/// makes the selectable `Animation` object a real handle for the animation:
+/// deleting it removes the motion too, instead of leaving the element still
+/// moving with no sidecar.
+pub fn remove_animation(source: &mut SourcePresentation, start: usize, end_excl: usize) {
+    let end_frame = end_excl.saturating_sub(1);
+    // Clear strobe copies + flatten originals. Scanning low→high keeps the
+    // current index stable: an original's gap clones sit at higher indices, so
+    // removing them (and the higher-index sidecar) never shifts what's behind us.
+    let mut i = 0;
+    while i < source.objects.len() {
+        if has_animation_over(&source.objects[i], start, end_frame) {
+            clear_gap_clones(source, i, start, end_frame);
+            flatten_animation_over(&mut source.objects[i], start, end_frame);
+        }
+        i += 1;
+    }
+    // Drop the now-defunct sidecar (at most one per span — `upsert_animation`
+    // reuses by exact span).
+    if let Some(idx) = source.objects.iter().position(|o| {
+        matches!(o, SceneObject::Animation(a) if a.frames.start == start && a.frames.end == end_excl)
+    }) {
+        source.objects.remove(idx);
+        adjust_group_members_after_delete(source, idx);
+    }
+}
+
+/// Delete the `Animation` sidecar for span `[start, end_excl)` *only if* no object
+/// is still animated over it — i.e. its motion has already been reverted. Called
+/// after the in-menu `[x]` revert so clearing an object's animated coordinate
+/// doesn't leave an orphaned, selectable-but-inert `Animation` object behind.
+pub fn remove_orphan_animation(source: &mut SourcePresentation, start: usize, end_excl: usize) {
+    let end_frame = end_excl.saturating_sub(1);
+    if source.objects.iter().any(|o| has_animation_over(o, start, end_frame)) {
+        return; // still driven by some coordinate — keep the sidecar
+    }
+    if let Some(idx) = source.objects.iter().position(|o| {
+        matches!(o, SceneObject::Animation(a) if a.frames.start == start && a.frames.end == end_excl)
+    }) {
+        source.objects.remove(idx);
+        adjust_group_members_after_delete(source, idx);
+    }
+}
+
 /// Replace every `Animated` coordinate on `obj` with a `Fixed` value sampled at
 /// `frame`. Used when pasting: a clone is re-anchored to a single frame, where
 /// an animated coordinate is degenerate — it would also be un-nudgeable, since
@@ -1275,6 +1359,108 @@ mod tests {
         let count = |t: &str| p.objects.iter().filter(|o| matches!(o, SceneObject::Label(l) if l.text == t)).count();
         assert_eq!(count("A"), 1, "A's clones should be cleared (just the original left)");
         assert_eq!(count("B"), 3, "B's three strobe samples must be untouched");
+    }
+
+    #[test]
+    fn remove_animation_reverts_motion_and_drops_the_sidecar() {
+        // A label whose x animates 2→12 over frames 0..=4, plus its Animation
+        // sidecar over [0,5). Removing the animation should flatten x to its
+        // `from` (2), keep the label spanning the span, and delete the sidecar.
+        let mut obj = create_default(0, 0);
+        if let SceneObject::Label(l) = &mut obj {
+            l.position.x = Coordinate::Animated { from: 2, to: 12, start_frame: 0, end_frame: 4 };
+            l.frames = FrameRange { start: 0, end: 5 };
+        }
+        let mut p = pres(5, vec![obj]);
+        upsert_animation(&mut p, 0, 5, true, 500, 0);
+        assert_eq!(p.objects.len(), 2); // label + Animation sidecar
+
+        remove_animation(&mut p, 0, 5);
+        assert_eq!(p.objects.len(), 1, "sidecar removed");
+        match &p.objects[0] {
+            SceneObject::Label(l) => {
+                assert!(matches!(l.position.x, Coordinate::Fixed(v) if v == 2.0), "x reverted to `from`");
+                assert_eq!((l.frames.start, l.frames.end), (0, 5), "still spans the whole span statically");
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn remove_animation_clears_gap_strobe_copies() {
+        // A gapped (strobed) animation: original on a single frame + clones.
+        // Removing it must delete the clones and restore the original to a static
+        // element across the span — no leftover scattered samples.
+        let mut obj = create_default(0, 0);
+        if let SceneObject::Label(l) = &mut obj {
+            l.position.x = Coordinate::Animated { from: 0, to: 9, start_frame: 0, end_frame: 9 };
+            l.frames = FrameRange { start: 0, end: 10 };
+        }
+        let mut p = pres(10, vec![obj]);
+        upsert_animation(&mut p, 0, 10, true, 500, 3);
+        apply_gap(&mut p, 0, 0, 9, 3); // original + 2 clones + sidecar
+        assert_eq!(p.objects.iter().filter(|o| matches!(o, SceneObject::Label(_))).count(), 3);
+
+        remove_animation(&mut p, 0, 10);
+        let labels: Vec<_> = p.objects.iter().filter(|o| matches!(o, SceneObject::Label(_))).collect();
+        assert_eq!(labels.len(), 1, "strobe clones removed, one static label left");
+        assert!(!p.objects.iter().any(|o| matches!(o, SceneObject::Animation(_))), "sidecar removed");
+        assert_eq!(range(p.objects.iter().find(|o| matches!(o, SceneObject::Label(_))).unwrap()), (0, 10));
+    }
+
+    #[test]
+    fn remove_animation_spares_an_overlapping_animation_on_another_span() {
+        // Two labels: A animated over [0,5), B over [0,10). Removing A's animation
+        // leaves B's motion and B's sidecar untouched.
+        let mut a = create_default(0, 0);
+        let mut b = create_default(0, 0);
+        if let SceneObject::Label(l) = &mut a {
+            l.text = "A".into();
+            l.position.x = Coordinate::Animated { from: 1, to: 5, start_frame: 0, end_frame: 4 };
+            l.frames = FrameRange { start: 0, end: 5 };
+        }
+        if let SceneObject::Label(l) = &mut b {
+            l.text = "B".into();
+            l.position.x = Coordinate::Animated { from: 1, to: 9, start_frame: 0, end_frame: 9 };
+            l.frames = FrameRange { start: 0, end: 10 };
+        }
+        let mut p = pres(10, vec![a, b]);
+        upsert_animation(&mut p, 0, 5, true, 500, 0);
+        upsert_animation(&mut p, 0, 10, true, 500, 0);
+
+        remove_animation(&mut p, 0, 5);
+        // A reverted to Fixed; B still animated; only B's sidecar remains.
+        let a = p.objects.iter().find(|o| matches!(o, SceneObject::Label(l) if l.text == "A")).unwrap();
+        let b = p.objects.iter().find(|o| matches!(o, SceneObject::Label(l) if l.text == "B")).unwrap();
+        match a { SceneObject::Label(l) => assert!(matches!(l.position.x, Coordinate::Fixed(_))), _ => panic!() }
+        match b { SceneObject::Label(l) => assert!(matches!(l.position.x, Coordinate::Animated { .. })), _ => panic!() }
+        let anim_spans: Vec<_> = p.objects.iter().filter_map(|o| match o {
+            SceneObject::Animation(an) => Some((an.frames.start, an.frames.end)), _ => None,
+        }).collect();
+        assert_eq!(anim_spans, vec![(0, 10)], "only B's sidecar should remain");
+    }
+
+    #[test]
+    fn remove_orphan_animation_keeps_a_still_used_sidecar() {
+        // Sidecar over [0,5) with a label still animated over it: not orphaned, so
+        // it stays. Only once the coordinate is reverted does it become removable.
+        let mut obj = create_default(0, 0);
+        if let SceneObject::Label(l) = &mut obj {
+            l.position.x = Coordinate::Animated { from: 2, to: 12, start_frame: 0, end_frame: 4 };
+            l.frames = FrameRange { start: 0, end: 5 };
+        }
+        let mut p = pres(5, vec![obj]);
+        upsert_animation(&mut p, 0, 5, true, 500, 0);
+
+        remove_orphan_animation(&mut p, 0, 5);
+        assert_eq!(p.objects.len(), 2, "sidecar kept while motion still references it");
+
+        // Revert the motion, then the sidecar is an orphan and gets removed.
+        if let SceneObject::Label(l) = &mut p.objects[0] {
+            l.position.x = Coordinate::Fixed(2.0);
+        }
+        remove_orphan_animation(&mut p, 0, 5);
+        assert_eq!(p.objects.len(), 1, "orphaned sidecar removed");
     }
 
     #[test]

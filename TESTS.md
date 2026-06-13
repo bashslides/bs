@@ -311,6 +311,10 @@ reconstructed character grid (some also assert on cell styles).
 | `apply_gap_of_zero_is_a_noop` | A gap of 0 (no empty frames) leaves the element spanning every frame (off) |
 | `clear_gap_clones_removes_only_matching_copies` | Clearing an element's strobe removes its single-frame clones in span but leaves the original and unrelated objects |
 | `clear_gap_clones_spares_a_different_animation_with_the_same_motion` | Matching strobe copies by whole-object content (not motion alone): clearing one animation leaves an overlapping animation's gap frames intact even when both share the same from/to/span |
+| `remove_animation_reverts_motion_and_drops_the_sidecar` | `remove_animation` flattens a coordinate animated over the span back to `Fixed` (its `from`), keeps the object spanning the range statically, and deletes the `Animation` sidecar |
+| `remove_animation_clears_gap_strobe_copies` | Removing a gapped animation deletes the strobe clones and restores one static element across the span (no scattered samples), sidecar gone |
+| `remove_animation_spares_an_overlapping_animation_on_another_span` | Removing one animation leaves an overlapping animation on a different span — its motion and its sidecar — untouched |
+| `remove_orphan_animation_keeps_a_still_used_sidecar` | `remove_orphan_animation` keeps the sidecar while a coordinate still drives its span, and removes it only once the motion is reverted |
 | `flatten_coordinates_converts_animated_to_fixed_at_frame` | Pasting flattens an animated coordinate to a `Fixed` value sampled at the frame, so the copy is static and arrow-movable on both axes |
 | `expand_selection_pulls_in_group_members` | Copying a group expands the selection to include its members (deduped/sorted) |
 | `clone_selection_remaps_members_locally_and_is_independent` | A cloned group points at its cloned members (selection-local); clones are independent of the originals |

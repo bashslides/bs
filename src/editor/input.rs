@@ -1648,12 +1648,22 @@ fn handle_confirm(state: &mut EditorState, key: KeyEvent) -> Action {
                     }
                     ConfirmAction::DeleteObject { object_index } => {
                         if object_index < state.source.objects.len() {
-                            state.source.objects.remove(object_index);
-                            adjust_group_members_after_delete(&mut state.source, object_index);
+                            // Deleting an `Animation` removes the *whole* animation:
+                            // both the auto-play sidecar and the motion it drives
+                            // (otherwise the element keeps moving with no sidecar).
+                            if let SceneObject::Animation(a) = &state.source.objects[object_index] {
+                                let (start, end_excl) = (a.frames.start, a.frames.end);
+                                super::state::remove_animation(&mut state.source, start, end_excl);
+                                state.status_message =
+                                    Some("Animation removed (objects reset to fixed)".into());
+                            } else {
+                                state.source.objects.remove(object_index);
+                                adjust_group_members_after_delete(&mut state.source, object_index);
+                                state.status_message = Some("Object deleted".into());
+                            }
                             // Source indices for a linked paste are now stale.
                             state.clipboard_sources.clear();
                             state.dirty = true;
-                            state.status_message = Some("Object deleted".into());
                         }
                         Mode::Normal
                     }
@@ -2347,6 +2357,10 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
             };
             match res {
                 Ok(()) => {
+                    // If no coordinate is animated over this span any more, drop
+                    // the orphaned (selectable-but-inert) Animation sidecar too.
+                    super::state::remove_orphan_animation(
+                        &mut state.source, start_frame, end_frame + 1);
                     state.dirty = true;
                     state.status_message = Some(if two_axis {
                         format!("Fixed position = ({from}, {from_y})")

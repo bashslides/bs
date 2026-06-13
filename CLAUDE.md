@@ -90,7 +90,15 @@ selectable/editable like a `Loop`. The animate flow's `add_frames` toggle insert
 the spanned frames and **shares** the current frame's elements across them (one
 range-extended object per element ⇒ editing one edits all), and X and Y of an
 object animated over the same span share **one** `Animation` (reuse-by-span in
-`state::upsert_animation`).
+`state::upsert_animation`). An animation has **two halves** — the motion
+(`Coordinate::Animated` on the driven objects) and this auto-play sidecar — so
+removal cleans up both: **deleting the `Animation` object** reverts every
+coordinate animated over its span back to a static `Fixed` (at its `from` value),
+widens those objects to span the range statically, drops their gap-strobe copies,
+and removes the sidecar (`state::remove_animation`). The in-menu `[x]` revert does
+the inverse bookkeeping — after clearing a coordinate it removes the sidecar iff
+no coordinate still drives that span (`state::remove_orphan_animation`) — so
+neither half can be left orphaned.
 
 **`Group` frame range — auto vs. explicit override.** `Group.frames` is an
 `Option<FrameRange>`. A group is a logical container whose members are ordinary
@@ -176,7 +184,12 @@ Normal ──a──→ AddObject ──Enter──→ Normal (object added)
   idempotent: `apply_animation` first calls `state::clear_gap_clones` to remove
   the element's *own* prior strobe copies (matched by whole-object content, so an
   overlapping animation with the same motion is left intact), then re-strobes.
-  `[x]` reverts the coordinate to `Fixed`. Defaults: add-frames on, auto-play on,
+  `[x]` reverts the coordinate to `Fixed` (and removes the now-orphaned
+  `Animation` sidecar if nothing else drives the span, via
+  `state::remove_orphan_animation`). Deleting the selectable `Animation` object
+  goes the other way — `state::remove_animation` reverts the motion of every
+  object over its span *and* drops the sidecar (see the `Animation` runtime
+  exception above). Defaults: add-frames on, auto-play on,
   500 ms, gap 0 (off — element on every frame). Re-animating a span reseeds its
   auto-play settings (`enter_animate`)
 
@@ -310,8 +323,8 @@ Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
 + `upsert_animation`, `player/mod.rs` — `loop_next` bounce/wrap stepping +
 `auto_advance_delay` min-over-overlap; copy/paste `expand_selection` +
 `clone_selection` + `link_siblings` + link-family delete maintenance). The suite
-totals 178 tests (100 integration
-+ 78 inline); `TESTS.md` is the authoritative per-test list.
+totals 182 tests (100 integration
++ 82 inline); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the
