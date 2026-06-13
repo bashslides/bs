@@ -239,31 +239,29 @@ pub fn render_right_panel(
         return Ok(());
     }
 
-    // === SelectObject ===
-    if let Mode::SelectObject { selected } = &state.mode {
+    // === SelectAction (act on a multi-object selection) ===
+    if let Mode::SelectAction { members, selected } = &state.mode {
         let selected = *selected;
-        draw_header(stdout, "Select Object")?;
-        let visible = state.objects_on_current_frame();
-        for (i, &obj_idx) in visible.iter().enumerate() {
+        let title: String = format!("Act on {} obj", members.len())
+            .chars().take((pw - 2) as usize).collect();
+        draw_header(stdout, &title)?;
+        for (i, label) in super::input::select_action_labels().iter().enumerate() {
             let y = cy + (i + 2) as u16;
             if y >= cy + layout.canvas_height {
                 break;
             }
-            let obj = &state.source.objects[obj_idx];
-            let summary = scene_object_summary(obj);
-            let summary: String = summary.chars().take(max_width).collect();
             queue!(stdout, cursor::MoveTo(panel_x + 2, y))?;
             if i == selected {
                 queue!(
                     stdout,
                     style::SetAttribute(style::Attribute::Reverse),
-                    style::Print(format!("{:<width$}", summary, width = max_width)),
+                    style::Print(format!("{:<width$}", label, width = max_width)),
                     style::SetAttribute(style::Attribute::Reset),
                 )?;
             } else {
                 queue!(
                     stdout,
-                    style::Print(format!("{:<width$}", summary, width = max_width)),
+                    style::Print(format!("{:<width$}", label, width = max_width)),
                 )?;
             }
         }
@@ -318,6 +316,7 @@ pub fn render_right_panel(
             MultiSelectPurpose::Group => "Add Group",
             MultiSelectPurpose::Copy => "Copy Objects",
             MultiSelectPurpose::Converge => "Converge",
+            MultiSelectPurpose::Select => "Select",
         })?;
         // Only the current slide's objects are groupable; `selected` and the
         // [+]/[ ] markers are keyed off the real object index in `visible`.

@@ -170,7 +170,7 @@ impl Editor {
         // Draw canvas
         preview::render_canvas_production(stdout, &layout, &self.state)?;
 
-        // Draw right panel (handles AddObject, SelectObject, Confirm, EditProperties, AnimateProperty)
+        // Draw right panel (handles AddObject, MultiSelect, SelectAction, Confirm, EditProperties, AnimateProperty)
         panel::render_right_panel(stdout, &layout, &self.state)?;
 
         if !self.state.fullscreen {

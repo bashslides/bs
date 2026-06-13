@@ -44,7 +44,7 @@ impl Layout {
             | Mode::AnimateProperty { .. }
             | Mode::ConvergeConfig { .. }
             | Mode::AddObject { .. }
-            | Mode::SelectObject { .. }
+            | Mode::SelectAction { .. }
             | Mode::Confirm { .. }
             | Mode::MultiSelect { .. }
             | Mode::AddArt { .. }

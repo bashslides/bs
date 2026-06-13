@@ -94,12 +94,10 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
         Mode::AddObject { .. } => {
             vec!["[↑][↓] type", "[Enter] add", "[Esc] cancel", "[F]ull"]
         }
-        Mode::SelectObject { .. } => vec![
-            "[↑][↓] select",
-            "[Enter] pick",
-            "[d]el",
+        Mode::SelectAction { .. } => vec![
+            "[↑][↓] action",
+            "[Enter] do",
             "[Esc] cancel",
-            "[F]ull",
         ],
         Mode::SelectedObject { .. } => vec![
             "[←→↑↓] move",
@@ -172,16 +170,20 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[Enter] confirm",
             "[Esc] cancel",
         ],
-        Mode::MultiSelect { purpose, .. } => vec![
-            "[↑][↓] navigate",
-            "[Space] toggle",
-            match purpose {
+        Mode::MultiSelect { purpose, .. } => {
+            let mut hints = vec!["[↑][↓] navigate", "[Space] toggle"];
+            hints.push(match purpose {
                 super::state::MultiSelectPurpose::Group => "[Enter] create group",
                 super::state::MultiSelectPurpose::Copy => "[Enter] copy",
                 super::state::MultiSelectPurpose::Converge => "[Enter] set target",
-            },
-            "[Esc] cancel",
-        ],
+                super::state::MultiSelectPurpose::Select => "[Enter] act",
+            });
+            if matches!(purpose, super::state::MultiSelectPurpose::Select) {
+                hints.push("[d]el");
+            }
+            hints.push("[Esc] cancel");
+            hints
+        }
         Mode::ConvergeConfig { editing: None, .. } => vec![
             "[↑][↓] field",
             "[Enter] edit",

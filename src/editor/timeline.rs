@@ -88,7 +88,7 @@ pub fn render_timeline(
     let mode_str = match &state.mode {
         Mode::Normal => "NORMAL",
         Mode::AddObject { .. } => "ADD OBJECT",
-        Mode::SelectObject { .. } => "SELECT OBJECT",
+        Mode::SelectAction { .. } => "SELECT ACTION",
         Mode::SelectedObject { .. } => "SELECTED",
         Mode::ResizeObject { .. } => "RESIZE",
         Mode::EditProperties { .. } => "EDIT PROPERTIES",
@@ -98,6 +98,7 @@ pub fn render_timeline(
             super::state::MultiSelectPurpose::Group => "ADD GROUP",
             super::state::MultiSelectPurpose::Copy => "COPY SELECT",
             super::state::MultiSelectPurpose::Converge => "CONVERGE SELECT",
+            super::state::MultiSelectPurpose::Select => "SELECT",
         },
         Mode::ConvergeConfig { .. } => "CONVERGE",
         Mode::PastePlacing { .. } => "PASTE",

@@ -73,6 +73,9 @@ pub enum MultiSelectPurpose {
     Copy,
     /// Animate the toggled objects so they converge on a shared point.
     Converge,
+    /// General selection: Enter routes to the single-object menu (1 object) or
+    /// the action sub-menu (2+ objects). The main `s` entry point.
+    Select,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,11 +84,16 @@ pub enum Mode {
     AddObject {
         selected: usize,
     },
-    SelectObject {
-        selected: usize,
-    },
     SelectedObject {
         object_index: usize,
+    },
+    /// The action sub-menu shown after a multi-object selection (`s` → select →
+    /// 2+ objects). Lists the operations available on the whole set.
+    SelectAction {
+        /// The selected objects (real `objects` indices) the action applies to.
+        members: Vec<usize>,
+        /// Highlighted action row (index into `SELECT_ACTIONS`).
+        selected: usize,
     },
     /// Resizing the selected object with plain arrow keys (Left/Right = width,
     /// Up/Down = height). A terminal-robust alternative to Shift+arrows, which

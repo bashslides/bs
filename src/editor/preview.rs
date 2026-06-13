@@ -13,7 +13,7 @@ use super::state::{EditorState, Mode, TableCellSubState};
 use super::ui::Layout;
 
 /// Returns the set of "focused" object indices for the current mode.
-/// Non-focused objects are dimmed; focused objects keep their style (or get white in SelectObject).
+/// Non-focused objects are dimmed; focused objects keep their style (or get white while selecting).
 /// Returns None when all objects render normally.
 fn focus_indices(state: &EditorState) -> Option<Vec<usize>> {
     match &state.mode {
@@ -31,7 +31,9 @@ fn focus_indices(state: &EditorState) -> Option<Vec<usize>> {
         }
         Mode::AnimateProperty { object_index, .. } => Some(vec![*object_index]),
         Mode::ConvergeConfig { members, .. } => Some(members.clone()),
-        Mode::SelectObject { selected } => {
+        Mode::MultiSelect { selected, .. } => {
+            // Highlight the object under the cursor (a Group expands to its
+            // members), the way the old single-pick select did.
             let visible = state.objects_on_current_frame();
             visible.get(*selected).copied().and_then(|i| {
                 match state.source.objects.get(i) {
@@ -43,10 +45,8 @@ fn focus_indices(state: &EditorState) -> Option<Vec<usize>> {
                 }
             })
         }
-        Mode::MultiSelect { selected, .. } => {
-            let visible = state.objects_on_current_frame();
-            visible.get(*selected).copied().map(|i| vec![i])
-        }
+        // The action sub-menu keeps the whole selected set highlighted.
+        Mode::SelectAction { members, .. } => Some(members.clone()),
         // Placing pasted clones: highlight the whole ghost set so it stands out
         // while the user moves it.
         Mode::PastePlacing { pending, .. } => {
@@ -70,7 +70,7 @@ const fn dim_style() -> Style {
     }
 }
 
-/// Style applied to the focused object in SelectObject mode: white, no dim, no background.
+/// Style applied to the focused object while selecting: white, no dim, no background.
 const fn selected_style() -> Style {
     Style {
         fg: Some(Color::Named(NamedColor::White)),
@@ -161,7 +161,7 @@ pub fn render_canvas_production(
     };
 
     // Compile and rasterize — dim non-focused objects when a focus set is active.
-    let is_select_mode = matches!(state.mode, Mode::SelectObject { .. } | Mode::MultiSelect { .. });
+    let is_select_mode = matches!(state.mode, Mode::MultiSelect { .. });
     let scenes = if let Some(focused) = focus_indices(state) {
         // For a single focused object (non-group) we boost its z_order above others.
         let single_focus = if focused.len() == 1 { Some(focused[0]) } else { None };

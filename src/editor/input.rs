@@ -85,7 +85,7 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
         Mode::FrameMovePlace { .. } => handle_frame_move_place(state, key),
         Mode::FrameOverlay { .. } => handle_frame_overlay(state, key),
         Mode::AddObject { .. } => handle_add_object(state, key),
-        Mode::SelectObject { .. } => handle_select_object(state, key),
+        Mode::SelectAction { .. } => handle_select_action(state, key),
         Mode::SelectedObject { .. } => handle_selected_object(state, key),
         Mode::ResizeObject { .. } => handle_resize_object(state, key),
         Mode::EditProperties { editing_value, dropdown, .. } => {
@@ -549,8 +549,15 @@ fn handle_normal(state: &mut EditorState, key: KeyEvent) -> Action {
     if matches_binding(&bindings.select_object, &key) {
         let visible = state.objects_on_current_frame();
         if !visible.is_empty() {
-            state.mode = Mode::SelectObject { selected: 0 };
-            state.status_message = None;
+            // Select is a multi-select: Space toggles members, Enter acts on the
+            // set (1 object → its menu, 2+ → the action sub-menu).
+            state.mode = Mode::MultiSelect {
+                purpose: MultiSelectPurpose::Select,
+                selected: 0,
+                members: Vec::new(),
+            };
+            state.status_message =
+                Some("Select: [Space] toggle, [Enter] act, [d] delete".into());
         } else {
             state.status_message = Some("No objects on this frame".into());
         }
@@ -586,39 +593,10 @@ fn handle_normal(state: &mut EditorState, key: KeyEvent) -> Action {
         state.status_message = None;
         return Action::Redraw;
     }
-    // Copy: pick a set of objects on this frame to capture to the clipboard.
-    if matches_binding(&bindings.copy, &key) {
-        if state.objects_on_current_frame().is_empty() {
-            state.status_message = Some("No objects on this frame to copy".into());
-        } else {
-            state.mode = Mode::MultiSelect {
-                purpose: MultiSelectPurpose::Copy,
-                selected: 0,
-                members: Vec::new(),
-            };
-            state.status_message = Some("Copy: [Space] toggle objects, [Enter] copy".into());
-        }
-        return Action::Redraw;
-    }
     // Paste: place the clipboard's clones as a movable ghost on this frame.
+    // (Copy and Converge are now reached via `s` select → action sub-menu.)
     if matches_binding(&bindings.paste, &key) {
         return start_paste(state);
-    }
-    // Converge: pick a set of objects on this frame and animate them onto one
-    // shared point (each starts from wherever it sits).
-    if matches_binding(&bindings.converge, &key) {
-        if state.objects_on_current_frame().is_empty() {
-            state.status_message = Some("No objects on this frame to converge".into());
-        } else {
-            state.mode = Mode::MultiSelect {
-                purpose: MultiSelectPurpose::Converge,
-                selected: 0,
-                members: Vec::new(),
-            };
-            state.status_message =
-                Some("Converge: [Space] toggle objects, [Enter] set target".into());
-        }
-        return Action::Redraw;
     }
 
     Action::Continue
@@ -1255,8 +1233,29 @@ fn handle_multi_select(state: &mut EditorState, key: KeyEvent) -> Action {
         state.mode = Mode::MultiSelect { purpose, selected, members: new_members };
         return Action::Redraw;
     }
-    // Enter: commit — create a group, or copy the set to the clipboard. With
-    // nothing explicitly toggled, fall back to the highlighted object.
+    // [d]elete the highlighted object (general Select only) — preserves the
+    // quick browse-and-delete that the old single-pick select had. Returns to a
+    // fresh selection (members cleared) so toggled indices can't go stale.
+    if purpose == MultiSelectPurpose::Select && matches_binding(&bindings.delete_object, &key) {
+        let obj_index = visible[selected];
+        let message = if matches!(state.source.objects[obj_index], SceneObject::Group(_)) {
+            "Ungroup? (members are kept)".to_string()
+        } else {
+            format!("Delete {}?", super::state::scene_object_summary(&state.source.objects[obj_index]))
+        };
+        state.mode = Mode::Confirm {
+            message,
+            selected: 0,
+            action: ConfirmAction::DeleteObject { object_index: obj_index },
+            return_mode: Box::new(Mode::MultiSelect {
+                purpose: MultiSelectPurpose::Select, selected: 0, members: Vec::new(),
+            }),
+        };
+        return Action::Redraw;
+    }
+    // Enter: commit. Group/Copy/Converge act on the toggled set directly; the
+    // general Select routes to the single-object menu or the action sub-menu.
+    // With nothing explicitly toggled, fall back to the highlighted object.
     if matches_binding(&bindings.confirm, &key) {
         let mut chosen = members;
         if chosen.is_empty() {
@@ -1284,6 +1283,72 @@ fn handle_multi_select(state: &mut EditorState, key: KeyEvent) -> Action {
             MultiSelectPurpose::Converge => {
                 // Expand any selected group to its members so they converge too.
                 let expanded = super::state::expand_selection(&state.source, &chosen);
+                state.mode = enter_converge(state, expanded);
+            }
+            MultiSelectPurpose::Select => {
+                // One object → its menu; many → the action sub-menu.
+                state.mode = if chosen.len() == 1 {
+                    Mode::SelectedObject { object_index: chosen[0] }
+                } else {
+                    Mode::SelectAction { members: chosen, selected: 0 }
+                };
+            }
+        }
+        return Action::Redraw;
+    }
+
+    Action::Continue
+}
+
+/// Actions offered by the multi-object select sub-menu ([`Mode::SelectAction`]),
+/// in display order.
+#[derive(Clone, Copy, PartialEq)]
+enum SelectActionKind {
+    Copy,
+    Converge,
+}
+
+const SELECT_ACTIONS: &[(SelectActionKind, &str)] = &[
+    (SelectActionKind::Copy, "Copy"),
+    (SelectActionKind::Converge, "Converge"),
+];
+
+/// The action sub-menu's row labels, in display order — for the panel renderer.
+pub(crate) fn select_action_labels() -> Vec<&'static str> {
+    SELECT_ACTIONS.iter().map(|(_, l)| *l).collect()
+}
+
+/// The action sub-menu shown after selecting 2+ objects: pick what to do with
+/// the whole set (copy to clipboard, or converge onto a shared point).
+fn handle_select_action(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+    let (members, selected) = match &state.mode {
+        Mode::SelectAction { members, selected } => (members.clone(), *selected),
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::Normal;
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.move_up, &key) {
+        let new_sel = if selected == 0 { SELECT_ACTIONS.len() - 1 } else { selected - 1 };
+        state.mode = Mode::SelectAction { members, selected: new_sel };
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.move_down, &key) {
+        let new_sel = (selected + 1) % SELECT_ACTIONS.len();
+        state.mode = Mode::SelectAction { members, selected: new_sel };
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.confirm, &key) {
+        match SELECT_ACTIONS[selected.min(SELECT_ACTIONS.len() - 1)].0 {
+            SelectActionKind::Copy => {
+                copy_to_clipboard(state, &members);
+                state.mode = Mode::Normal;
+            }
+            SelectActionKind::Converge => {
+                let expanded = super::state::expand_selection(&state.source, &members);
                 state.mode = enter_converge(state, expanded);
             }
         }
@@ -1457,59 +1522,6 @@ fn is_placement_prop(name: &str) -> bool {
         name,
         "x" | "y" | "width" | "height" | "first_frame" | "last_frame" | "z_order"
     )
-}
-
-fn handle_select_object(state: &mut EditorState, key: KeyEvent) -> Action {
-    let bindings = state.config.key_bindings.clone();
-
-    if matches_binding(&bindings.cancel, &key) {
-        state.mode = Mode::Normal;
-        return Action::Redraw;
-    }
-
-    let selected = match &state.mode {
-        Mode::SelectObject { selected } => *selected,
-        _ => return Action::Continue,
-    };
-
-    let visible = state.objects_on_current_frame();
-    if visible.is_empty() {
-        state.mode = Mode::Normal;
-        return Action::Redraw;
-    }
-
-    if matches_binding(&bindings.move_up, &key) {
-        let new_sel = if selected == 0 { visible.len() - 1 } else { selected - 1 };
-        state.mode = Mode::SelectObject { selected: new_sel };
-        return Action::BlinkSelection;
-    }
-    if matches_binding(&bindings.move_down, &key) {
-        let new_sel = (selected + 1) % visible.len();
-        state.mode = Mode::SelectObject { selected: new_sel };
-        return Action::BlinkSelection;
-    }
-    if matches_binding(&bindings.confirm, &key) {
-        let obj_index = visible[selected];
-        state.mode = Mode::SelectedObject { object_index: obj_index };
-        return Action::Redraw;
-    }
-    if matches_binding(&bindings.delete_object, &key) {
-        let obj_index = visible[selected];
-        let message = if matches!(state.source.objects[obj_index], SceneObject::Group(_)) {
-            "Ungroup? (members are kept)".to_string()
-        } else {
-            format!("Delete {}?", super::state::scene_object_summary(&state.source.objects[obj_index]))
-        };
-        state.mode = Mode::Confirm {
-            message,
-            selected: 0,
-            action: ConfirmAction::DeleteObject { object_index: obj_index },
-            return_mode: Box::new(Mode::SelectObject { selected }),
-        };
-        return Action::Redraw;
-    }
-
-    Action::Continue
 }
 
 fn handle_selected_object(state: &mut EditorState, key: KeyEvent) -> Action {
@@ -3664,6 +3676,12 @@ mod tests {
         // spanning the whole span again, no orphans.
         apply_animation(&mut state, 0, "x", 0, 9, 0, 0, false, 0, 9, false, true, 500, 0);
         assert_eq!(count_labels(&state), 1, "gap 0 should remove the strobe copies");
+    }
+
+    #[test]
+    fn select_action_submenu_offers_copy_and_converge() {
+        // The post-multi-select action sub-menu lists exactly Copy then Converge.
+        assert_eq!(select_action_labels(), vec!["Copy", "Converge"]);
     }
 
     #[test]
