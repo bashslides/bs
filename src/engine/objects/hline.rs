@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::types::{DrawOp, Style};
 
 use super::super::source::{Coordinate, FrameRange, deserialize_coord_compat};
-use super::Resolve;
+use super::{Resolve, ResolveCtx};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HLine {
@@ -27,13 +27,14 @@ fn default_hline_char() -> char {
 }
 
 impl Resolve for HLine {
-    fn resolve(&self, frame: usize, _canvas_width: u16, ops: &mut Vec<DrawOp>) {
+    fn resolve(&self, ctx: &ResolveCtx, ops: &mut Vec<DrawOp>) {
+        let frame = ctx.frame;
         if !self.frames.contains(frame) {
             return;
         }
-        let y = self.y.evaluate(frame);
-        let x_start = self.x_start.evaluate(frame);
-        let x_end = self.x_end.evaluate(frame);
+        let y = self.y.evaluate(frame, ctx.anims);
+        let x_start = self.x_start.evaluate(frame, ctx.anims);
+        let x_end = self.x_end.evaluate(frame, ctx.anims);
         for x in x_start..x_end {
             ops.push(DrawOp {
                 x,

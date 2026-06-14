@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::types::{DrawOp, LoopRegion};
 
 use super::super::source::FrameRange;
-use super::Resolve;
+use super::{Resolve, ResolveCtx};
 
 fn default_delay_ms() -> u64 {
     500
@@ -55,7 +55,7 @@ impl Loop {
 }
 
 impl Resolve for Loop {
-    fn resolve(&self, _frame: usize, _canvas_width: u16, _ops: &mut Vec<DrawOp>) {
+    fn resolve(&self, _ctx: &ResolveCtx, _ops: &mut Vec<DrawOp>) {
         // A loop draws nothing; it emits a `LoopRegion` sidecar (see `region`).
     }
 }

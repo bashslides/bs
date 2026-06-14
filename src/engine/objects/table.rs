@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{Color, DrawOp, NamedColor, Style};
 
-use super::super::source::{Coordinate, FrameRange, Position, deserialize_coord_compat};
-use super::Resolve;
+use super::super::source::{AnimSpans, Coordinate, FrameRange, Position, deserialize_coord_compat};
+use super::{Resolve, ResolveCtx};
 
 // ---------------------------------------------------------------------------
 // Word-wrap helpers
@@ -194,10 +194,10 @@ impl Table {
     /// When `borders` is on the range spans from the column's left vertical bar
     /// through its right vertical bar (so adjacent columns share a border
     /// column).  When borders are off it is exactly the content range.
-    pub fn col_pixel_range(&self, frame: usize, col_idx: usize) -> Option<(u16, u16)> {
-        let total_w = self.width.evaluate(frame) as usize;
+    pub fn col_pixel_range(&self, frame: usize, anims: &AnimSpans, col_idx: usize) -> Option<(u16, u16)> {
+        let total_w = self.width.evaluate(frame, anims) as usize;
         let (cws, starts) = self.layout(total_w);
-        let base_x = self.position.x.evaluate(frame);
+        let base_x = self.position.x.evaluate(frame, anims);
         let cw = *cws.get(col_idx)?;
         let start = *starts.get(col_idx)?;
         if self.borders {
@@ -212,11 +212,11 @@ impl Table {
 
     /// Returns the pixel y range (inclusive start, exclusive end) of row `row_idx`
     /// including content only (no border row), evaluated at `frame`.
-    pub fn row_pixel_range(&self, frame: usize, row_idx: usize) -> Option<(u16, u16)> {
-        let total_w = self.width.evaluate(frame) as usize;
+    pub fn row_pixel_range(&self, frame: usize, anims: &AnimSpans, row_idx: usize) -> Option<(u16, u16)> {
+        let total_w = self.width.evaluate(frame, anims) as usize;
         let (cws, _) = self.layout(total_w);
-        let heights = self.row_heights(frame, &cws);
-        let base_y = self.position.y.evaluate(frame);
+        let heights = self.row_heights(frame, anims, &cws);
+        let base_y = self.position.y.evaluate(frame, anims);
         let mut y = if self.borders { base_y + 1 } else { base_y };
         for r in 0..self.rows {
             let rh = heights[r];
@@ -256,8 +256,8 @@ impl Table {
     /// occupy — an explicit `height` only pads beyond it, never clips below. The
     /// editor seeds vertical resizes from this so each step is visible instead of
     /// being swallowed while the requested height is still under the content.
-    pub fn natural_height(&self, frame: usize) -> u16 {
-        let total_width = self.width.evaluate(frame) as usize;
+    pub fn natural_height(&self, frame: usize, anims: &AnimSpans) -> u16 {
+        let total_width = self.width.evaluate(frame, anims) as usize;
         let (cws, _) = self.layout(total_width);
         let nrows = self.rows;
         if nrows == 0 {
@@ -275,14 +275,14 @@ impl Table {
     /// surplus is distributed across rows (top to bottom) so the table fills
     /// the requested height. Rows whose content is taller than the budget are
     /// never clipped — an explicit height only pads, it never shrinks.
-    fn row_heights(&self, frame: usize, col_content_widths: &[usize]) -> Vec<usize> {
+    fn row_heights(&self, frame: usize, anims: &AnimSpans, col_content_widths: &[usize]) -> Vec<usize> {
         let nrows = self.rows;
         let mut heights = vec![1usize; nrows];
         for r in 0..nrows {
             heights[r] = self.row_height(r, col_content_widths);
         }
 
-        let total_height = self.height.evaluate(frame) as usize;
+        let total_height = self.height.evaluate(frame, anims) as usize;
         if total_height > 0 && nrows > 0 {
             // Border rows consumed by the chrome: top border + one separator/
             // bottom border after each row.
@@ -309,8 +309,8 @@ impl Table {
 // ---------------------------------------------------------------------------
 
 impl Resolve for Table {
-    fn resolve(&self, frame: usize, _canvas_width: u16, ops: &mut Vec<DrawOp>) {
-        self.resolve_internal(frame, None, &[], false, false, None, ops);
+    fn resolve(&self, ctx: &ResolveCtx, ops: &mut Vec<DrawOp>) {
+        self.resolve_internal(ctx.frame, ctx.anims, None, &[], false, false, None, ops);
     }
 }
 
@@ -325,6 +325,7 @@ impl Table {
     pub fn resolve_with_editor_overlay(
         &self,
         frame: usize,
+        anims: &AnimSpans,
         highlighted_col: Option<usize>,
         selected_cells: &[(usize, usize)],
         cursor_cell: Option<(usize, usize)>,
@@ -337,6 +338,7 @@ impl Table {
         let cell_mode = !selected_cells.is_empty();
         self.resolve_internal(
             frame,
+            anims,
             highlighted_col,
             selected_cells,
             cell_mode,
@@ -347,19 +349,19 @@ impl Table {
         // Draw cursor outline on top if in cell-selection mode and not blink-hidden.
         if let Some((cr, cc)) = cursor_cell {
             if !blink_hidden {
-                self.draw_cursor_cell(frame, cr, cc, ops);
+                self.draw_cursor_cell(frame, anims, cr, cc, ops);
             }
         }
     }
 
-    fn draw_cursor_cell(&self, frame: usize, row: usize, col: usize, ops: &mut Vec<DrawOp>) {
+    fn draw_cursor_cell(&self, frame: usize, anims: &AnimSpans, row: usize, col: usize, ops: &mut Vec<DrawOp>) {
         if !self.borders {
             return;
         }
-        let total_w = self.width.evaluate(frame) as usize;
+        let total_w = self.width.evaluate(frame, anims) as usize;
         let (cws, starts) = self.layout(total_w);
-        let base_x = self.position.x.evaluate(frame);
-        let base_y = self.position.y.evaluate(frame);
+        let base_x = self.position.x.evaluate(frame, anims);
+        let base_y = self.position.y.evaluate(frame, anims);
         let ncols = self.col_widths.len();
 
         if col >= cws.len() || row >= self.rows {
@@ -372,7 +374,7 @@ impl Table {
         let cx = base_x + starts[col] as u16;
 
         // Walk down to find the y offset and height of this row.
-        let heights = self.row_heights(frame, &cws);
+        let heights = self.row_heights(frame, anims, &cws);
         let mut y = base_y + 1; // first content row (after top border)
         for r in 0..row {
             y += heights[r] as u16 + 1; // +1 for the separator border row
@@ -435,6 +437,7 @@ impl Table {
     fn resolve_internal(
         &self,
         frame: usize,
+        anims: &AnimSpans,
         highlighted_col: Option<usize>,
         selected_cells: &[(usize, usize)],
         cell_mode: bool,
@@ -445,9 +448,9 @@ impl Table {
         if !self.frames.contains(frame) {
             return;
         }
-        let base_x = self.position.x.evaluate(frame);
-        let base_y = self.position.y.evaluate(frame);
-        let total_width = self.width.evaluate(frame) as usize;
+        let base_x = self.position.x.evaluate(frame, anims);
+        let base_y = self.position.y.evaluate(frame, anims);
+        let total_width = self.width.evaluate(frame, anims) as usize;
         let ncols = self.col_widths.len();
         let nrows = self.rows;
 
@@ -458,7 +461,7 @@ impl Table {
         let (col_widths, col_starts) = self.layout(total_width);
 
         // --- Per-row heights and y offsets ---
-        let row_heights = self.row_heights(frame, &col_widths);
+        let row_heights = self.row_heights(frame, anims, &col_widths);
 
         let mut row_y_offsets = vec![0u16; nrows];
         let mut cur_y = if self.borders { 1u16 } else { 0u16 };

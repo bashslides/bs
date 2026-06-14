@@ -9,6 +9,7 @@
 mod common;
 
 use bs::engine::objects::table::{table_add_column, table_remove_column, Table};
+use bs::engine::source::AnimSpans;
 use bs::types::Frame;
 use common::{char_at, frame_lines, render_json};
 
@@ -299,7 +300,7 @@ fn natural_height_is_content_plus_border_rows() {
              "width": 30, "col_widths": [0.5, 0.5], "rows": 3,
              "frames": { "start": 0, "end": 1 } }"#,
     );
-    assert_eq!(t.natural_height(0), 7);
+    assert_eq!(t.natural_height(0, &AnimSpans::default()), 7);
 }
 
 #[test]
@@ -313,7 +314,7 @@ fn natural_height_grows_with_wrapped_content() {
              "cells": [[{ "content": "AB\nCD\nEF" }]],
              "frames": { "start": 0, "end": 1 } }"#,
     );
-    assert_eq!(t.natural_height(0), 5);
+    assert_eq!(t.natural_height(0, &AnimSpans::default()), 5);
 }
 
 // ---------------------------------------------------------------------------
@@ -331,8 +332,8 @@ fn col_pixel_range_includes_bounding_borders_when_bordered() {
              "frames": { "start": 0, "end": 1 } }"#,
     );
 
-    assert_eq!(t.col_pixel_range(0, 0), Some((0, 7)));
-    assert_eq!(t.col_pixel_range(0, 1), Some((6, 13)));
+    assert_eq!(t.col_pixel_range(0, &AnimSpans::default(), 0), Some((0, 7)));
+    assert_eq!(t.col_pixel_range(0, &AnimSpans::default(), 1), Some((6, 13)));
 }
 
 #[test]
@@ -343,6 +344,6 @@ fn col_pixel_range_is_content_only_without_borders() {
              "frames": { "start": 0, "end": 1 } }"#,
     );
 
-    assert_eq!(t.col_pixel_range(0, 0), Some((0, 5)));
-    assert_eq!(t.col_pixel_range(0, 1), Some((5, 10)));
+    assert_eq!(t.col_pixel_range(0, &AnimSpans::default(), 0), Some((0, 5)));
+    assert_eq!(t.col_pixel_range(0, &AnimSpans::default(), 1), Some((5, 10)));
 }

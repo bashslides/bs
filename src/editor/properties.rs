@@ -1505,10 +1505,10 @@ pub fn set_coordinate(obj: &mut SceneObject, name: &str, coord: Coordinate) -> R
 pub fn format_coordinate(coord: &Coordinate) -> String {
     match coord {
         Coordinate::Fixed(v) => fmt_f64(*v),
-        // Frames shown 1-based (f1 = first slide) to match the Animate panel and
-        // the first_frame/last_frame property fields.
-        Coordinate::Animated { from, to, start_frame, end_frame } =>
-            format!("{from}->{to} (f{}..f{})", start_frame + 1, end_frame + 1),
+        // The motion (`from->to`) plus which animation owns the span — the span
+        // itself lives on that `Animation` object (its first/last-frame fields),
+        // the single source of truth, not duplicated here.
+        Coordinate::Animated { from, to, anim } => format!("{from}->{to} (anim {anim})"),
     }
 }
 
@@ -1949,7 +1949,7 @@ mod tests {
         );
         let y = get_coord(&label, "y").unwrap();
         set_coordinate(&mut label, "x", y).unwrap();
-        assert_eq!(get_coord(&label, "x").unwrap().evaluate(0), 7);
+        assert_eq!(get_coord(&label, "x").unwrap().start_value(), 7);
     }
 
     #[test]

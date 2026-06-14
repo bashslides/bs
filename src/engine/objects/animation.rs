@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{AnimationRegion, DrawOp};
 
-use super::super::source::FrameRange;
-use super::Resolve;
+use super::super::source::{AnimId, FrameRange};
+use super::{Resolve, ResolveCtx};
 
 fn default_delay_ms() -> u64 {
     500
@@ -34,7 +34,13 @@ fn default_true() -> bool {
 /// frame range but renders nothing).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Animation {
-    /// Frames the animation spans (end exclusive). This *is* the animation span.
+    /// Stable id referenced by the `Coordinate::Animated { anim }` of every
+    /// coordinate this animation drives. The hard link between an animation and
+    /// its motion — unique among the presentation's animations.
+    pub id: AnimId,
+    /// Frames the animation spans (end exclusive). This *is* the animation span,
+    /// and the **single source of truth** for it — driven coordinates reference
+    /// it by `id` rather than storing their own copy.
     pub frames: FrameRange,
     /// Whether the deck auto-advances across this span at play time.
     #[serde(default = "default_true")]
@@ -66,7 +72,7 @@ impl Animation {
 }
 
 impl Resolve for Animation {
-    fn resolve(&self, _frame: usize, _canvas_width: u16, _ops: &mut Vec<DrawOp>) {
+    fn resolve(&self, _ctx: &ResolveCtx, _ops: &mut Vec<DrawOp>) {
         // An animation span draws nothing; it emits an `AnimationRegion` sidecar
         // (see `region`). The motion itself is on the objects' coordinates.
     }

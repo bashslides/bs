@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{CommandRegion, DrawOp, Style};
 
-use super::super::source::{deserialize_coord_compat, Coordinate, FrameRange, Position};
-use super::Resolve;
+use super::super::source::{deserialize_coord_compat, AnimSpans, Coordinate, FrameRange, Position};
+use super::{Resolve, ResolveCtx};
 
 fn default_true() -> bool {
     true
@@ -51,11 +51,11 @@ impl Command {
     /// border on each side) and the status indicator sits on the top edge near
     /// the right corner. Without a border, the region spans the full box and the
     /// status indicator sits in its top-right cell.
-    pub fn region(&self, frame: usize) -> CommandRegion {
-        let bx = self.position.x.evaluate(frame);
-        let by = self.position.y.evaluate(frame);
-        let bw = self.width.evaluate(frame);
-        let bh = self.height.evaluate(frame);
+    pub fn region(&self, frame: usize, anims: &AnimSpans) -> CommandRegion {
+        let bx = self.position.x.evaluate(frame, anims);
+        let by = self.position.y.evaluate(frame, anims);
+        let bw = self.width.evaluate(frame, anims);
+        let bh = self.height.evaluate(frame, anims);
 
         let (x, y, w, h, status_x, status_y) = if self.border {
             (
@@ -89,15 +89,16 @@ impl Command {
 }
 
 impl Resolve for Command {
-    fn resolve(&self, frame: usize, _canvas_width: u16, ops: &mut Vec<DrawOp>) {
+    fn resolve(&self, ctx: &ResolveCtx, ops: &mut Vec<DrawOp>) {
+        let frame = ctx.frame;
         if !self.frames.contains(frame) || !self.border {
             return;
         }
 
-        let x = self.position.x.evaluate(frame);
-        let y = self.position.y.evaluate(frame);
-        let w = self.width.evaluate(frame);
-        let h = self.height.evaluate(frame);
+        let x = self.position.x.evaluate(frame, ctx.anims);
+        let y = self.position.y.evaluate(frame, ctx.anims);
+        let w = self.width.evaluate(frame, ctx.anims);
+        let h = self.height.evaluate(frame, ctx.anims);
         let s = &self.style;
         let z = self.z_order;
 

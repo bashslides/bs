@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::types::{DrawOp, Style};
 
 use super::super::source::{Coordinate, FrameRange, deserialize_coord_compat};
-use super::Resolve;
+use super::{Resolve, ResolveCtx};
 
 fn default_true() -> bool {
     true
@@ -97,15 +97,16 @@ pub struct Arrow {
 // All body segments use box-drawing chars; arrowheads use >, <, v, ^.
 
 impl Resolve for Arrow {
-    fn resolve(&self, frame: usize, _canvas_width: u16, ops: &mut Vec<DrawOp>) {
+    fn resolve(&self, ctx: &ResolveCtx, ops: &mut Vec<DrawOp>) {
+        let frame = ctx.frame;
         if !self.frames.contains(frame) {
             return;
         }
 
-        let x1 = self.x1.evaluate(frame) as i32;
-        let y1 = self.y1.evaluate(frame) as i32;
-        let x2 = self.x2.evaluate(frame) as i32;
-        let y2 = self.y2.evaluate(frame) as i32;
+        let x1 = self.x1.evaluate(frame, ctx.anims) as i32;
+        let y1 = self.y1.evaluate(frame, ctx.anims) as i32;
+        let x2 = self.x2.evaluate(frame, ctx.anims) as i32;
+        let y2 = self.y2.evaluate(frame, ctx.anims) as i32;
 
         let dx_abs = (x2 - x1).abs();
         let dy_abs = (y2 - y1).abs();

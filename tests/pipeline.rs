@@ -64,9 +64,10 @@ fn animated_position_moves_the_glyph_and_clears_the_old_cell() {
                 { "type": "label", "text": "X",
                   "position": {
                       "x": { "fixed": 0 },
-                      "y": { "animated": { "from": 0, "to": 3, "start_frame": 0, "end_frame": 3 } }
+                      "y": { "animated": { "from": 0, "to": 3, "anim": 1 } }
                   },
-                  "frames": { "start": 0, "end": 4 } }
+                  "frames": { "start": 0, "end": 4 } },
+                { "type": "animation", "id": 1, "frames": { "start": 0, "end": 4 } }
             ]
         }"#,
     );

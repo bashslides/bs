@@ -61,33 +61,42 @@ pub use table::Table;
 
 use crate::types::DrawOp;
 
-use super::source::SceneObject;
+use super::source::{AnimSpans, SceneObject};
+
+/// Everything an object needs to resolve itself for one frame.
+///
+/// `frame` is the frame being rendered; `canvas_width` is the width (in cells)
+/// of the output frame (most objects ignore it — `Header` uses it to word-wrap
+/// its large glyphs); `anims` maps each animation id to its span, so an
+/// animated `Coordinate` can look up its timing (the span lives on the
+/// `Animation` object, not on the coordinate).
+pub struct ResolveCtx<'a> {
+    pub frame: usize,
+    pub canvas_width: u16,
+    pub anims: &'a AnimSpans,
+}
 
 /// Resolve an object for a given frame into concrete `DrawOp`s.
-///
-/// `canvas_width` is the width (in cells) of the output frame. Most objects
-/// ignore it; `Header` uses it to word-wrap its large glyphs onto the next
-/// line when the text would overflow the canvas.
 pub trait Resolve {
-    fn resolve(&self, frame: usize, canvas_width: u16, ops: &mut Vec<DrawOp>);
+    fn resolve(&self, ctx: &ResolveCtx, ops: &mut Vec<DrawOp>);
 }
 
 impl Resolve for SceneObject {
-    fn resolve(&self, frame: usize, canvas_width: u16, ops: &mut Vec<DrawOp>) {
+    fn resolve(&self, ctx: &ResolveCtx, ops: &mut Vec<DrawOp>) {
         match self {
-            SceneObject::Label(o) => o.resolve(frame, canvas_width, ops),
-            SceneObject::HLine(o) => o.resolve(frame, canvas_width, ops),
-            SceneObject::Rect(o) => o.resolve(frame, canvas_width, ops),
-            SceneObject::Header(o) => o.resolve(frame, canvas_width, ops),
-            SceneObject::Group(o) => o.resolve(frame, canvas_width, ops),
-            SceneObject::Arrow(o) => o.resolve(frame, canvas_width, ops),
-            SceneObject::Table(o) => o.resolve(frame, canvas_width, ops),
-            SceneObject::Art(o) => o.resolve(frame, canvas_width, ops),
-            SceneObject::Command(o) => o.resolve(frame, canvas_width, ops),
-            SceneObject::List(o) => o.resolve(frame, canvas_width, ops),
-            SceneObject::Loop(o) => o.resolve(frame, canvas_width, ops),
-            SceneObject::Morph(o) => o.resolve(frame, canvas_width, ops),
-            SceneObject::Animation(o) => o.resolve(frame, canvas_width, ops),
+            SceneObject::Label(o) => o.resolve(ctx, ops),
+            SceneObject::HLine(o) => o.resolve(ctx, ops),
+            SceneObject::Rect(o) => o.resolve(ctx, ops),
+            SceneObject::Header(o) => o.resolve(ctx, ops),
+            SceneObject::Group(o) => o.resolve(ctx, ops),
+            SceneObject::Arrow(o) => o.resolve(ctx, ops),
+            SceneObject::Table(o) => o.resolve(ctx, ops),
+            SceneObject::Art(o) => o.resolve(ctx, ops),
+            SceneObject::Command(o) => o.resolve(ctx, ops),
+            SceneObject::List(o) => o.resolve(ctx, ops),
+            SceneObject::Loop(o) => o.resolve(ctx, ops),
+            SceneObject::Morph(o) => o.resolve(ctx, ops),
+            SceneObject::Animation(o) => o.resolve(ctx, ops),
         }
     }
 }

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::types::{DrawOp, Style};
 
 use super::super::source::{Coordinate, FrameRange, Position, deserialize_coord_compat};
-use super::Resolve;
+use super::{Resolve, ResolveCtx};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rect {
@@ -22,15 +22,16 @@ pub struct Rect {
 }
 
 impl Resolve for Rect {
-    fn resolve(&self, frame: usize, _canvas_width: u16, ops: &mut Vec<DrawOp>) {
+    fn resolve(&self, ctx: &ResolveCtx, ops: &mut Vec<DrawOp>) {
+        let frame = ctx.frame;
         if !self.frames.contains(frame) {
             return;
         }
 
-        let x = self.position.x.evaluate(frame);
-        let y = self.position.y.evaluate(frame);
-        let w = self.width.evaluate(frame);
-        let h = self.height.evaluate(frame);
+        let x = self.position.x.evaluate(frame, ctx.anims);
+        let y = self.position.y.evaluate(frame, ctx.anims);
+        let w = self.width.evaluate(frame, ctx.anims);
+        let h = self.height.evaluate(frame, ctx.anims);
         let s = &self.style;
         let z = self.z_order;
 

@@ -2,9 +2,9 @@ use std::io;
 
 use crossterm::{cursor, queue, style};
 
-use crate::engine::objects::Resolve;
+use crate::engine::objects::{Resolve, ResolveCtx};
 use crate::engine::Engine;
-use crate::engine::source::SceneObject;
+use crate::engine::source::{AnimSpans, SceneObject};
 use crate::player::to_content_style;
 use crate::renderer::Renderer;
 use crate::types::{Color, NamedColor, ResolvedScene, Style, TerminalContract};
@@ -165,10 +165,13 @@ pub fn render_canvas_production(
     let scenes = if let Some(focused) = focus_indices(state) {
         // For a single focused object (non-group) we boost its z_order above others.
         let single_focus = if focused.len() == 1 { Some(focused[0]) } else { None };
+        // Single source of truth for animation timing, threaded into resolve.
+        let anims = AnimSpans::of(&state.source);
 
         (0..state.source.frame_count)
             .map(|frame| {
                 let mut ops = Vec::new();
+                let ctx = ResolveCtx { frame, canvas_width: state.source.width, anims: &anims };
                 let mut single_start = 0;
                 let mut single_end = 0;
                 for (i, obj) in state.source.objects.iter().enumerate() {
@@ -197,6 +200,7 @@ pub fn render_canvas_production(
                                     }
                                     t_clone.resolve_with_editor_overlay(
                                         frame,
+                                        &anims,
                                         highlighted_col,
                                         sel_cells,
                                         cursor_cell,
@@ -207,6 +211,7 @@ pub fn render_canvas_production(
                                 } else {
                                     t.resolve_with_editor_overlay(
                                         frame,
+                                        &anims,
                                         highlighted_col,
                                         sel_cells,
                                         cursor_cell,
@@ -216,13 +221,13 @@ pub fn render_canvas_production(
                                     );
                                 }
                             } else {
-                                obj.resolve(frame, state.source.width, &mut ops);
+                                obj.resolve(&ctx, &mut ops);
                             }
                         } else {
-                            obj.resolve(frame, state.source.width, &mut ops);
+                            obj.resolve(&ctx, &mut ops);
                         }
                     } else {
-                        obj.resolve(frame, state.source.width, &mut ops);
+                        obj.resolve(&ctx, &mut ops);
                     }
 
                     if focused.contains(&i) {

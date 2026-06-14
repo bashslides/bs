@@ -16,8 +16,9 @@ fn deck(frame_count: usize, animations: &[(usize, usize)], loops: &[(usize, usiz
     let mut objs = vec![format!(
         r#"{{"type":"label","text":"x","position":{{"x":{{"fixed":0}},"y":{{"fixed":0}}}},"frames":{{"start":0,"end":{frame_count}}}}}"#
     )];
-    for (s, e) in animations {
-        objs.push(format!(r#"{{"type":"animation","frames":{{"start":{s},"end":{e}}}}}"#));
+    for (k, (s, e)) in animations.iter().enumerate() {
+        let id = k + 1;
+        objs.push(format!(r#"{{"type":"animation","id":{id},"frames":{{"start":{s},"end":{e}}}}}"#));
     }
     for (s, e) in loops {
         objs.push(format!(r#"{{"type":"loop","frames":{{"start":{s},"end":{e}}}}}"#));
@@ -33,7 +34,7 @@ fn animation_regions_collects_specs_with_defaults() {
     // auto_play/delay_ms omitted → serde defaults (true / 500).
     let s = source(
         r#"{"width":40,"height":10,"frame_count":8,
-            "objects":[{"type":"animation","frames":{"start":2,"end":6}}]}"#,
+            "objects":[{"type":"animation","id":1,"frames":{"start":2,"end":6}}]}"#,
     );
     let regions = s.animation_regions();
     assert_eq!(regions.len(), 1);
@@ -47,7 +48,7 @@ fn animation_regions_collects_specs_with_defaults() {
 fn animation_regions_carries_explicit_fields() {
     let s = source(
         r#"{"width":40,"height":10,"frame_count":8,
-            "objects":[{"type":"animation","frames":{"start":0,"end":4},
+            "objects":[{"type":"animation","id":1,"frames":{"start":0,"end":4},
                         "auto_play":false,"delay_ms":120}]}"#,
     );
     let r = &s.animation_regions()[0];

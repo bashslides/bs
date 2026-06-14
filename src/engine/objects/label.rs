@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::types::{DrawOp, Style};
 
 use super::super::source::{Coordinate, FrameRange, Position, deserialize_coord_compat};
-use super::Resolve;
+use super::{Resolve, ResolveCtx};
 
 /// Horizontal alignment of text within the label's `width`. Only meaningful when
 /// `width > 0` (there is a box to align within); with auto width it is a no-op.
@@ -194,14 +194,15 @@ pub struct Label {
 }
 
 impl Resolve for Label {
-    fn resolve(&self, frame: usize, _canvas_width: u16, ops: &mut Vec<DrawOp>) {
+    fn resolve(&self, ctx: &ResolveCtx, ops: &mut Vec<DrawOp>) {
+        let frame = ctx.frame;
         if !self.frames.contains(frame) {
             return;
         }
-        let base_x = self.position.x.evaluate(frame);
-        let base_y = self.position.y.evaluate(frame);
-        let w = self.width.evaluate(frame) as usize;
-        let h = self.height.evaluate(frame) as usize;
+        let base_x = self.position.x.evaluate(frame, ctx.anims);
+        let base_y = self.position.y.evaluate(frame, ctx.anims);
+        let w = self.width.evaluate(frame, ctx.anims) as usize;
+        let h = self.height.evaluate(frame, ctx.anims) as usize;
 
         let has_bg = self.style.bg.is_some();
 

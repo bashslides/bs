@@ -147,10 +147,11 @@ impl SourcePresentation {
     /// at each command's first active frame. These travel as a sidecar on the
     /// `PlayablePresentation` because they cannot be baked into static frames.
     pub fn command_regions(&self) -> Vec<CommandRegion> {
+        let anims = AnimSpans::of(self);
         self.objects
             .iter()
             .filter_map(|obj| match obj {
-                SceneObject::Command(c) => Some(c.region(c.frames.start)),
+                SceneObject::Command(c) => Some(c.region(c.frames.start, &anims)),
                 _ => None,
             })
             .collect()
@@ -263,18 +264,57 @@ pub struct Position {
     pub y: Coordinate,
 }
 
+/// Stable identifier of an [`Animation`] object. An animated coordinate carries
+/// this id to reference the animation that owns its span — the single source of
+/// truth for *when* the motion plays. (`from`/`to` — *where* it moves — stay on
+/// the coordinate, since they are per-object.)
+pub type AnimId = u32;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Coordinate {
     /// Fixed value stored as f64 so group-scaling can use fractional precision.
     /// Rendered by flooring to the nearest integer.
     Fixed(f64),
-    Animated {
-        from: u16,
-        to: u16,
-        start_frame: usize,
-        end_frame: usize,
-    },
+    /// Linear motion from `from` to `to` over the span owned by the [`Animation`]
+    /// with id `anim`. The span lives only on that animation — never here — so a
+    /// coordinate can never disagree with its animation about timing.
+    Animated { from: u16, to: u16, anim: AnimId },
+}
+
+/// A lookup from [`AnimId`] to the animation's frame span, built once from a
+/// presentation's [`Animation`] objects. Threaded into [`Coordinate::evaluate`]
+/// so an animated coordinate can resolve its timing from the single source of
+/// truth (the `Animation` object) rather than storing a copy of the span.
+#[derive(Debug, Default, Clone)]
+pub struct AnimSpans {
+    spans: std::collections::HashMap<AnimId, FrameRange>,
+}
+
+impl AnimSpans {
+    /// Build the table from every `Animation` object in `source`.
+    pub fn of(source: &SourcePresentation) -> Self {
+        let spans = source
+            .objects
+            .iter()
+            .filter_map(|o| match o {
+                SceneObject::Animation(a) => Some((a.id, a.frames.clone())),
+                _ => None,
+            })
+            .collect();
+        AnimSpans { spans }
+    }
+
+    /// Build a table directly from `(id, span)` pairs — for callers (and tests)
+    /// that have spans in hand without a full presentation.
+    pub fn from_pairs(pairs: impl IntoIterator<Item = (AnimId, FrameRange)>) -> Self {
+        AnimSpans { spans: pairs.into_iter().collect() }
+    }
+
+    /// The span of animation `id`, if it exists.
+    pub fn span(&self, id: AnimId) -> Option<&FrameRange> {
+        self.spans.get(&id)
+    }
 }
 
 /// Serde deserializer that accepts either a plain number (`5` or `5.5`) or a full
@@ -318,26 +358,39 @@ where
 
 impl Coordinate {
     /// Evaluate to a terminal column/row value. Fixed coordinates are floored;
-    /// animated coordinates are linearly interpolated and rounded.
-    pub fn evaluate(&self, frame: usize) -> u16 {
+    /// animated coordinates look up their span in `anims` and are linearly
+    /// interpolated and rounded. An animated coordinate whose animation is
+    /// missing (a dangling reference) holds at `from` — it renders as if static.
+    pub fn evaluate(&self, frame: usize, anims: &AnimSpans) -> u16 {
         match self {
             Coordinate::Fixed(v) => v.max(0.0).floor() as u16,
-            Coordinate::Animated {
-                from,
-                to,
-                start_frame,
-                end_frame,
-            } => {
-                if frame <= *start_frame {
+            Coordinate::Animated { from, to, anim } => {
+                let Some(span) = anims.span(*anim) else {
+                    return *from;
+                };
+                // `FrameRange::end` is exclusive; the motion reaches `to` on the
+                // last frame it covers, i.e. `end - 1`.
+                let start = span.start;
+                let end_frame = span.end.saturating_sub(1);
+                if frame <= start {
                     return *from;
                 }
-                if frame >= *end_frame {
+                if frame >= end_frame {
                     return *to;
                 }
-                let progress =
-                    (frame - start_frame) as f64 / (end_frame - start_frame) as f64;
+                let progress = (frame - start) as f64 / (end_frame - start) as f64;
                 (*from as f64 + (*to as f64 - *from as f64) * progress).round() as u16
             }
+        }
+    }
+
+    /// The coordinate's value independent of animation timing — `Fixed` floored,
+    /// `Animated` at its `from` (its position at the span start). For display and
+    /// summaries that have no [`AnimSpans`] handy and only need a stable label.
+    pub fn start_value(&self) -> u16 {
+        match self {
+            Coordinate::Fixed(v) => v.max(0.0).floor() as u16,
+            Coordinate::Animated { from, .. } => *from,
         }
     }
 }

@@ -17,7 +17,9 @@ reconstructed character grid (some also assert on cell styles).
 | `fixed_coordinate_floors_to_a_cell` | A `Fixed` coordinate floors to a whole cell |
 | `animated_coordinate_interpolates_linearly` | An `Animated` coordinate interpolates linearly across its window |
 | `animated_coordinate_supports_a_decreasing_ramp` | An `Animated` coordinate ramps downward when `from` > `to` |
-| `animated_coordinate_clamps_outside_its_window` | An `Animated` coordinate clamps to its endpoints outside the window |
+| `animated_coordinate_clamps_outside_its_window` | An `Animated` coordinate clamps to its endpoints outside the window (span resolved from an `AnimSpans` table) |
+| `animated_coordinate_with_missing_animation_holds_at_from` | A dangling `anim` reference (no such animation) renders as if static at `from` |
+| `start_value_ignores_animation_timing` | `Coordinate::start_value()` returns `from` for `Animated`, the floored value for `Fixed` (no table needed) |
 | `frame_range_end_is_exclusive` | `FrameRange` end is exclusive |
 | `coordinate_field_accepts_bare_number_or_object` | A coordinate field accepts a bare number or an object form |
 | `omitted_optional_width_defaults_to_zero` | An omitted optional width defaults to zero |
@@ -295,7 +297,8 @@ reconstructed character grid (some also assert on cell styles).
 | `re_applying_a_gapped_animation_does_not_stack_orphan_copies` | Re-applying clears prior strobe copies first (idempotent); gap 0 removes them entirely |
 | `select_action_submenu_offers_copy_and_converge` | The post-multi-select action sub-menu lists exactly Copy then Converge |
 | `converge_field_rows_omits_the_per_object_from_fields` | The Converge config lists only the shared `x to`/`y to` + span/toggles (8 fields) — no per-object `from` |
-| `converge_animates_each_object_from_its_own_spot_to_the_shared_point` | `apply_converge` animates each member's x/y from its own current position to the shared target, recording one shared `Animation` sidecar over the span |
+| `converge_animates_each_object_from_its_own_spot_to_the_shared_point` | `apply_converge` animates each member's x/y from its own current position to the shared target; both axes (and all members) reference **one** shared animation id over the span |
+| `editing_an_animation_span_updates_one_animation_not_two` | Re-applying with a changed span updates the *same* `Animation` in place (same id, widened span, object range re-locked) — never spawns a second, the reported orphan-duplicate bug |
 
 ### Frame operations — `src/editor/state.rs`
 
@@ -324,14 +327,14 @@ reconstructed character grid (some also assert on cell styles).
 | `parse_frame_selection_handles_lists_ranges_and_mixes` | `1,2,3` / `5-12` / mixes parse to 0-based, sorted, de-duplicated, clamped indices |
 | `parse_frame_selection_rejects_bad_input` | Frame 0, non-numbers, reversed ranges, empty, and all-out-of-range are rejected |
 | `delete_frames_removes_highest_first_and_keeps_one` | Multi-delete removes highest index first and never empties the deck (keeps ≥1) |
-| `delete_animation_end_frame_keeps_coord_and_range_in_lockstep` | Deleting an animation's last frame shrinks the inclusive `end_frame` with the exclusive range end (`>= deleted`), so the motion still reaches `to` instead of stopping short |
-| `delete_frame_range_keeps_multiple_animations_consistent` | Deleting a range straddling several animations leaves each coord span, object range, and auto-play sidecar mutually consistent |
+| `delete_animation_end_frame_keeps_span_and_range_in_lockstep` | Deleting an animation's last frame shrinks the `Animation` span and the driven object's range together, so the motion still reaches `to` instead of stopping short |
+| `delete_frame_range_keeps_multiple_animations_consistent` | Deleting a range straddling several animations leaves each driven object's range equal to its (also-shifted) `Animation` span |
 | `save_as_writes_the_file_and_adopts_the_path` | `save_as` writes valid JSON to the new path, adopts it as `file_path`, and clears `dirty` |
-| `animation_span_unions_animated_coordinates_and_makes_end_exclusive` | `scene_object_animation_span` unions every animated coordinate's window into an exclusive `[start, end)`; `None` when nothing is animated |
+| `animation_span_unions_the_referenced_animations` | `scene_object_animation_span(obj, &anims)` unions the spans of the animations a coordinate references into an exclusive `[start, end)`; `None` when nothing is animated |
 | `add_frames_and_share_grows_the_deck_and_shares_elements` | Animating over N frames inserts N-1 fresh frames and extends every current-frame element to span them (shared object) |
 | `add_frames_and_share_inserts_n_minus_1_fresh_frames` | N-1 *new* frames are always inserted after the current one (existing frames shift back), not reused — even when the deck already has frames in the span |
-| `upsert_animation_reuses_a_matching_span` | Animating X then Y over the same span keeps one `Animation` (updated in place) |
-| `upsert_animation_appends_a_distinct_span` | A different (even overlapping) span creates a second `Animation` |
+| `ensure_animation_updates_the_same_id_in_place` | `ensure_animation` with an existing id updates that one `Animation` in place (span + config) — never spawns a second |
+| `ensure_animation_appends_a_distinct_id` | `ensure_animation` with a new id appends a second `Animation` |
 | `apply_gap_strobes_element_onto_every_nth_frame` | `gap_frames` keeps the original on the first sample frame and clones the element onto every `gap+1`th frame (single-frame samples keeping the animated coordinate); the `gap` frames between are blanks |
 | `apply_gap_of_zero_is_a_noop` | A gap of 0 (no empty frames) leaves the element spanning every frame (off) |
 | `clear_gap_clones_removes_only_matching_copies` | Clearing an element's strobe removes its single-frame clones in span but leaves the original and unrelated objects |
@@ -339,8 +342,8 @@ reconstructed character grid (some also assert on cell styles).
 | `remove_animation_reverts_motion_and_drops_the_sidecar` | `remove_animation` flattens a coordinate animated over the span back to `Fixed` (its `from`), keeps the object spanning the range statically, and deletes the `Animation` sidecar |
 | `remove_animation_clears_gap_strobe_copies` | Removing a gapped animation deletes the strobe clones and restores one static element across the span (no scattered samples), sidecar gone |
 | `remove_animation_spares_an_overlapping_animation_on_another_span` | Removing one animation leaves an overlapping animation on a different span — its motion and its sidecar — untouched |
-| `remove_orphan_animation_keeps_a_still_used_sidecar` | `remove_orphan_animation` keeps the sidecar while a coordinate still drives its span, and removes it only once the motion is reverted |
-| `flatten_coordinates_converts_animated_to_fixed_at_frame` | Pasting flattens an animated coordinate to a `Fixed` value sampled at the frame, so the copy is static and arrow-movable on both axes |
+| `prune_orphan_animations_keeps_a_still_used_sidecar` | `prune_orphan_animations` keeps an `Animation` while a coordinate references it, and removes it once the motion is reverted |
+| `flatten_coordinates_converts_animated_to_fixed_at_frame` | Pasting flattens an animated coordinate (via the `AnimSpans` table) to a `Fixed` value sampled at the frame, so the copy is static and arrow-movable on both axes |
 | `expand_selection_pulls_in_group_members` | Copying a group expands the selection to include its members (deduped/sorted) |
 | `clone_selection_remaps_members_locally_and_is_independent` | A cloned group points at its cloned members (selection-local); clones are independent of the originals |
 | `clone_selection_drops_members_outside_the_selection` | A group member not in the selection is dropped from the clone's member list |

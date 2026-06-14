@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::types::{DrawOp, Style};
 
 use super::super::source::{FrameRange, Position};
-use super::{font, Resolve};
+use super::{font, Resolve, ResolveCtx};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Header {
@@ -109,12 +109,13 @@ impl Header {
 }
 
 impl Resolve for Header {
-    fn resolve(&self, frame: usize, canvas_width: u16, ops: &mut Vec<DrawOp>) {
+    fn resolve(&self, ctx: &ResolveCtx, ops: &mut Vec<DrawOp>) {
+        let (frame, canvas_width) = (ctx.frame, ctx.canvas_width);
         if !self.frames.contains(frame) {
             return;
         }
-        let base_x = self.position.x.evaluate(frame);
-        let base_y = self.position.y.evaluate(frame);
+        let base_x = self.position.x.evaluate(frame, ctx.anims);
+        let base_y = self.position.y.evaluate(frame, ctx.anims);
 
         // Glyph columns available from the header's left edge to the right
         // edge of the canvas. Each wrapped line restarts at `base_x`, so the

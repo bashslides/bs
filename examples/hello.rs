@@ -6,7 +6,7 @@
 use bs::{
     engine::{
         source::{
-            Coordinate, FrameRange, HLine, Header, Label, Position, Rect, SceneObject,
+            Animation, Coordinate, FrameRange, HLine, Header, Label, Position, Rect, SceneObject,
             SourcePresentation, TextAlign, VerticalAlign,
         },
         Engine,
@@ -131,12 +131,9 @@ fn main() -> anyhow::Result<()> {
             SceneObject::Label(Label {
                 text: "[*]".to_string(),
                 position: Position {
-                    x: Coordinate::Animated {
-                        from: 20,
-                        to: 57,
-                        start_frame: 13,
-                        end_frame: 22,
-                    },
+                    // References the animation below for its timing (span lives
+                    // on the `Animation`, the single source of truth).
+                    x: Coordinate::Animated { from: 20, to: 57, anim: 1 },
                     y: Coordinate::Fixed(4.0),
                 },
                 width: Coordinate::Fixed(0.0),
@@ -152,6 +149,15 @@ fn main() -> anyhow::Result<()> {
                 },
                 frames: FrameRange { start: 13, end: 22 },
                 z_order: 10,
+            }),
+            // The packet's animation span (owns the timing; the label's animated
+            // x references it by id).
+            SceneObject::Animation(Animation {
+                id: 1,
+                frames: FrameRange { start: 13, end: 23 },
+                auto_play: true,
+                delay_ms: 500,
+                gap_frames: 0,
             }),
             // Status box (appears mid-presentation)
             SceneObject::Rect(Rect {

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::types::DrawOp;
 
 use super::super::source::FrameRange;
-use super::Resolve;
+use super::{Resolve, ResolveCtx};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Group {
@@ -24,7 +24,7 @@ pub struct Group {
 }
 
 impl Resolve for Group {
-    fn resolve(&self, _frame: usize, _canvas_width: u16, _ops: &mut Vec<DrawOp>) {
+    fn resolve(&self, _ctx: &ResolveCtx, _ops: &mut Vec<DrawOp>) {
         // Groups emit no DrawOps; their members render independently.
     }
 }

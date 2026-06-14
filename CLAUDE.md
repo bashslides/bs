@@ -77,9 +77,13 @@ through the normal **Add Object** menu, so they reuse property editing and frame
 insert/delete/move range-remapping for free.
 
 **Runtime exception — `Animation` objects.** A first-class *animation span*,
-also play-time. Like `Loop` it draws **nothing**; the motion itself is already
-baked into the frames via the objects' `Coordinate::Animated` fields. An
-`Animation` records the *span* those coordinates play over (`frames`) plus its
+also play-time. Like `Loop` it draws **nothing**; the motion itself is baked into
+the frames via the objects' `Coordinate::Animated` fields. The `Animation` is the
+**single source of truth for the span**: its `frames` range *is* the span, and
+every animated coordinate references it by a stable `id` (`Coordinate::Animated {
+from, to, anim }`) rather than storing its own copy of the span — so a coordinate
+can never disagree with its animation about timing, and editing a span updates
+exactly one object (no orphan duplicates). The `Animation` also carries the
 **auto-play** config (`auto_play`, `delay_ms`) and emits an `AnimationRegion`
 sidecar. When `auto_play` is set, the `Player` auto-advances across the span on a
 timer, and an arrow key **skips** the whole span — `→` to the first frame past
@@ -89,19 +93,25 @@ loops, animations **may overlap** freely — where several auto-play
 animations cover the same frame boundary, the effective advance delay is the
 **minimum** of their `delay_ms` (`Player::auto_advance_delay`). Animations are
 created by the editor's **animate sub-menu** (not Add Object); they are still
-selectable/editable like a `Loop`. The animate flow's `add_frames` toggle inserts
-the spanned frames and **shares** the current frame's elements across them (one
-range-extended object per element ⇒ editing one edits all), and X and Y of an
-object animated over the same span share **one** `Animation` (reuse-by-span in
-`state::upsert_animation`). An animation has **two halves** — the motion
-(`Coordinate::Animated` on the driven objects) and this auto-play sidecar — so
-removal cleans up both: **deleting the `Animation` object** reverts every
-coordinate animated over its span back to a static `Fixed` (at its `from` value),
-widens those objects to span the range statically, drops their gap-strobe copies,
-and removes the sidecar (`state::remove_animation`). The in-menu `[x]` revert does
-the inverse bookkeeping — after clearing a coordinate it removes the sidecar iff
-no coordinate still drives that span (`state::remove_orphan_animation`) — so
-neither half can be left orphaned.
+selectable/editable like a `Loop`, and **editing the `Animation`'s first/last
+frame in the props panel just works** — the driven coordinates reference it by
+id, so only the driven objects' *visibility* ranges are re-locked (no span to
+propagate). The animate flow's `add_frames` toggle inserts the spanned frames and
+**shares** the current frame's elements across them (one range-extended object per
+element ⇒ editing one edits all), and X and Y of an object share **one**
+`Animation` by *reference* (reuse-by-id: `apply_animation` reuses the coordinate's
+existing `anim` id, allocating a fresh one only for a brand-new animation;
+`state::ensure_animation` sets the span + config; `state::next_anim_id` allocates).
+An animation has **two halves** — the motion (`Coordinate::Animated` on the driven
+objects) and the `Animation` object — so removal cleans up both: **deleting the
+`Animation` object** reverts every coordinate it drives back to a static `Fixed`
+(at its `from`), widens those objects to span the range statically, drops their
+gap-strobe copies, and deletes the object (`state::remove_animation`, by id). The
+in-menu `[x]` revert and every apply run `state::prune_orphan_animations`, which
+drops any `Animation` no coordinate references — so a span edit or a zeroed-out
+motion can never leave an orphan. Resolution threads the id→span table through the
+engine: `Coordinate::evaluate(frame, &AnimSpans)` and `Resolve::resolve(&ResolveCtx)`
+(the renderer and player are unchanged — the compiled frames are identical).
 
 **`Group` frame range — auto vs. explicit override.** `Group.frames` is an
 `Option<FrameRange>`. A group is a logical container whose members are ordinary
@@ -129,8 +139,8 @@ auto groups (their members shift instead).
 |------|------|
 | `src/main.rs` | CLI entry point |
 | `src/types.rs` | Shared types: `Color`, `Style`, `Cell`, `DrawOp`, `Frame`, `PlayablePresentation`, `CommandRegion`, `LoopRegion` |
-| `src/engine/source.rs` | `SourcePresentation` (+ `command_regions()`, `loop_regions()`, `animation_regions()`, `validate_loops()`, `link_siblings()`, and a `links` sidecar — editor-only families of object indices for *linked* paste, ignored by the engine), `SceneObject`, `Coordinate` (Fixed/Animated), `FrameRange` |
-| `src/engine/objects/` | Thirteen `SceneObject` types: `Label`, `HLine`, `Rect`, `Header`, `Group`, `Arrow`, `Table`, `Art`, `Command`, `List`, `Loop`, `Morph`, `Animation` — each implements `Resolve`. See the module-doc checklist in `mod.rs` for every site a new type touches. `List` (ordered/unordered) shares `Label`'s text-editing UX and the shared `wrap` helper. `Loop` (like `Group`) draws nothing; its `frames` range is the loop range and it emits a `LoopRegion` sidecar. `Morph` blends two inline ASCII-art grids (`from`→`to`) across its `frames` range — each cell flips to the `to` glyph once playback progress passes that cell's per-cell threshold (`MorphMode`: `dissolve` or four directional wipes). Fully baked into static frames in `resolve`, so the editor preview shows it for free. `Animation` (also draws nothing) marks an auto-play *span* and emits an `AnimationRegion` sidecar; it is created by the animate sub-menu, not the Add-Object menu (the only type absent from `OBJECT_TYPES`) |
+| `src/engine/source.rs` | `SourcePresentation` (+ `command_regions()`, `loop_regions()`, `animation_regions()`, `validate_loops()`, `link_siblings()`, and a `links` sidecar — editor-only families of object indices for *linked* paste, ignored by the engine), `SceneObject`, `Coordinate` (Fixed / Animated{from,to,anim}), `AnimId` + `AnimSpans` (the id→span table; `Coordinate::evaluate(frame, &AnimSpans)` looks a coordinate's span up there), `FrameRange` |
+| `src/engine/objects/` | Thirteen `SceneObject` types: `Label`, `HLine`, `Rect`, `Header`, `Group`, `Arrow`, `Table`, `Art`, `Command`, `List`, `Loop`, `Morph`, `Animation` — each implements `Resolve`. See the module-doc checklist in `mod.rs` for every site a new type touches. `List` (ordered/unordered) shares `Label`'s text-editing UX and the shared `wrap` helper. `Loop` (like `Group`) draws nothing; its `frames` range is the loop range and it emits a `LoopRegion` sidecar. `Morph` blends two inline ASCII-art grids (`from`→`to`) across its `frames` range — each cell flips to the `to` glyph once playback progress passes that cell's per-cell threshold (`MorphMode`: `dissolve` or four directional wipes). Fully baked into static frames in `resolve`, so the editor preview shows it for free. `Animation` (also draws nothing) **owns** the animation span (its `frames`) — the single source of truth — plus an `id` that driven `Coordinate::Animated { anim }` fields reference; it emits an `AnimationRegion` sidecar and is created by the animate sub-menu, not the Add-Object menu (the only type absent from `OBJECT_TYPES`). Each type implements `Resolve::resolve(&ResolveCtx, ops)` (the `ResolveCtx` carries `frame`, `canvas_width`, and the `&AnimSpans` table) |
 | `src/art_library.rs` | Built-in + user ASCII-art palette (`~/.config/bs/art/`, one file per piece); pieces are copied into self-contained `Art` objects when added. Includes a matched `ball`/`square` pair used as the default `Morph` endpoints. The picker (`Mode::AddArt`/`LoadArtFile`) carries an `ArtPick` purpose so the same flow serves a standalone `Art` or the two-stage `from`/`to` pick of a `Morph` |
 | `src/renderer/mod.rs` | Rasterizes DrawOps into cell grid; diffs frames |
 | `src/player/mod.rs` | Playback loop, keyboard nav (arrows, Shift+←/→ jump ±10 frames, space, q, f=fullscreen); runs `Command` objects (piped, async, timeout) and overlays output; drives `Loop` regions (timer-based auto-advance + bounce + arrow-key break-out) via the pure `loop_next` step fn; auto-advances across auto-play `Animation` spans (`auto_deadline`), using `auto_advance_delay` = the **min** `delay_ms` over the animations covering each boundary, with the loop's own delay as the fallback for gaps inside a loop. On an auto-play animation (no loop), an arrow **skips** the whole span: `→` jumps to the first frame past the last-ending overlapping animation (clamped to the last frame), `←` to the slide before the earliest-starting one — the merged cluster comes from `animation_cluster` (connected by overlap) |
@@ -174,15 +184,16 @@ Normal ──a──→ AddObject ──Enter──→ Normal (object added)
   `AnimRole` machinery but **drops the per-object `from` fields** (`CONVERGE_ROLES`
   = `x to`/`y to`/`start`/`end`/`add frames`/`auto play`/`delay ms`/`gap frames`;
   `add frames` defaults **off** so it animates over existing frames). `[s]` applies
-  via `input::apply_converge`: for each member it seeds `from` = the coord's
-  `evaluate(start_frame)` (its *displayed* position, even mid-motion) and sets
-  `Coordinate::Animated` toward the shared `to`/`to_y` on whichever axes the
-  object has (via the shared `set_object_animation` helper, also used by
-  `apply_animation`); an axis already at the target stays `Fixed`. Frames are
-  inserted/shared **once** (if `add frames`), and **one** shared `Animation`
-  sidecar is recorded for the whole convergence (`upsert_animation`). No engine /
-  JSON-format changes — convergence is just N objects whose animated coords share
-  a `to` over one span
+  via `input::apply_converge`: it allocates **one** shared animation id
+  (`next_anim_id` + `ensure_animation`), then for each member seeds `from` = the
+  coord's `evaluate(start_frame, &anims)` (its *displayed* position, even
+  mid-motion) and sets `Coordinate::Animated { anim }` toward the shared
+  `to`/`to_y` on whichever axes the object has (via the shared
+  `set_object_animation` helper, also used by `apply_animation`); an axis already
+  at the target stays `Fixed`. Frames are inserted/shared **once** (if `add
+  frames`); `prune_orphan_animations` then drops any of the members' previous
+  animations the convergence left unreferenced. Convergence is just N objects
+  whose animated coords reference one shared animation
 - **SelectedObject**: move (arrows), `r` → resize mode, `e` → edit props, `d` delete; Shift+arrows also grow
 - **ResizeObject**: arrow-key resize (←→ width, ↑↓ height) — a terminal-robust path since many terminals capture Shift+↑/↓ for scrollback; Enter/Esc exit
 - **EditProperties**: edit typed properties; color fields show dropdown; text fields support multi-line (Alt-Enter = newline); property list scrolls vertically
@@ -194,11 +205,15 @@ Normal ──a──→ AddObject ──Enter──→ Normal (object added)
   and `gap frames`. `enter_animate` seeds every value from the object's current
   coordinate(s), so an untouched axis is preserved on apply (a `Fixed` stays fixed,
   an `Animated` stays animated). `[s]` applies via `input::apply_animation`:
-  optionally inserts the spanned frames + shares the current frame's elements
-  (`state::add_frames_and_share`), sets the `Coordinate::Animated` on each moving
-  axis (`from != to`), keeps the object's own range in lock-step
-  (`scene_object_animation_span`), and creates/updates the `Animation` span
-  entity (`state::upsert_animation`, reuse-by-span so x+y stay one animation).
+  it reuses the coordinate's existing `anim` id (or allocates a fresh one via
+  `state::next_anim_id` for a brand-new animation), optionally inserts the spanned
+  frames + shares the current frame's elements (`state::add_frames_and_share`),
+  records the span + config on the `Animation` (`state::ensure_animation`), sets
+  the `Coordinate::Animated { anim }` on each moving axis (`from != to`), and
+  re-locks the object's own range to the union of its animations'
+  spans (`scene_object_animation_span(obj, &anims)`). Re-applying never spawns a
+  second animation (same id updated in place); `state::prune_orphan_animations`
+  drops the animation if no axis actually moved.
   `gap frames` > 0 then strobes the element via `state::apply_gap`: `gap frames`
   is the count of *empty* frames between appearances, so the element shows every
   `gap + 1` frames of the span (single-frame samples at the interpolated position,
@@ -208,12 +223,11 @@ Normal ──a──→ AddObject ──Enter──→ Normal (object added)
   idempotent: `apply_animation` first calls `state::clear_gap_clones` to remove
   the element's *own* prior strobe copies (matched by whole-object content, so an
   overlapping animation with the same motion is left intact), then re-strobes.
-  `[x]` reverts the coordinate to `Fixed` (and removes the now-orphaned
-  `Animation` sidecar if nothing else drives the span, via
-  `state::remove_orphan_animation`). Deleting the selectable `Animation` object
-  goes the other way — `state::remove_animation` reverts the motion of every
-  object over its span *and* drops the sidecar (see the `Animation` runtime
-  exception above). Defaults: add-frames on, auto-play on,
+  `[x]` reverts the coordinate to `Fixed`, then `state::prune_orphan_animations`
+  removes any `Animation` no coordinate references any more. Deleting the
+  selectable `Animation` object goes the other way — `state::remove_animation(id)`
+  reverts the motion of every object it drives *and* drops the object (see the
+  `Animation` runtime exception above). Defaults: add-frames on, auto-play on,
   500 ms, gap 0 (off — element on every frame). Re-animating a span reseeds its
   auto-play settings (`enter_animate`)
 
@@ -242,12 +256,16 @@ caret past `width` scrolls off — acceptable since those fields are short.
 ## Key Data Structures
 
 ```rust
-// Coordinate supports linear-interpolated animation.
-// Fixed is f64 (group-scaling uses fractional precision); evaluate() floors it.
+// Coordinate supports linear-interpolated animation. The *motion* (from→to)
+// lives here; the *span* lives only on the referenced `Animation` (id `anim`) —
+// the single source of truth for timing. evaluate(frame, &AnimSpans) looks the
+// span up; Fixed is f64 (group-scaling uses fractional precision), floored.
 enum Coordinate {
     Fixed(f64),
-    Animated { from: u16, to: u16, start_frame: usize, end_frame: usize },
+    Animated { from: u16, to: u16, anim: AnimId },   // AnimId = u32
 }
+// AnimSpans: an id→FrameRange table built once (AnimSpans::of(source)) and
+// threaded through Resolve via ResolveCtx { frame, canvas_width, anims }.
 
 // EditProperties carries full editing state
 Mode::EditProperties {
@@ -272,12 +290,13 @@ Mode::EditProperties {
       "text": "Hello",
       "position": {
         "x": { "fixed": 10 },
-        "y": { "animated": { "from": 2, "to": 8, "start_frame": 0, "end_frame": 4 } }
+        "y": { "animated": { "from": 2, "to": 8, "anim": 1 } }
       },
       "style": { "fg": "red", "bold": true },
       "frames": { "start": 0, "end": 8 },
       "z_order": 1
-    }
+    },
+    { "type": "animation", "id": 1, "frames": { "start": 0, "end": 5 } }
   ]
 }
 ```
@@ -296,13 +315,14 @@ Mode::EditProperties {
     "delay_ms": 500, "count": 0, "bounce": true }
   ```
 
-- An `animation` object likewise has no geometry — just a range plus auto-play
-  config (`auto_play` default true, `delay_ms` default 500). It records the span
-  an animated coordinate plays over; the motion itself lives on the objects'
-  `Coordinate::Animated` fields:
+- An `animation` object has no geometry — just an `id`, a range, and auto-play
+  config (`auto_play` default true, `delay_ms` default 500). Its `frames` range
+  **is the single source of truth for the span**; animated coordinates reference
+  it by `id` (`{"animated":{"from","to","anim":<id>}}`) and carry no span of
+  their own. The motion (`from`→`to`) lives on the coordinate:
 
   ```json
-  { "type": "animation", "frames": { "start": 0, "end": 5 },
+  { "type": "animation", "id": 1, "frames": { "start": 0, "end": 5 },
     "auto_play": true, "delay_ms": 500 }
   ```
 
@@ -344,12 +364,15 @@ targets the pure, deterministic core):
 Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
 `engine/objects/wrap.rs`, `editor/textedit.rs`, `editor/object_defaults.rs`,
 `editor/state.rs` — frame copy/blank-insert/move/delete + `add_frames_and_share`
-+ `upsert_animation`, `player/mod.rs` — `loop_next` bounce/wrap stepping +
++ `ensure_animation`/`remove_animation`/`prune_orphan_animations` (id-based) +
+`scene_object_animation_span`, `player/mod.rs` — `loop_next` bounce/wrap stepping +
 `auto_advance_delay` min-over-overlap + `animation_cluster` overlap-merging;
 copy/paste `expand_selection` +
-`clone_selection` + `link_siblings` + link-family delete maintenance). The suite
-totals 206 tests (105 integration
-+ 101 inline); `TESTS.md` is the authoritative per-test list.
+`clone_selection` + `link_siblings` + link-family delete maintenance;
+`editor/input.rs` — `apply_animation`/`apply_converge` id reuse + the
+"editing a span never duplicates the animation" regression). The suite
+totals 209 tests (107 integration
++ 102 inline); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the

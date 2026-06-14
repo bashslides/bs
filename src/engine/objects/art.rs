@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::types::{DrawOp, Style};
 
 use super::super::source::{FrameRange, Position};
-use super::Resolve;
+use super::{Resolve, ResolveCtx};
 
 /// A pre-made ASCII-art object. The art text is stored inline (copied from the
 /// art library when added), so a presentation never depends on the library.
@@ -27,12 +27,13 @@ pub struct Art {
 }
 
 impl Resolve for Art {
-    fn resolve(&self, frame: usize, _canvas_width: u16, ops: &mut Vec<DrawOp>) {
+    fn resolve(&self, ctx: &ResolveCtx, ops: &mut Vec<DrawOp>) {
+        let frame = ctx.frame;
         if !self.frames.contains(frame) {
             return;
         }
-        let base_x = self.position.x.evaluate(frame);
-        let base_y = self.position.y.evaluate(frame);
+        let base_x = self.position.x.evaluate(frame, ctx.anims);
+        let base_y = self.position.y.evaluate(frame, ctx.anims);
         let has_bg = self.style.bg.is_some();
 
         for (row, line) in self.art.split('\n').enumerate() {

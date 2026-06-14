@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 
 use crate::art_library::ArtItem;
-use crate::engine::source::{Animation, Coordinate, FrameRange, SceneObject, SourcePresentation};
+use crate::engine::source::{
+    AnimId, AnimSpans, Animation, Coordinate, FrameRange, SceneObject, SourcePresentation,
+};
 
 use super::config::EditorConfig;
 
@@ -514,25 +516,55 @@ fn scene_object_coordinates_mut(obj: &mut SceneObject) -> Vec<&mut Coordinate> {
     }
 }
 
-/// The union of every animated coordinate's window on `obj`, as an exclusive
-/// `[start, end)` frame range — i.e. `[min start_frame, max end_frame + 1)`
-/// (an animation reaches its destination *on* `end_frame`, so the exclusive end
-/// is one past it). Returns `None` when the object has no animated coordinate.
+/// The animation ids referenced by `obj`'s `Animated` coordinates (an object can
+/// be driven by several animations — e.g. x and y over different spans).
+pub fn referenced_anim_ids(obj: &SceneObject) -> Vec<AnimId> {
+    let mut clone = obj.clone();
+    scene_object_coordinates_mut(&mut clone)
+        .into_iter()
+        .filter_map(|c| match c {
+            Coordinate::Animated { anim, .. } => Some(*anim),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The union of the spans of every animation driving `obj`, as an exclusive
+/// `[start, end)` frame range. Returns `None` when the object has no animated
+/// coordinate (or its animations are missing from `anims`).
 ///
 /// Used to keep an object's visible range in lock-step with its animation(s):
 /// applying or editing an animation recomputes the range from this span, so it
-/// both grows to cover a longer animation and shrinks when one is shortened
-/// (no frames left visible past the animation's new end).
-pub fn scene_object_animation_span(obj: &mut SceneObject) -> Option<(usize, usize)> {
+/// both grows to cover a longer animation and shrinks when one is shortened.
+pub fn scene_object_animation_span(
+    obj: &SceneObject,
+    anims: &AnimSpans,
+) -> Option<(usize, usize)> {
     let mut lo = usize::MAX;
     let mut hi = 0usize;
-    for coord in scene_object_coordinates_mut(obj) {
-        if let Coordinate::Animated { start_frame, end_frame, .. } = coord {
-            lo = lo.min(*start_frame);
-            hi = hi.max(*end_frame + 1);
+    for id in referenced_anim_ids(obj) {
+        if let Some(fr) = anims.span(id) {
+            lo = lo.min(fr.start);
+            hi = hi.max(fr.end);
         }
     }
     (lo != usize::MAX).then_some((lo, hi))
+}
+
+/// The next free [`AnimId`] for `source`: one past the largest existing id (or
+/// `1` when there are no animations). Persisted ids make this stable across
+/// save/load; an id is only reused after its animation — and every coordinate
+/// referencing it — is gone.
+pub fn next_anim_id(source: &SourcePresentation) -> AnimId {
+    source
+        .objects
+        .iter()
+        .filter_map(|o| match o {
+            SceneObject::Animation(a) => Some(a.id),
+            _ => None,
+        })
+        .max()
+        .map_or(1, |m| m + 1)
 }
 
 /// Insert a *blank* frame just after `inserted_after`: objects local to the
@@ -551,27 +583,15 @@ pub fn insert_blank_frame(source: &mut SourcePresentation, inserted_after: usize
     let end_threshold = inserted_after + 1;
     for obj in &mut source.objects {
         // Auto groups have no stored range to shift; their members shift instead.
+        // (Animation spans shift here too — an `Animation` is an object with a
+        // frame range, which is now the single source of truth for its span; the
+        // driven coordinates carry no span to keep in sync.)
         if let Some(fr) = scene_object_frame_range_mut(obj) {
             if fr.end > end_threshold {
                 fr.end += 1;
             }
             if fr.start > inserted_after {
                 fr.start += 1;
-            }
-        }
-        for coord in scene_object_coordinates_mut(obj) {
-            if let Coordinate::Animated {
-                start_frame,
-                end_frame,
-                ..
-            } = coord
-            {
-                if *start_frame > inserted_after {
-                    *start_frame += 1;
-                }
-                if *end_frame > inserted_after {
-                    *end_frame += 1;
-                }
             }
         }
     }
@@ -595,15 +615,25 @@ pub fn copy_frame(source: &mut SourcePresentation, current: usize) {
 
     // Make room for the new frame; spanning objects extend across it.
     insert_blank_frame(source, current);
+    let anims = AnimSpans::of(source);
 
     // Clone every visible object the blank insert did NOT carry onto the new
     // frame, so the new frame gets its own independent copies.
     let mut index_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
     for &i in &visible {
+        // An `Animation` sidecar is a deck-wide behavior, not frame content —
+        // duplicating it onto one frame would just orphan an inert animation.
+        if matches!(source.objects[i], SceneObject::Animation(_)) {
+            continue;
+        }
         if source.effective_frame_range(i).contains(new_frame) {
             continue; // already shared onto the new frame (kept continuous)
         }
         let mut clone = source.objects[i].clone();
+        // A duplicated frame is a static snapshot: flatten any animated coordinate
+        // to the value it shows on the source frame, so the copy doesn't ride an
+        // animation it no longer belongs to.
+        flatten_coordinates(&mut clone, current, &anims);
         // Plain objects (and explicit-range groups) land on the new frame only;
         // an auto group has no stored range and stays auto (derived from its
         // — also cloned — members).
@@ -641,22 +671,14 @@ fn insert_blank_frames_at(source: &mut SourcePresentation, dest: usize, count: u
     }
     source.frame_count += count;
     for obj in &mut source.objects {
+        // Includes `Animation` objects, whose frame range *is* their span (the
+        // single source of truth); driven coordinates carry no span to shift.
         if let Some(fr) = scene_object_frame_range_mut(obj) {
             if fr.end > dest {
                 fr.end += count;
             }
             if fr.start >= dest {
                 fr.start += count;
-            }
-        }
-        for coord in scene_object_coordinates_mut(obj) {
-            if let Coordinate::Animated { start_frame, end_frame, .. } = coord {
-                if *end_frame >= dest {
-                    *end_frame += count;
-                }
-                if *start_frame >= dest {
-                    *start_frame += count;
-                }
             }
         }
     }
@@ -709,15 +731,10 @@ pub fn copy_frames(
         }
         let new_start = ov_start - lo + dest;
         let new_end = ov_end - lo + dest;
-        let mut clone = source.objects[i].clone();
-        for coord in scene_object_coordinates_mut(&mut clone) {
-            if let Coordinate::Animated { start_frame, end_frame, .. } = coord {
-                let s = (*start_frame).clamp(lo, hi) - lo + dest;
-                let e = (*end_frame).clamp(lo, hi) - lo + dest;
-                *start_frame = s.min(e);
-                *end_frame = s.max(e);
-            }
-        }
+        // Deep clone as-is; an `Animation` clone's frame range becomes the copied
+        // block's span (set below from `new_start/new_end`), and its id is
+        // freshly assigned afterwards so the copy is an independent animation.
+        let clone = source.objects[i].clone();
         specs.push((i, clone, new_start, new_end));
     }
 
@@ -725,6 +742,7 @@ pub fn copy_frames(
 
     // Append the clones with their mapped ranges, then re-point cloned groups.
     let mut index_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    let first_new = source.objects.len();
     for (src, mut clone, ns, ne) in specs {
         if let Some(fr) = scene_object_frame_range_mut(&mut clone) {
             fr.start = ns;
@@ -739,6 +757,35 @@ pub fn copy_frames(
             for m in &mut g.members {
                 if let Some(&mapped) = index_map.get(m) {
                     *m = mapped;
+                }
+            }
+        }
+    }
+
+    // Give each cloned `Animation` a fresh id and repoint the cloned coordinates
+    // that referenced the original, so the copied block animates independently
+    // (the copy must not share — or collide on — the source's animation id). A
+    // cloned coordinate whose animation lay *outside* the block keeps referring
+    // to the original animation.
+    let mut id_map: std::collections::HashMap<AnimId, AnimId> = std::collections::HashMap::new();
+    for idx in first_new..source.objects.len() {
+        if matches!(source.objects[idx], SceneObject::Animation(_)) {
+            // `next_anim_id` sees the ids assigned on previous iterations, so each
+            // cloned animation gets a distinct fresh id.
+            let new = next_anim_id(source);
+            if let SceneObject::Animation(a) = &mut source.objects[idx] {
+                id_map.insert(a.id, new);
+                a.id = new;
+            }
+        }
+    }
+    if !id_map.is_empty() {
+        for idx in first_new..source.objects.len() {
+            for coord in scene_object_coordinates_mut(&mut source.objects[idx]) {
+                if let Coordinate::Animated { anim, .. } = coord {
+                    if let Some(&new) = id_map.get(anim) {
+                        *anim = new;
+                    }
                 }
             }
         }
@@ -767,13 +814,22 @@ pub fn overlay_frame(source: &mut SourcePresentation, from: usize, onto: usize) 
     let visible: Vec<usize> = (0..source.objects.len())
         .filter(|&i| source.effective_frame_range(i).contains(from))
         .collect();
+    let anims = AnimSpans::of(source);
 
     let mut index_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
     for &i in &visible {
+        // An `Animation` sidecar is deck-wide behavior, not frame content — don't
+        // overlay it onto an unrelated frame.
+        if matches!(source.objects[i], SceneObject::Animation(_)) {
+            continue;
+        }
         if source.effective_frame_range(i).contains(onto) {
             continue; // already present on the target frame — don't duplicate it
         }
         let mut clone = source.objects[i].clone();
+        // The overlay is a static snapshot of the source frame; flatten any
+        // animated coordinate to the value it shows there.
+        flatten_coordinates(&mut clone, from, &anims);
         // Plain objects (and explicit-range groups) land on the target frame
         // only; an auto group has no stored range and stays auto (derived from
         // its — also cloned — members).
@@ -947,12 +1003,13 @@ pub fn clear_gap_clones(
     }
 }
 
-/// Create or update the [`Animation`] span `[start, end_excl)` with the given
-/// auto-play config. If an animation with exactly this span already exists (e.g.
-/// animating a second coordinate over the same frames), reuse it so X and Y of
-/// the same object stay one animation; otherwise append a new one.
-pub fn upsert_animation(
+/// Create or update the [`Animation`] with id `id`: set its span `[start,
+/// end_excl)` and playback config. Appends it if no animation has that id yet.
+/// The single place an animation's span is stored — driven coordinates link to
+/// it by `id`, so x and y of the same object share one animation by *reference*.
+pub fn ensure_animation(
     source: &mut SourcePresentation,
+    id: AnimId,
     start: usize,
     end_excl: usize,
     auto_play: bool,
@@ -961,7 +1018,8 @@ pub fn upsert_animation(
 ) {
     for obj in &mut source.objects {
         if let SceneObject::Animation(a) = obj {
-            if a.frames.start == start && a.frames.end == end_excl {
+            if a.id == id {
+                a.frames = FrameRange { start, end: end_excl };
                 a.auto_play = auto_play;
                 a.delay_ms = delay_ms;
                 a.gap_frames = gap_frames;
@@ -970,6 +1028,7 @@ pub fn upsert_animation(
         }
     }
     source.objects.push(SceneObject::Animation(Animation {
+        id,
         frames: FrameRange { start, end: end_excl },
         auto_play,
         delay_ms,
@@ -977,27 +1036,28 @@ pub fn upsert_animation(
     }));
 }
 
-/// Does `obj` have at least one coordinate animated over *exactly* the span
-/// `[start, end_frame]` (inclusive end)? Used to find the objects whose motion a
-/// given `Animation` span drives.
-fn has_animation_over(obj: &SceneObject, start: usize, end_frame: usize) -> bool {
-    let mut clone = obj.clone();
-    scene_object_coordinates_mut(&mut clone)
-        .into_iter()
-        .any(|c| matches!(c, Coordinate::Animated { start_frame, end_frame: ef, .. }
-            if *start_frame == start && *ef == end_frame))
+/// Is `obj` driven by the animation with id `id`?
+fn is_driven_by(obj: &SceneObject, id: AnimId) -> bool {
+    referenced_anim_ids(obj).contains(&id)
 }
 
-/// Flatten every coordinate on `obj` animated over exactly `[start, end_frame]`
-/// back to a static `Fixed` at its `from` value (the position the motion began
-/// at), leaving coordinates on *other* spans alone. Then widen the object's
-/// frame range to cover the whole span (never shrinking it) so a reverted —
-/// possibly gap-strobed — element shows statically across those frames instead
-/// of vanishing onto a single sample frame.
-fn flatten_animation_over(obj: &mut SceneObject, start: usize, end_frame: usize) {
+/// The span `[start, end_excl)` of the animation with id `id`, if present.
+fn animation_span_by_id(source: &SourcePresentation, id: AnimId) -> Option<(usize, usize)> {
+    source.objects.iter().find_map(|o| match o {
+        SceneObject::Animation(a) if a.id == id => Some((a.frames.start, a.frames.end)),
+        _ => None,
+    })
+}
+
+/// Flatten every coordinate on `obj` driven by animation `id` back to a static
+/// `Fixed` at its `from` value (where the motion began), leaving coordinates on
+/// *other* animations alone. Then widen the object's frame range to cover
+/// `[start, end_excl)` (never shrinking) so a reverted — possibly gap-strobed —
+/// element shows statically across those frames instead of vanishing.
+fn flatten_animation(obj: &mut SceneObject, id: AnimId, start: usize, end_excl: usize) {
     for coord in scene_object_coordinates_mut(obj) {
-        if let Coordinate::Animated { from, start_frame, end_frame: ef, .. } = coord {
-            if *start_frame == start && *ef == end_frame {
+        if let Coordinate::Animated { from, anim, .. } = coord {
+            if *anim == id {
                 let v = *from;
                 *coord = Coordinate::Fixed(v as f64);
             }
@@ -1007,69 +1067,82 @@ fn flatten_animation_over(obj: &mut SceneObject, start: usize, end_frame: usize)
         if fr.start > start {
             fr.start = start;
         }
-        if fr.end < end_frame + 1 {
-            fr.end = end_frame + 1;
+        if fr.end < end_excl {
+            fr.end = end_excl;
         }
     }
 }
 
-/// Remove the `Animation` whose span is exactly `[start, end_excl)` — the *whole*
-/// animation, both halves: the motion (`Coordinate::Animated` on the objects it
-/// drives) and the auto-play `Animation` sidecar. Every object animated over the
-/// span is reverted to a static `Fixed` position (`flatten_animation_over`), its
-/// gap-strobe copies are dropped, and the sidecar object is deleted. This is what
-/// makes the selectable `Animation` object a real handle for the animation:
-/// deleting it removes the motion too, instead of leaving the element still
-/// moving with no sidecar.
-pub fn remove_animation(source: &mut SourcePresentation, start: usize, end_excl: usize) {
+/// Remove the animation with id `id` — the *whole* animation, both halves: the
+/// motion (`Coordinate::Animated` on every coordinate it drives) and the
+/// `Animation` sidecar. Driven coordinates revert to a static `Fixed`, their
+/// gap-strobe copies are dropped, and the sidecar object is deleted. This makes
+/// the selectable `Animation` object a real handle: deleting it removes the
+/// motion too, instead of leaving elements moving with no sidecar.
+pub fn remove_animation(source: &mut SourcePresentation, id: AnimId) {
+    let Some((start, end_excl)) = animation_span_by_id(source, id) else {
+        return;
+    };
     let end_frame = end_excl.saturating_sub(1);
     // Clear strobe copies + flatten originals. Scanning low→high keeps the
     // current index stable: an original's gap clones sit at higher indices, so
     // removing them (and the higher-index sidecar) never shifts what's behind us.
     let mut i = 0;
     while i < source.objects.len() {
-        if has_animation_over(&source.objects[i], start, end_frame) {
+        if is_driven_by(&source.objects[i], id) {
             clear_gap_clones(source, i, start, end_frame);
-            flatten_animation_over(&mut source.objects[i], start, end_frame);
+            flatten_animation(&mut source.objects[i], id, start, end_excl);
         }
         i += 1;
     }
-    // Drop the now-defunct sidecar (at most one per span — `upsert_animation`
-    // reuses by exact span).
-    if let Some(idx) = source.objects.iter().position(|o| {
-        matches!(o, SceneObject::Animation(a) if a.frames.start == start && a.frames.end == end_excl)
-    }) {
+    if let Some(idx) = source
+        .objects
+        .iter()
+        .position(|o| matches!(o, SceneObject::Animation(a) if a.id == id))
+    {
         source.objects.remove(idx);
         adjust_group_members_after_delete(source, idx);
     }
 }
 
-/// Delete the `Animation` sidecar for span `[start, end_excl)` *only if* no object
-/// is still animated over it — i.e. its motion has already been reverted. Called
-/// after the in-menu `[x]` revert so clearing an object's animated coordinate
-/// doesn't leave an orphaned, selectable-but-inert `Animation` object behind.
-pub fn remove_orphan_animation(source: &mut SourcePresentation, start: usize, end_excl: usize) {
-    let end_frame = end_excl.saturating_sub(1);
-    if source.objects.iter().any(|o| has_animation_over(o, start, end_frame)) {
-        return; // still driven by some coordinate — keep the sidecar
-    }
-    if let Some(idx) = source.objects.iter().position(|o| {
-        matches!(o, SceneObject::Animation(a) if a.frames.start == start && a.frames.end == end_excl)
-    }) {
-        source.objects.remove(idx);
-        adjust_group_members_after_delete(source, idx);
+/// Remove every `Animation` sidecar that no coordinate references. A self-healing
+/// pass run after animation edits, so a span change or a zeroed-out motion can
+/// never leave an orphaned, selectable-but-inert `Animation` behind (the bug the
+/// single-source-of-truth model is meant to make impossible).
+pub fn prune_orphan_animations(source: &mut SourcePresentation) {
+    let ids: Vec<AnimId> = source
+        .objects
+        .iter()
+        .filter_map(|o| match o {
+            SceneObject::Animation(a) => Some(a.id),
+            _ => None,
+        })
+        .collect();
+    for id in ids {
+        if source.objects.iter().any(|o| is_driven_by(o, id)) {
+            continue;
+        }
+        if let Some(idx) = source
+            .objects
+            .iter()
+            .position(|o| matches!(o, SceneObject::Animation(a) if a.id == id))
+        {
+            source.objects.remove(idx);
+            adjust_group_members_after_delete(source, idx);
+        }
     }
 }
 
 /// Replace every `Animated` coordinate on `obj` with a `Fixed` value sampled at
-/// `frame`. Used when pasting: a clone is re-anchored to a single frame, where
-/// an animated coordinate is degenerate — it would also be un-nudgeable, since
-/// the arrow-key move only adjusts `Fixed` coordinates. Flattening makes the
-/// pasted copy a static, movable object showing the position it had at `frame`.
-pub fn flatten_coordinates(obj: &mut SceneObject, frame: usize) {
+/// `frame` (looking the span up in `anims`). Used when pasting/snapshotting: a
+/// clone re-anchored to a single frame can't ride an animation, and an animated
+/// coordinate is un-nudgeable (the arrow-key move only adjusts `Fixed`).
+/// Flattening makes the copy a static, movable object showing its position at
+/// `frame` — and drops its animation reference.
+pub fn flatten_coordinates(obj: &mut SceneObject, frame: usize, anims: &AnimSpans) {
     for coord in scene_object_coordinates_mut(obj) {
         if matches!(coord, Coordinate::Animated { .. }) {
-            *coord = Coordinate::Fixed(coord.evaluate(frame) as f64);
+            *coord = Coordinate::Fixed(coord.evaluate(frame, anims) as f64);
         }
     }
 }
@@ -1171,11 +1244,15 @@ pub fn move_frames(
     pos[first]
 }
 
-/// Remap every object frame range and animated-coordinate span through the
-/// frame permutation `pos` (`pos[old_index] = new_index`). Each contiguous range
-/// becomes the contiguous hull of its members' new positions — exact when the
-/// permutation keeps the range's frames together, an inclusive approximation when
-/// a partial span is torn apart. Shared by [`move_frame`]/[`move_frames`].
+/// Remap every object frame range through the frame permutation `pos`
+/// (`pos[old_index] = new_index`). Each contiguous range becomes the contiguous
+/// hull of its members' new positions — exact when the permutation keeps the
+/// range's frames together, an inclusive approximation when a partial span is
+/// torn apart. Shared by [`move_frame`]/[`move_frames`].
+///
+/// `Animation` spans ride along here too: an `Animation`'s frame range *is* its
+/// span (the single source of truth), and animated coordinates carry no span of
+/// their own, so remapping object ranges is all that's needed.
 fn remap_ranges_through_pos(source: &mut SourcePresentation, pos: &[usize], n: usize) {
     for obj in &mut source.objects {
         if let Some(fr) = scene_object_frame_range_mut(obj) {
@@ -1188,19 +1265,6 @@ fn remap_ranges_through_pos(source: &mut SourcePresentation, pos: &[usize], n: u
                 }
                 fr.start = lo;
                 fr.end = hi + 1;
-            }
-        }
-        for coord in scene_object_coordinates_mut(obj) {
-            if let Coordinate::Animated {
-                start_frame,
-                end_frame,
-                ..
-            } = coord
-            {
-                let a = pos[(*start_frame).min(n - 1)];
-                let b = pos[(*end_frame).min(n - 1)];
-                *start_frame = a.min(b);
-                *end_frame = a.max(b);
             }
         }
     }
@@ -1288,30 +1352,9 @@ pub fn adjust_frames_after_delete(source: &mut SourcePresentation, deleted: usiz
             i += 1;
         }
     }
-    for obj in &mut source.objects {
-        for coord in scene_object_coordinates_mut(obj) {
-            if let Coordinate::Animated {
-                start_frame,
-                end_frame,
-                ..
-            } = coord
-            {
-                if *start_frame > deleted {
-                    *start_frame -= 1;
-                }
-                // `end_frame` is *inclusive*, so it must shrink in lock-step with
-                // the object's *exclusive* range end (which decrements when
-                // `range.end > deleted`, i.e. `end_frame + 1 > deleted`, i.e.
-                // `end_frame >= deleted`). Using `>` here instead left the
-                // animation's last frame one past the object's now-shorter range
-                // when the deleted frame *was* that last frame — so the motion
-                // never reached its `to` value and the deck looked jumpy.
-                if *end_frame >= deleted {
-                    *end_frame = end_frame.saturating_sub(1);
-                }
-            }
-        }
-    }
+    // Animation spans need no separate fix-up: an `Animation`'s frame range *is*
+    // its span (shifted by the object-range pass above), and animated coordinates
+    // carry no span of their own.
 }
 
 /// After an object at `removed_idx` is deleted, fix the index references that
@@ -1347,14 +1390,14 @@ pub fn scene_object_summary(obj: &SceneObject) -> String {
             let text_preview: String = first_line.chars().take(15).collect();
             format!("Label: \"{}\"", text_preview)
         }
-        SceneObject::HLine(h) => format!("HLine: y={} x={}..{}", h.y.evaluate(0), h.x_start.evaluate(0), h.x_end.evaluate(0)),
-        SceneObject::Rect(r) => format!("Rect: {}x{}", r.width.evaluate(0), r.height.evaluate(0)),
+        SceneObject::HLine(h) => format!("HLine: y={} x={}..{}", h.y.start_value(), h.x_start.start_value(), h.x_end.start_value()),
+        SceneObject::Rect(r) => format!("Rect: {}x{}", r.width.start_value(), r.height.start_value()),
         SceneObject::Header(h) => {
             let text_preview: String = h.text.chars().take(10).collect();
             format!("Header: \"{}\"", text_preview)
         }
         SceneObject::Group(g) => format!("Group: {} members", g.members.len()),
-        SceneObject::Arrow(a) => format!("Arrow: ({},{})→({},{})", a.x1.evaluate(0), a.y1.evaluate(0), a.x2.evaluate(0), a.y2.evaluate(0)),
+        SceneObject::Arrow(a) => format!("Arrow: ({},{})→({},{})", a.x1.start_value(), a.y1.start_value(), a.x2.start_value(), a.y2.start_value()),
         SceneObject::Table(t) => format!("Table: {}r×{}c", t.rows, t.col_widths.len()),
         SceneObject::Art(a) => {
             let name = if a.name.is_empty() { "custom" } else { &a.name };
@@ -1477,7 +1520,7 @@ mod tests {
         // holds the first sample frame; clones occupy frames 4 and 8.
         let mut obj = create_default(0, 0);
         if let SceneObject::Label(l) = &mut obj {
-            l.position.x = Coordinate::Animated { from: 0, to: 9, start_frame: 0, end_frame: 9 };
+            l.position.x = Coordinate::Animated { from: 0, to: 9, anim: 1 };
             l.frames = FrameRange { start: 0, end: 10 };
         }
         let mut p = pres(10, vec![obj]);
@@ -1516,7 +1559,7 @@ mod tests {
         // shows on 0, 4, 8 (original + 2 clones), plus an unrelated label.
         let mut anim = create_default(0, 0);
         if let SceneObject::Label(l) = &mut anim {
-            l.position.x = Coordinate::Animated { from: 0, to: 9, start_frame: 0, end_frame: 9 };
+            l.position.x = Coordinate::Animated { from: 0, to: 9, anim: 1 };
             l.frames = FrameRange { start: 0, end: 10 };
         }
         let mut p = pres(10, vec![anim, label(0, 10)]); // index 0 = animated, 1 = other
@@ -1540,12 +1583,12 @@ mod tests {
         let mut b = create_default(0, 0);
         if let SceneObject::Label(l) = &mut a {
             l.text = "A".into();
-            l.position.x = Coordinate::Animated { from: 0, to: 9, start_frame: 0, end_frame: 9 };
+            l.position.x = Coordinate::Animated { from: 0, to: 9, anim: 1 };
             l.frames = FrameRange { start: 0, end: 10 };
         }
         if let SceneObject::Label(l) = &mut b {
             l.text = "B".into();
-            l.position.x = Coordinate::Animated { from: 0, to: 9, start_frame: 0, end_frame: 9 };
+            l.position.x = Coordinate::Animated { from: 0, to: 9, anim: 1 };
             l.frames = FrameRange { start: 0, end: 10 };
         }
         let mut p = pres(10, vec![a, b]); // index 0 = A, 1 = B
@@ -1571,14 +1614,14 @@ mod tests {
         // `from` (2), keep the label spanning the span, and delete the sidecar.
         let mut obj = create_default(0, 0);
         if let SceneObject::Label(l) = &mut obj {
-            l.position.x = Coordinate::Animated { from: 2, to: 12, start_frame: 0, end_frame: 4 };
+            l.position.x = Coordinate::Animated { from: 2, to: 12, anim: 1 };
             l.frames = FrameRange { start: 0, end: 5 };
         }
         let mut p = pres(5, vec![obj]);
-        upsert_animation(&mut p, 0, 5, true, 500, 0);
+        ensure_animation(&mut p, 1, 0, 5, true, 500, 0);
         assert_eq!(p.objects.len(), 2); // label + Animation sidecar
 
-        remove_animation(&mut p, 0, 5);
+        remove_animation(&mut p, 1);
         assert_eq!(p.objects.len(), 1, "sidecar removed");
         match &p.objects[0] {
             SceneObject::Label(l) => {
@@ -1596,15 +1639,15 @@ mod tests {
         // element across the span — no leftover scattered samples.
         let mut obj = create_default(0, 0);
         if let SceneObject::Label(l) = &mut obj {
-            l.position.x = Coordinate::Animated { from: 0, to: 9, start_frame: 0, end_frame: 9 };
+            l.position.x = Coordinate::Animated { from: 0, to: 9, anim: 1 };
             l.frames = FrameRange { start: 0, end: 10 };
         }
         let mut p = pres(10, vec![obj]);
-        upsert_animation(&mut p, 0, 10, true, 500, 3);
+        ensure_animation(&mut p, 1, 0, 10, true, 500, 3);
         apply_gap(&mut p, 0, 0, 9, 3); // original + 2 clones + sidecar
         assert_eq!(p.objects.iter().filter(|o| matches!(o, SceneObject::Label(_))).count(), 3);
 
-        remove_animation(&mut p, 0, 10);
+        remove_animation(&mut p, 1);
         let labels: Vec<_> = p.objects.iter().filter(|o| matches!(o, SceneObject::Label(_))).collect();
         assert_eq!(labels.len(), 1, "strobe clones removed, one static label left");
         assert!(!p.objects.iter().any(|o| matches!(o, SceneObject::Animation(_))), "sidecar removed");
@@ -1619,19 +1662,19 @@ mod tests {
         let mut b = create_default(0, 0);
         if let SceneObject::Label(l) = &mut a {
             l.text = "A".into();
-            l.position.x = Coordinate::Animated { from: 1, to: 5, start_frame: 0, end_frame: 4 };
+            l.position.x = Coordinate::Animated { from: 1, to: 5, anim: 1 };
             l.frames = FrameRange { start: 0, end: 5 };
         }
         if let SceneObject::Label(l) = &mut b {
             l.text = "B".into();
-            l.position.x = Coordinate::Animated { from: 1, to: 9, start_frame: 0, end_frame: 9 };
+            l.position.x = Coordinate::Animated { from: 1, to: 9, anim: 2 };
             l.frames = FrameRange { start: 0, end: 10 };
         }
         let mut p = pres(10, vec![a, b]);
-        upsert_animation(&mut p, 0, 5, true, 500, 0);
-        upsert_animation(&mut p, 0, 10, true, 500, 0);
+        ensure_animation(&mut p, 1, 0, 5, true, 500, 0);
+        ensure_animation(&mut p, 2, 0, 10, true, 500, 0);
 
-        remove_animation(&mut p, 0, 5);
+        remove_animation(&mut p, 1);
         // A reverted to Fixed; B still animated; only B's sidecar remains.
         let a = p.objects.iter().find(|o| matches!(o, SceneObject::Label(l) if l.text == "A")).unwrap();
         let b = p.objects.iter().find(|o| matches!(o, SceneObject::Label(l) if l.text == "B")).unwrap();
@@ -1644,25 +1687,25 @@ mod tests {
     }
 
     #[test]
-    fn remove_orphan_animation_keeps_a_still_used_sidecar() {
-        // Sidecar over [0,5) with a label still animated over it: not orphaned, so
-        // it stays. Only once the coordinate is reverted does it become removable.
+    fn prune_orphan_animations_keeps_a_still_used_sidecar() {
+        // Sidecar id 1 with a label still referencing it: not orphaned, so it
+        // stays. Only once the coordinate is reverted does it become removable.
         let mut obj = create_default(0, 0);
         if let SceneObject::Label(l) = &mut obj {
-            l.position.x = Coordinate::Animated { from: 2, to: 12, start_frame: 0, end_frame: 4 };
+            l.position.x = Coordinate::Animated { from: 2, to: 12, anim: 1 };
             l.frames = FrameRange { start: 0, end: 5 };
         }
         let mut p = pres(5, vec![obj]);
-        upsert_animation(&mut p, 0, 5, true, 500, 0);
+        ensure_animation(&mut p, 1, 0, 5, true, 500, 0);
 
-        remove_orphan_animation(&mut p, 0, 5);
-        assert_eq!(p.objects.len(), 2, "sidecar kept while motion still references it");
+        prune_orphan_animations(&mut p);
+        assert_eq!(p.objects.len(), 2, "sidecar kept while a coordinate references it");
 
         // Revert the motion, then the sidecar is an orphan and gets removed.
         if let SceneObject::Label(l) = &mut p.objects[0] {
             l.position.x = Coordinate::Fixed(2.0);
         }
-        remove_orphan_animation(&mut p, 0, 5);
+        prune_orphan_animations(&mut p);
         assert_eq!(p.objects.len(), 1, "orphaned sidecar removed");
     }
 
@@ -1673,9 +1716,11 @@ mod tests {
         // (which only adjusts Fixed coords), so a paste can be moved horizontally.
         let mut obj = create_default(0, 0); // Label, all Fixed
         if let SceneObject::Label(l) = &mut obj {
-            l.position.x = Coordinate::Animated { from: 2, to: 12, start_frame: 0, end_frame: 4 };
+            l.position.x = Coordinate::Animated { from: 2, to: 12, anim: 1 };
         }
-        flatten_coordinates(&mut obj, 4);
+        // Animation 1 spans frames 0..=4, so the end-frame value is `to` (12).
+        let anims = AnimSpans::from_pairs([(1, FrameRange { start: 0, end: 5 })]);
+        flatten_coordinates(&mut obj, 4, &anims);
         match &obj {
             SceneObject::Label(l) => match l.position.x {
                 Coordinate::Fixed(v) => assert_eq!(v, 12.0),
@@ -1684,7 +1729,7 @@ mod tests {
             _ => panic!(),
         }
         // No animated coordinate remains.
-        assert_eq!(scene_object_animation_span(&mut obj), None);
+        assert_eq!(scene_object_animation_span(&obj, &anims), None);
     }
 
     #[test]
@@ -1792,51 +1837,54 @@ mod tests {
         assert_eq!(range(&p.objects[2]), (1, 2)); // independent clone on new frame
     }
 
-    // Read an object's `(start_frame, end_frame)` for its first animated coord.
-    fn anim_span(obj: &SceneObject) -> Option<(usize, usize)> {
-        let mut c = obj.clone();
-        scene_object_coordinates_mut(&mut c).into_iter().find_map(|coord| match coord {
-            Coordinate::Animated { start_frame, end_frame, .. } => Some((*start_frame, *end_frame)),
+    // The exclusive `[start, end)` span of the animation driving `obj` (looked up
+    // by the id its first animated coordinate references), if any.
+    fn driving_span(p: &SourcePresentation, obj_idx: usize) -> Option<(usize, usize)> {
+        let id = *referenced_anim_ids(&p.objects[obj_idx]).first()?;
+        p.objects.iter().find_map(|o| match o {
+            SceneObject::Animation(a) if a.id == id => Some((a.frames.start, a.frames.end)),
             _ => None,
         })
     }
 
     #[test]
-    fn delete_animation_end_frame_keeps_coord_and_range_in_lockstep() {
-        // x animates 0→10 over frames 0..=4 (object range [0,5)). Deleting the
-        // animation's *last* frame (4) must shrink the inclusive `end_frame` in
-        // step with the exclusive range end, so the motion still reaches `to` on
-        // its new last frame instead of stopping short (the "jumpy" bug).
+    fn delete_animation_end_frame_keeps_span_and_range_in_lockstep() {
+        // x animates 0→10 over animation 1's span [0,5) (object range [0,5)).
+        // Deleting the animation's *last* frame (4) must shrink the sidecar span
+        // and the object range together, so the motion still reaches `to` on its
+        // new last frame instead of stopping short (the "jumpy" bug).
         let mut o = create_default(0, 0);
         if let SceneObject::Label(l) = &mut o {
-            l.position.x = Coordinate::Animated { from: 0, to: 10, start_frame: 0, end_frame: 4 };
+            l.position.x = Coordinate::Animated { from: 0, to: 10, anim: 1 };
             l.frames = FrameRange { start: 0, end: 5 };
         }
         let mut p = pres(6, vec![o]);
+        ensure_animation(&mut p, 1, 0, 5, true, 500, 0);
         adjust_frames_after_delete(&mut p, 4);
 
         let (_, re) = range(&p.objects[0]);
-        let (sf, ef) = anim_span(&p.objects[0]).unwrap();
-        assert_eq!((sf, ef), (0, 3));
-        assert_eq!(re, ef + 1, "range end stays == end_frame + 1");
+        let (s, e_excl) = driving_span(&p, 0).unwrap();
+        assert_eq!((s, e_excl), (0, 4));
+        assert_eq!(re, e_excl, "object range end stays == the animation's span end");
         // The motion reaches `to` on the last visible frame (no early stop).
+        let anims = AnimSpans::of(&p);
         match &p.objects[0] {
-            SceneObject::Label(l) => assert_eq!(l.position.x.evaluate(re - 1), 10),
+            SceneObject::Label(l) => assert_eq!(l.position.x.evaluate(re - 1, &anims), 10),
             _ => panic!(),
         }
     }
 
     #[test]
     fn delete_frame_range_keeps_multiple_animations_consistent() {
-        // Two animated objects with their auto-play sidecars: A over [0,3]
-        // (range [0,4), sidecar [0,4)), B over [4,7] (range [4,8), sidecar [4,8)).
-        // Delete the contiguous range [2,5] (frames 2,3,4,5) — straddling the end
-        // of A and the start of B. Afterwards every animation's coord span, its
-        // object range, and its sidecar must remain mutually consistent.
-        let mk = |from, to, s, e| {
+        // Two animated objects with their sidecars: A on animation 1 (span [0,4)),
+        // B on animation 2 (span [4,8)). Delete the contiguous range [2,5]
+        // (frames 2,3,4,5) — straddling the end of A and the start of B.
+        // Afterwards every driven object's range must still equal its animation's
+        // (also-shifted) span.
+        let mk = |id: AnimId, from: u16, to: u16, s: usize, e: usize| {
             let mut o = create_default(0, 0);
             if let SceneObject::Label(l) = &mut o {
-                l.position.x = Coordinate::Animated { from, to, start_frame: s, end_frame: e };
+                l.position.x = Coordinate::Animated { from, to, anim: id };
                 l.frames = FrameRange { start: s, end: e + 1 };
             }
             o
@@ -1844,29 +1892,23 @@ mod tests {
         let mut p = pres(
             8,
             vec![
-                mk(0, 9, 0, 3),
-                SceneObject::Animation(Animation { frames: FrameRange { start: 0, end: 4 }, auto_play: true, delay_ms: 500, gap_frames: 0 }),
-                mk(0, 9, 4, 7),
-                SceneObject::Animation(Animation { frames: FrameRange { start: 4, end: 8 }, auto_play: true, delay_ms: 500, gap_frames: 0 }),
+                mk(1, 0, 9, 0, 3),
+                SceneObject::Animation(Animation { id: 1, frames: FrameRange { start: 0, end: 4 }, auto_play: true, delay_ms: 500, gap_frames: 0 }),
+                mk(2, 0, 9, 4, 7),
+                SceneObject::Animation(Animation { id: 2, frames: FrameRange { start: 4, end: 8 }, auto_play: true, delay_ms: 500, gap_frames: 0 }),
             ],
         );
         delete_frames(&mut p, &[2, 3, 4, 5]);
         assert_eq!(p.frame_count, 4);
 
-        // For every surviving animated object: range.end == end_frame + 1 and
-        // range.start == start_frame, and each sidecar matches its coord span.
-        for obj in &p.objects {
-            if let Some((sf, ef)) = anim_span(obj) {
-                let (rs, re) = range(obj);
-                assert_eq!(rs, sf, "range start tracks start_frame");
-                assert_eq!(re, ef + 1, "range end tracks end_frame + 1");
-                assert!(sf <= ef, "span stays well-formed");
-                // The matching sidecar (same [sf, ef+1)) still exists.
-                assert!(
-                    p.objects.iter().any(|o| matches!(o,
-                        SceneObject::Animation(a) if a.frames.start == sf && a.frames.end == ef + 1)),
-                    "a sidecar matches the coord span [{sf},{}]", ef
-                );
+        // For every surviving driven object, its range still equals its
+        // animation's span (the single source of truth, shifted in lock-step).
+        for idx in 0..p.objects.len() {
+            if let Some((s, e_excl)) = driving_span(&p, idx) {
+                let (rs, re) = range(&p.objects[idx]);
+                assert_eq!(rs, s, "range start tracks the span start");
+                assert_eq!(re, e_excl, "range end tracks the span end");
+                assert!(s < e_excl, "span stays well-formed");
             }
         }
     }
@@ -2041,23 +2083,28 @@ mod tests {
     }
 
     #[test]
-    fn animation_span_unions_animated_coordinates_and_makes_end_exclusive() {
-        // x animated over frames 5..=10 → exclusive span [5, 11).
+    fn animation_span_unions_the_referenced_animations() {
+        // x references animation 1 (span [5, 11)).
         let mut obj = create_default(0, 0); // Label, all Fixed
         if let SceneObject::Label(l) = &mut obj {
-            l.position.x = Coordinate::Animated { from: 0, to: 9, start_frame: 5, end_frame: 10 };
+            l.position.x = Coordinate::Animated { from: 0, to: 9, anim: 1 };
         }
-        assert_eq!(scene_object_animation_span(&mut obj), Some((5, 11)));
+        let anims = AnimSpans::from_pairs([(1, FrameRange { start: 5, end: 11 })]);
+        assert_eq!(scene_object_animation_span(&obj, &anims), Some((5, 11)));
 
-        // A second animation starting earlier widens the union's start only.
+        // A second animation (2) starting earlier widens the union's start only.
         if let SceneObject::Label(l) = &mut obj {
-            l.position.y = Coordinate::Animated { from: 0, to: 3, start_frame: 2, end_frame: 8 };
+            l.position.y = Coordinate::Animated { from: 0, to: 3, anim: 2 };
         }
-        assert_eq!(scene_object_animation_span(&mut obj), Some((2, 11)));
+        let anims = AnimSpans::from_pairs([
+            (1, FrameRange { start: 5, end: 11 }),
+            (2, FrameRange { start: 2, end: 9 }),
+        ]);
+        assert_eq!(scene_object_animation_span(&obj, &anims), Some((2, 11)));
 
         // No animated coordinate → no span (range is left untouched on apply).
-        let mut plain = create_default(0, 0);
-        assert_eq!(scene_object_animation_span(&mut plain), None);
+        let plain = create_default(0, 0);
+        assert_eq!(scene_object_animation_span(&plain, &anims), None);
     }
 
     #[test]
@@ -2083,11 +2130,12 @@ mod tests {
     }
 
     #[test]
-    fn upsert_animation_reuses_a_matching_span() {
-        // Animating X then Y over the same span keeps a single Animation entity.
+    fn ensure_animation_updates_the_same_id_in_place() {
+        // Animating X then Y of one object reuses the same id → one Animation,
+        // updated in place (the second call can even change its span).
         let mut p = pres(10, vec![label(0, 10)]);
-        upsert_animation(&mut p, 0, 10, true, 500, 0);
-        upsert_animation(&mut p, 0, 10, false, 200, 0); // same span → update in place
+        ensure_animation(&mut p, 1, 0, 10, true, 500, 0);
+        ensure_animation(&mut p, 1, 0, 8, false, 200, 0); // same id → update in place
         let anims: Vec<_> = p
             .objects
             .iter()
@@ -2099,13 +2147,14 @@ mod tests {
         assert_eq!(anims.len(), 1);
         assert!(!anims[0].auto_play);
         assert_eq!(anims[0].delay_ms, 200);
+        assert_eq!((anims[0].frames.start, anims[0].frames.end), (0, 8));
     }
 
     #[test]
-    fn upsert_animation_appends_a_distinct_span() {
+    fn ensure_animation_appends_a_distinct_id() {
         let mut p = pres(10, vec![label(0, 10)]);
-        upsert_animation(&mut p, 0, 5, true, 500, 0);
-        upsert_animation(&mut p, 3, 9, true, 500, 0); // overlapping but distinct span
+        ensure_animation(&mut p, 1, 0, 5, true, 500, 0);
+        ensure_animation(&mut p, 2, 3, 9, true, 500, 0); // overlapping but distinct id
         let count = p
             .objects
             .iter()

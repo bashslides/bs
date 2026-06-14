@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::types::{DrawOp, Style};
 
 use super::super::source::{FrameRange, Position};
-use super::Resolve;
+use super::{Resolve, ResolveCtx};
 
 /// How a [`Morph`] transitions each cell from the `from` art to the `to` art as
 /// playback progresses. Every mode is a pure function of the cell position and
@@ -136,7 +136,8 @@ fn grid(art: &str) -> Vec<Vec<char>> {
 }
 
 impl Resolve for Morph {
-    fn resolve(&self, frame: usize, _canvas_width: u16, ops: &mut Vec<DrawOp>) {
+    fn resolve(&self, ctx: &ResolveCtx, ops: &mut Vec<DrawOp>) {
+        let frame = ctx.frame;
         if !self.frames.contains(frame) {
             return;
         }
@@ -144,8 +145,8 @@ impl Resolve for Morph {
         let from = grid(&self.from);
         let to = grid(&self.to);
         let rows = from.len().max(to.len());
-        let base_x = self.position.x.evaluate(frame);
-        let base_y = self.position.y.evaluate(frame);
+        let base_x = self.position.x.evaluate(frame, ctx.anims);
+        let base_y = self.position.y.evaluate(frame, ctx.anims);
         let has_bg = self.style.bg.is_some();
 
         for row in 0..rows {
@@ -178,7 +179,15 @@ impl Resolve for Morph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::source::Coordinate;
+    use crate::engine::source::{AnimSpans, Coordinate};
+
+    /// Render a morph at `frame` (no animations needed — positions are Fixed).
+    fn render(m: &Morph, frame: usize) -> Vec<DrawOp> {
+        let anims = AnimSpans::default();
+        let mut ops = Vec::new();
+        m.resolve(&ResolveCtx { frame, canvas_width: 80, anims: &anims }, &mut ops);
+        ops
+    }
 
     fn morph(from: &str, to: &str, start: usize, end: usize, mode: MorphMode) -> Morph {
         Morph {
@@ -209,13 +218,11 @@ mod tests {
     #[test]
     fn first_frame_is_from_last_frame_is_to() {
         let m = morph("AB", "XY", 0, 4, MorphMode::Dissolve);
-        let mut ops = Vec::new();
-        m.resolve(0, 80, &mut ops);
+        let ops = render(&m, 0);
         assert_eq!(char_at(&ops, 0, 0), 'A');
         assert_eq!(char_at(&ops, 1, 0), 'B');
 
-        let mut ops = Vec::new();
-        m.resolve(3, 80, &mut ops); // last frame → progress 1 → fully `to`
+        let ops = render(&m, 3); // last frame → progress 1 → fully `to`
         assert_eq!(char_at(&ops, 0, 0), 'X');
         assert_eq!(char_at(&ops, 1, 0), 'Y');
     }
@@ -225,8 +232,7 @@ mod tests {
         // 4-wide row, mid-progress: leftmost cells have already flipped to `to`,
         // rightmost cells still show `from`.
         let m = morph("AAAA", "BBBB", 0, 11, MorphMode::WipeRight); // span 11
-        let mut ops = Vec::new();
-        m.resolve(5, 80, &mut ops); // t = 0.5
+        let ops = render(&m, 5); // t = 0.5
         // thresholds: col/4 → 0, .25, .5, .75; t=0.5 > 0 and > .25 (flip), not > .5/.75
         assert_eq!(char_at(&ops, 0, 0), 'B');
         assert_eq!(char_at(&ops, 1, 0), 'B');
@@ -238,13 +244,11 @@ mod tests {
     fn out_of_grid_cells_are_transparent_spaces() {
         // `from` is wider/taller than `to`; at progress 0 only the from glyphs show.
         let m = morph("##\n##", "#", 0, 4, MorphMode::Dissolve);
-        let mut ops = Vec::new();
-        m.resolve(0, 80, &mut ops);
+        let ops = render(&m, 0);
         // 2x2 of '#'
         assert_eq!(ops.len(), 4);
         // At full progress the second row / second column become spaces (skipped).
-        let mut ops = Vec::new();
-        m.resolve(3, 80, &mut ops);
+        let ops = render(&m, 3);
         assert_eq!(char_at(&ops, 0, 0), '#');
         assert_eq!(char_at(&ops, 1, 0), ' '); // beyond `to` width → space
         assert_eq!(char_at(&ops, 0, 1), ' '); // beyond `to` height → space
@@ -253,11 +257,8 @@ mod tests {
     #[test]
     fn outside_the_range_emits_nothing() {
         let m = morph("A", "B", 2, 4, MorphMode::Dissolve);
-        let mut ops = Vec::new();
-        m.resolve(0, 80, &mut ops);
-        assert!(ops.is_empty());
-        m.resolve(4, 80, &mut ops);
-        assert!(ops.is_empty());
+        assert!(render(&m, 0).is_empty());
+        assert!(render(&m, 4).is_empty());
     }
 
     #[test]

@@ -3,7 +3,7 @@ use crossterm::terminal;
 
 use crate::engine::objects::table::{table_add_column, table_remove_column};
 use crate::engine::objects::Group;
-use crate::engine::source::{Coordinate, SceneObject, SourcePresentation};
+use crate::engine::source::{AnimId, AnimSpans, Coordinate, SceneObject, SourcePresentation};
 use crate::types::Style;
 use super::config::matches_binding;
 use super::object_defaults;
@@ -231,6 +231,24 @@ fn apply_property(state: &mut EditorState, object_index: usize, name: &str, valu
     match properties::set_property(&mut state.source.objects[object_index], name, value) {
         Ok(()) => {
             state.dirty = true;
+            // Editing an `Animation`'s span (its first/last frame — the single
+            // source of truth) re-locks the visibility range of every object it
+            // drives, so they stay shown across the new span. No coordinate spans
+            // to touch: they reference the animation by id.
+            if name == "first_frame" || name == "last_frame" {
+                let anim_id = match state.source.objects.get(object_index) {
+                    Some(SceneObject::Animation(a)) => Some(a.id),
+                    _ => None,
+                };
+                if let Some(id) = anim_id {
+                    let driven: Vec<usize> = (0..state.source.objects.len())
+                        .filter(|&j| super::state::referenced_anim_ids(&state.source.objects[j]).contains(&id))
+                        .collect();
+                    for j in driven {
+                        lock_range_to_animation(&mut state.source, j);
+                    }
+                }
+            }
             // Linked objects share appearance: a non-placement edit propagates to
             // the family (placement/layering stays per-object). Siblings that lack
             // the property (a mixed-type family) simply ignore it.
@@ -1238,11 +1256,7 @@ fn handle_multi_select(state: &mut EditorState, key: KeyEvent) -> Action {
     // fresh selection (members cleared) so toggled indices can't go stale.
     if purpose == MultiSelectPurpose::Select && matches_binding(&bindings.delete_object, &key) {
         let obj_index = visible[selected];
-        let message = if matches!(state.source.objects[obj_index], SceneObject::Group(_)) {
-            "Ungroup? (members are kept)".to_string()
-        } else {
-            format!("Delete {}?", super::state::scene_object_summary(&state.source.objects[obj_index]))
-        };
+        let message = delete_confirm_message(&state.source, obj_index);
         state.mode = Mode::Confirm {
             message,
             selected: 0,
@@ -1358,6 +1372,30 @@ fn handle_select_action(state: &mut EditorState, key: KeyEvent) -> Action {
     Action::Continue
 }
 
+/// The confirm-dialog message for deleting object `idx`. A `Group` ungroups
+/// (members kept); an `Animation` spells out that the objects it drives will be
+/// frozen (deleting it removes the motion, not just the auto-play sidecar);
+/// everything else is a plain "Delete <summary>?".
+fn delete_confirm_message(source: &SourcePresentation, idx: usize) -> String {
+    match &source.objects[idx] {
+        SceneObject::Group(_) => "Ungroup? (members are kept)".to_string(),
+        SceneObject::Animation(a) => {
+            let count = source
+                .objects
+                .iter()
+                .filter(|o| super::state::referenced_anim_ids(o).contains(&a.id))
+                .count();
+            // Span shown 1-based inclusive, matching the props panel.
+            let (lo, hi) = (a.frames.start + 1, a.frames.end);
+            format!(
+                "Delete animation {lo}-{hi}? The {count} object{} it moves will be frozen.",
+                if count == 1 { "" } else { "s" }
+            )
+        }
+        other => format!("Delete {}?", super::state::scene_object_summary(other)),
+    }
+}
+
 /// Capture the objects at `indices` (expanding any group to include its members)
 /// into the clipboard as self-contained clones, recording their source indices
 /// for a later *linked* paste. Shared by the copy-select flow and the quick
@@ -1395,6 +1433,7 @@ fn start_paste(state: &mut EditorState) -> Action {
 fn spawn_paste(state: &mut EditorState) -> Vec<usize> {
     let base = state.source.objects.len();
     let current = state.current_frame;
+    let anims = AnimSpans::of(&state.source);
     let mut clones = state.clipboard.clone();
     for obj in &mut clones {
         // Re-anchor to the current frame (auto groups keep their derived range).
@@ -1405,7 +1444,7 @@ fn spawn_paste(state: &mut EditorState) -> Vec<usize> {
         // A clone lands on a single frame, so flatten any animated coordinate to
         // a static value (otherwise it's degenerate — and can't be moved with the
         // arrow keys, which only nudge `Fixed` coordinates).
-        super::state::flatten_coordinates(obj, current);
+        super::state::flatten_coordinates(obj, current, &anims);
         // Clipboard-local member index → new absolute index.
         if let SceneObject::Group(g) = obj {
             for m in &mut g.members {
@@ -1563,11 +1602,7 @@ fn handle_selected_object(state: &mut EditorState, key: KeyEvent) -> Action {
 
     // [d]elete
     if matches_binding(&bindings.delete_object, &key) {
-        let message = if matches!(state.source.objects[object_index], SceneObject::Group(_)) {
-            "Ungroup? (members are kept)".to_string()
-        } else {
-            format!("Delete {}?", super::state::scene_object_summary(&state.source.objects[object_index]))
-        };
+        let message = delete_confirm_message(&state.source, object_index);
         state.mode = Mode::Confirm {
             message,
             selected: 0,
@@ -1639,11 +1674,12 @@ fn handle_selected_object(state: &mut EditorState, key: KeyEvent) -> Action {
                 // natural height — otherwise small changes sit below the content
                 // height and look like a no-op.
                 let frame = state.current_frame;
+                let anims = AnimSpans::of(&state.source);
                 match key.code {
                     KeyCode::Right => properties::resize_object(&mut state.source.objects[object_index], 1, 0),
                     KeyCode::Left  => properties::shrink_object(&mut state.source.objects[object_index], 1, 0),
-                    KeyCode::Down  => grow_table_height(&mut state.source.objects[object_index], frame, 1),
-                    KeyCode::Up    => grow_table_height(&mut state.source.objects[object_index], frame, -1),
+                    KeyCode::Down  => grow_table_height(&mut state.source.objects[object_index], frame, &anims, 1),
+                    KeyCode::Up    => grow_table_height(&mut state.source.objects[object_index], frame, &anims, -1),
                     _ => {}
                 }
             } else {
@@ -1704,6 +1740,7 @@ fn handle_resize_object(state: &mut EditorState, key: KeyEvent) -> Action {
     let is_group = matches!(state.source.objects[object_index], SceneObject::Group(_));
     let is_table = matches!(state.source.objects[object_index], SceneObject::Table(_));
     let frame = state.current_frame;
+    let anims = AnimSpans::of(&state.source);
     let objects = &mut state.source.objects;
 
     if is_group {
@@ -1720,8 +1757,8 @@ fn handle_resize_object(state: &mut EditorState, key: KeyEvent) -> Action {
         match key.code {
             KeyCode::Right => properties::resize_object(&mut objects[object_index], 1, 0),
             KeyCode::Left  => properties::shrink_object(&mut objects[object_index], 1, 0),
-            KeyCode::Down  => grow_table_height(&mut objects[object_index], frame, 1),
-            KeyCode::Up    => grow_table_height(&mut objects[object_index], frame, -1),
+            KeyCode::Down  => grow_table_height(&mut objects[object_index], frame, &anims, 1),
+            KeyCode::Up    => grow_table_height(&mut objects[object_index], frame, &anims, -1),
             _ => {}
         }
     } else {
@@ -1741,14 +1778,14 @@ fn handle_resize_object(state: &mut EditorState, key: KeyEvent) -> Action {
 /// seeded from its natural content-fit height so the change is always visible.
 /// Dropping back to (or below) the natural height stores 0, i.e. auto-fit, since
 /// a table is never clipped below its content.
-fn grow_table_height(obj: &mut SceneObject, frame: usize, delta: i32) {
+fn grow_table_height(obj: &mut SceneObject, frame: usize, anims: &AnimSpans, delta: i32) {
     if let SceneObject::Table(t) = obj {
         // Only adjust a fixed height; leave an animated height untouched.
         if !matches!(t.height, Coordinate::Fixed(_)) {
             return;
         }
-        let natural = t.natural_height(frame);
-        let current = t.height.evaluate(frame).max(natural);
+        let natural = t.natural_height(frame, anims);
+        let current = t.height.evaluate(frame, anims).max(natural);
         let new = (current as i32 + delta).max(0) as u16;
         t.height = if new <= natural {
             Coordinate::Fixed(0.0)
@@ -1815,10 +1852,10 @@ fn handle_confirm(state: &mut EditorState, key: KeyEvent) -> Action {
                             // both the auto-play sidecar and the motion it drives
                             // (otherwise the element keeps moving with no sidecar).
                             if let SceneObject::Animation(a) = &state.source.objects[object_index] {
-                                let (start, end_excl) = (a.frames.start, a.frames.end);
-                                super::state::remove_animation(&mut state.source, start, end_excl);
+                                let id = a.id;
+                                super::state::remove_animation(&mut state.source, id);
                                 state.status_message =
-                                    Some("Animation removed (objects reset to fixed)".into());
+                                    Some("Animation removed (objects frozen at their start)".into());
                             } else {
                                 state.source.objects.remove(object_index);
                                 adjust_group_members_after_delete(&mut state.source, object_index);
@@ -2356,44 +2393,40 @@ fn enter_animate(
     state: &EditorState, object_index: usize, return_property: usize, property_name: &'static str,
 ) -> Mode {
     let obj = &state.source.objects[object_index];
-    let read = |name: &str| -> (u16, u16, Option<(usize, usize)>) {
+    let anims = AnimSpans::of(&state.source);
+    // Read a coordinate's (from, to, referenced-animation-id).
+    let read = |name: &str| -> (u16, u16, Option<AnimId>) {
         match properties::get_coord(obj, name) {
             Some(Coordinate::Fixed(v)) => {
                 let n = v.max(0.0).floor() as u16;
                 (n, n, None)
             }
-            Some(Coordinate::Animated { from, to, start_frame, end_frame }) => {
-                (from, to, Some((start_frame, end_frame)))
-            }
+            Some(Coordinate::Animated { from, to, anim }) => (from, to, Some(anim)),
             None => (0, 0, None),
         }
     };
     let two_axis = (property_name == "x" || property_name == "y")
         && properties::get_coord(obj, "x").is_some()
         && properties::get_coord(obj, "y").is_some();
-    let (from, to, from_y, to_y, span) = if two_axis {
-        let (xf, xt, xs) = read("x");
-        let (yf, yt, ys) = read("y");
-        (xf, xt, yf, yt, xs.or(ys))
+    let (from, to, from_y, to_y, anim_id) = if two_axis {
+        let (xf, xt, xa) = read("x");
+        let (yf, yt, ya) = read("y");
+        (xf, xt, yf, yt, xa.or(ya))
     } else {
-        let (f, t, s) = read(property_name);
-        (f, t, 0, 0, s)
+        let (f, t, a) = read(property_name);
+        (f, t, 0, 0, a)
     };
-    let (start_frame, end_frame) =
-        span.unwrap_or((state.current_frame, state.source.frame_count.saturating_sub(1)));
-    let end_excl = end_frame + 1;
-    let (auto_play, delay_ms, gap_frames) = state
-        .source
-        .objects
-        .iter()
-        .find_map(|o| match o {
-            SceneObject::Animation(a)
-                if a.frames.start == start_frame && a.frames.end == end_excl =>
-            {
-                Some((a.auto_play, a.delay_ms, a.gap_frames))
-            }
+    // Span comes from the referenced animation (the single source of truth); the
+    // `end_frame` field is shown 1-based-inclusive, so it's `frames.end - 1`.
+    let (start_frame, end_frame) = anim_id
+        .and_then(|id| anims.span(id))
+        .map(|fr| (fr.start, fr.end.saturating_sub(1)))
+        .unwrap_or((state.current_frame, state.source.frame_count.saturating_sub(1)));
+    let (auto_play, delay_ms, gap_frames) = anim_id
+        .and_then(|id| state.source.objects.iter().find_map(|o| match o {
+            SceneObject::Animation(a) if a.id == id => Some((a.auto_play, a.delay_ms, a.gap_frames)),
             _ => None,
-        })
+        }))
         .unwrap_or((true, 500, 0));
     anim_mode(
         object_index, return_property, property_name, 0, None, 0,
@@ -2508,7 +2541,8 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
         // [x] clear → Fixed coordinate(s). Also removes any gap-strobe copies so
         // clearing doesn't leave the element scattered on its old sample frames.
         KeyCode::Char('x') if key.modifiers == KeyModifiers::NONE => {
-            if let Some((lo, hi)) = super::state::scene_object_animation_span(&mut state.source.objects[object_index]) {
+            let anims = AnimSpans::of(&state.source);
+            if let Some((lo, hi)) = super::state::scene_object_animation_span(&state.source.objects[object_index], &anims) {
                 super::state::clear_gap_clones(&mut state.source, object_index, lo, hi.saturating_sub(1));
             }
             let obj = &mut state.source.objects[object_index];
@@ -2520,10 +2554,9 @@ fn handle_animate_property(state: &mut EditorState, key: KeyEvent) -> Action {
             };
             match res {
                 Ok(()) => {
-                    // If no coordinate is animated over this span any more, drop
-                    // the orphaned (selectable-but-inert) Animation sidecar too.
-                    super::state::remove_orphan_animation(
-                        &mut state.source, start_frame, end_frame + 1);
+                    // Drop any animation no coordinate references any more (the
+                    // one we just cleared, if nothing else still drives it).
+                    super::state::prune_orphan_animations(&mut state.source);
                     state.dirty = true;
                     state.status_message = Some(if two_axis {
                         format!("Fixed position = ({from}, {from_y})")
@@ -2561,50 +2594,57 @@ fn apply_animation(
     let animate = start_frame < end_frame;
     let end_excl = end_frame + 1;
 
-    // "Add frames" gives the animation its own fresh frames (inserting N-1 after
-    // the current one and sharing the current frame's elements across them, so
-    // editing one edits all). Only for a *new* span, though: re-applying over a
-    // span that already exists — animating again, or re-saving an animation —
-    // must not insert frames again, so guard on whether the span already exists.
-    let span_exists = state.source.objects.iter().any(|o| {
-        matches!(o, SceneObject::Animation(a) if a.frames.start == start_frame && a.frames.end == end_excl)
-    });
+    // Reuse the animation this object's coordinate already references, so editing
+    // a span updates the *same* animation (the single source of truth) instead of
+    // spawning a second one. Allocate a fresh id only for a brand-new animation.
+    let existing_id = super::state::referenced_anim_ids(&state.source.objects[object_index])
+        .first()
+        .copied();
+    let id = existing_id.unwrap_or_else(|| super::state::next_anim_id(&state.source));
 
     // Remove any prior gap-strobe copies of this element (matched by its *current*
-    // animated coords, before we change them), so re-applying is idempotent —
-    // no orphan copies left over a previous gap setting.
-    if let Some((lo, hi)) = super::state::scene_object_animation_span(&mut state.source.objects[object_index]) {
+    // animated coords, before we change them), so re-applying is idempotent.
+    let anims_now = AnimSpans::of(&state.source);
+    if let Some((lo, hi)) = super::state::scene_object_animation_span(&state.source.objects[object_index], &anims_now) {
         super::state::clear_gap_clones(&mut state.source, object_index, lo, hi.saturating_sub(1));
     }
 
-    if animate && add_frames && !span_exists {
+    // "Add frames" inserts the span's frames (and shares the current frame's
+    // elements). Only for a *brand-new* animation — re-editing an existing one
+    // must never insert again.
+    if animate && add_frames && existing_id.is_none() {
         super::state::add_frames_and_share(&mut state.source, state.current_frame, start_frame, end_frame);
     }
 
-    // Set the animated coordinate(s) and lock the object's range to its span.
+    // Record/Update the animation (its span + playback config) — the single home
+    // of the span. `gap_frames` is editor metadata, recovered when re-animating.
+    if animate {
+        super::state::ensure_animation(&mut state.source, id, start_frame, end_excl, auto_play, delay_ms, gap_frames);
+    }
+
+    // Set the coordinate(s) to reference the animation (or stay Fixed if static).
     if let Err(e) = set_object_animation(
         &mut state.source, object_index, property_name,
-        from, to, from_y, to_y, two_axis, start_frame, end_frame,
+        from, to, from_y, to_y, two_axis, animate, id,
     ) {
         state.status_message = Some(format!("Error: {e}"));
         return;
     }
     state.dirty = true;
 
-    // Record the animation span + its auto-play config + gap (reusing one that
-    // already covers exactly this span, so X and Y of an object stay one
-    // animation). `gap_frames` is editor metadata, recovered when re-animating.
-    if animate {
-        super::state::upsert_animation(&mut state.source, start_frame, end_excl, auto_play, delay_ms, gap_frames);
-    }
+    // Lock the object's range to the union of the animations driving it.
+    lock_range_to_animation(&mut state.source, object_index);
 
     // Gap-frames: strobe the element so it shows every `gap_frames + 1` frames of
-    // the span (i.e. `gap_frames` empty frames between appearances), whether or
-    // not `add_frames` inserted them. Old copies were cleared above, so this is
-    // idempotent on re-apply.
+    // the span. Old copies were cleared above, so this is idempotent on re-apply.
     if animate && gap_frames > 0 {
         super::state::apply_gap(&mut state.source, object_index, start_frame, end_frame, gap_frames);
     }
+
+    // If no axis actually moved (from == to on all), the coordinates stayed Fixed
+    // and the animation we just ensured drives nothing — drop it so a no-op apply
+    // never leaves an inert animation behind.
+    super::state::prune_orphan_animations(&mut state.source);
 
     // A new animation can collide with a loop (a loop may not bisect an
     // animation); surface that live, the way property edits do.
@@ -2615,22 +2655,32 @@ fn apply_animation(
     });
 }
 
-/// Set the animated coordinate(s) for one object and keep its frame range in
-/// lock-step with its animation window. A coordinate is `Animated` only when the
-/// span is valid *and* the value moves; an unchanged axis (`from == to`) stays
-/// `Fixed`, so a two-axis session can animate just one axis. Does **not** insert
-/// frames, clear gap clones, touch the `Animation` sidecar, or re-strobe — the
-/// caller owns those once-per-apply steps.
+/// Lock an object's visible frame range to the union of the spans of the
+/// animations that drive it (grows for a longer animation, shrinks when one is
+/// shortened — no zombie frames). A no-op if the object has no animated coord.
+fn lock_range_to_animation(source: &mut SourcePresentation, object_index: usize) {
+    let anims = AnimSpans::of(source);
+    if let Some((lo, hi)) = super::state::scene_object_animation_span(&source.objects[object_index], &anims) {
+        if let Some(fr) = super::state::scene_object_frame_range_mut(&mut source.objects[object_index]) {
+            fr.start = lo;
+            fr.end = hi;
+        }
+    }
+}
+
+/// Set the animated coordinate(s) for one object to reference animation `anim`.
+/// A coordinate becomes `Animated` only when `animate` is set *and* the value
+/// moves (`from != to`); an unchanged axis stays `Fixed`, so a two-axis session
+/// can animate just one axis. The span lives on the animation, not here.
 #[allow(clippy::too_many_arguments)]
 fn set_object_animation(
     source: &mut SourcePresentation, object_index: usize, property_name: &str,
     from: u16, to: u16, from_y: u16, to_y: u16, two_axis: bool,
-    start_frame: usize, end_frame: usize,
+    animate: bool, anim: AnimId,
 ) -> anyhow::Result<()> {
-    let animate = start_frame < end_frame;
     let coord = |f: u16, t: u16| {
         if animate && f != t {
-            Coordinate::Animated { from: f, to: t, start_frame, end_frame }
+            Coordinate::Animated { from: f, to: t, anim }
         } else {
             Coordinate::Fixed(f as f64)
         }
@@ -2641,15 +2691,6 @@ fn set_object_animation(
         properties::set_coordinate(obj, "y", coord(from_y, to_y))?;
     } else {
         properties::set_coordinate(obj, property_name, coord(from, to))?;
-    }
-
-    // Keep the object's visible range in lock-step with its animation window(s)
-    // (grows for a longer animation, shrinks when shortened — no zombie frames).
-    if let Some((lo, hi)) = super::state::scene_object_animation_span(&mut source.objects[object_index]) {
-        if let Some(fr) = super::state::scene_object_frame_range_mut(&mut source.objects[object_index]) {
-            fr.start = lo;
-            fr.end = hi;
-        }
     }
     Ok(())
 }
@@ -2687,15 +2728,16 @@ pub(crate) fn converge_field_rows(
 fn enter_converge(state: &EditorState, members: Vec<usize>) -> Mode {
     let start_frame = state.current_frame;
     let end_frame = state.source.frame_count.saturating_sub(1);
+    let anims = AnimSpans::of(&state.source);
     let (mut sx, mut sy, mut nx, mut ny) = (0u32, 0u32, 0u32, 0u32);
     for &idx in &members {
         let obj = &state.source.objects[idx];
         if let Some(c) = properties::get_coord(obj, "x") {
-            sx += c.evaluate(start_frame) as u32;
+            sx += c.evaluate(start_frame, &anims) as u32;
             nx += 1;
         }
         if let Some(c) = properties::get_coord(obj, "y") {
-            sy += c.evaluate(start_frame) as u32;
+            sy += c.evaluate(start_frame, &anims) as u32;
             ny += 1;
         }
     }
@@ -2844,59 +2886,68 @@ fn apply_converge(
         return;
     }
     let end_excl = end_frame + 1;
-    let span_exists = state.source.objects.iter().any(|o| {
-        matches!(o, SceneObject::Animation(a) if a.frames.start == start_frame && a.frames.end == end_excl)
-    });
+    // Evaluate every member's *current* displayed position from the pre-edit
+    // animation table (before we touch anything).
+    let anims = AnimSpans::of(&state.source);
 
-    // Clear each member's prior gap-strobe copies (by its *current* coords)
-    // before we change anything, so re-applying is idempotent.
+    // Clear each member's prior gap-strobe copies (by its current span) so
+    // re-applying is idempotent.
     for &idx in members {
-        if let Some((lo, hi)) = super::state::scene_object_animation_span(&mut state.source.objects[idx]) {
+        if let Some((lo, hi)) = super::state::scene_object_animation_span(&state.source.objects[idx], &anims) {
             super::state::clear_gap_clones(&mut state.source, idx, lo, hi.saturating_sub(1));
         }
     }
 
-    // Insert + share the spanned frames once (a new span only).
-    if add_frames && !span_exists {
+    // Insert + share the spanned frames once (if requested).
+    if add_frames {
         super::state::add_frames_and_share(&mut state.source, state.current_frame, start_frame, end_frame);
     }
 
-    // Each member animates whichever of x/y it has toward the shared target.
+    // One shared animation drives the whole convergence.
+    let id = super::state::next_anim_id(&state.source);
+    super::state::ensure_animation(&mut state.source, id, start_frame, end_excl, auto_play, delay_ms, gap_frames);
+
+    // Each member animates whichever of x/y it has, from where it sits now toward
+    // the shared target, referencing the one shared animation.
     let mut animated: Vec<usize> = Vec::new();
     let mut errors = 0;
     for &idx in members {
         let obj = &state.source.objects[idx];
-        let fx = properties::get_coord(obj, "x").map(|c| c.evaluate(start_frame));
-        let fy = properties::get_coord(obj, "y").map(|c| c.evaluate(start_frame));
+        let fx = properties::get_coord(obj, "x").map(|c| c.evaluate(start_frame, &anims));
+        let fy = properties::get_coord(obj, "y").map(|c| c.evaluate(start_frame, &anims));
         let res = match (fx, fy) {
             (Some(fx), Some(fy)) =>
-                set_object_animation(&mut state.source, idx, "x", fx, to, fy, to_y, true, start_frame, end_frame),
+                set_object_animation(&mut state.source, idx, "x", fx, to, fy, to_y, true, true, id),
             (Some(fx), None) =>
-                set_object_animation(&mut state.source, idx, "x", fx, to, 0, 0, false, start_frame, end_frame),
+                set_object_animation(&mut state.source, idx, "x", fx, to, 0, 0, false, true, id),
             (None, Some(fy)) =>
-                set_object_animation(&mut state.source, idx, "y", fy, to_y, 0, 0, false, start_frame, end_frame),
+                set_object_animation(&mut state.source, idx, "y", fy, to_y, 0, 0, false, true, id),
             (None, None) => continue, // no coordinate to converge (Group/Loop/etc.)
         };
         match res {
-            Ok(()) => animated.push(idx),
+            Ok(()) => {
+                lock_range_to_animation(&mut state.source, idx);
+                animated.push(idx);
+            }
             Err(_) => errors += 1,
         }
     }
-
-    if animated.is_empty() {
-        state.status_message = Some("Nothing to converge (selected objects have no position)".into());
-        return;
-    }
-    state.dirty = true;
-
-    // One shared Animation sidecar for the whole convergence.
-    super::state::upsert_animation(&mut state.source, start_frame, end_excl, auto_play, delay_ms, gap_frames);
 
     if gap_frames > 0 {
         for &idx in &animated {
             super::state::apply_gap(&mut state.source, idx, start_frame, end_frame, gap_frames);
         }
     }
+
+    // Drop the shared animation if nothing actually moved, and any of the members'
+    // previous animations left without a referrer by the convergence.
+    super::state::prune_orphan_animations(&mut state.source);
+
+    if animated.is_empty() {
+        state.status_message = Some("Nothing to converge (selected objects have no position)".into());
+        return;
+    }
+    state.dirty = true;
 
     let n = animated.len();
     let mut msg = format!("Converged {n} object{}", if n == 1 { "" } else { "s" });
@@ -3704,7 +3755,7 @@ mod tests {
         use crate::editor::object_defaults::create_default;
         use crate::editor::properties::{get_coord, set_coordinate};
         use crate::editor::state::scene_object_frame_range_mut;
-        use crate::engine::source::{Coordinate, SceneObject};
+        use crate::engine::source::{AnimId, Coordinate, SceneObject};
 
         let mut state = EditorState::open("/tmp/bs_converge_absent_91.json").unwrap();
         state.source.frame_count = 10;
@@ -3726,27 +3777,87 @@ mod tests {
         // Converge both onto (20, 10) over frames 0..9, no inserted frames.
         apply_converge(&mut state, &[0, 1], 20, 10, 0, 9, false, true, 500, 0);
 
-        // Each object keeps its own `from` but shares the `to` target.
-        let check = |idx: usize, fx: u16, fy: u16| {
+        // Each object keeps its own `from` but shares the `to` target, and both
+        // its axes reference the *same* animation (returned for cross-check).
+        let check = |idx: usize, fx: u16, fy: u16| -> AnimId {
             match (get_coord(&state.source.objects[idx], "x"), get_coord(&state.source.objects[idx], "y")) {
                 (
-                    Some(Coordinate::Animated { from: xf, to: xt, start_frame, end_frame }),
-                    Some(Coordinate::Animated { from: yf, to: yt, .. }),
+                    Some(Coordinate::Animated { from: xf, to: xt, anim: xa }),
+                    Some(Coordinate::Animated { from: yf, to: yt, anim: ya }),
                 ) => {
                     assert_eq!((xf, xt), (fx, 20), "object {idx} x");
                     assert_eq!((yf, yt), (fy, 10), "object {idx} y");
-                    assert_eq!((start_frame, end_frame), (0, 9));
+                    assert_eq!(xa, ya, "object {idx} x and y share one animation");
+                    xa
                 }
                 other => panic!("object {idx} not animated on both axes: {other:?}"),
             }
         };
-        check(0, 2, 3);
-        check(1, 40, 18);
+        let id0 = check(0, 2, 3);
+        let id1 = check(1, 40, 18);
+        assert_eq!(id0, id1, "all members share one converge animation");
 
-        // Exactly one shared Animation sidecar covers the span.
+        // Exactly one shared Animation sidecar, with that id, covers the span.
         let anims: Vec<_> = state.source.objects.iter()
-            .filter_map(|o| match o { SceneObject::Animation(an) => Some((an.frames.start, an.frames.end)), _ => None })
+            .filter_map(|o| match o { SceneObject::Animation(an) => Some((an.id, an.frames.start, an.frames.end)), _ => None })
             .collect();
-        assert_eq!(anims, vec![(0, 10)], "one shared animation over the span");
+        assert_eq!(anims, vec![(id0, 0, 10)], "one shared animation over the span");
+    }
+
+    #[test]
+    fn editing_an_animation_span_updates_one_animation_not_two() {
+        // The reported bug: changing an animation's time range left two selectable
+        // Animation objects (a new one + the orphaned old one). With the span owned
+        // solely by the Animation (referenced by id), re-applying must update the
+        // *same* animation in place — never spawn a second.
+        use crate::editor::object_defaults::create_default;
+        use crate::editor::properties::get_coord;
+        use crate::editor::state::scene_object_frame_range_mut;
+        use crate::engine::source::{Coordinate, SceneObject};
+
+        let mut state = EditorState::open("/tmp/bs_anim_no_dup_absent_3.json").unwrap();
+        state.source.frame_count = 10;
+        state.current_frame = 0;
+        let mut o = create_default(0, 0); // Label
+        if let Some(fr) = scene_object_frame_range_mut(&mut o) {
+            fr.start = 0;
+            fr.end = 10;
+        }
+        state.source.objects = vec![o];
+
+        let anim_count = |s: &EditorState| {
+            s.source.objects.iter().filter(|o| matches!(o, SceneObject::Animation(_))).count()
+        };
+        let anim = |s: &EditorState| {
+            s.source.objects.iter().find_map(|o| match o {
+                SceneObject::Animation(a) => Some(a.clone()),
+                _ => None,
+            }).unwrap()
+        };
+
+        // Animate x 0→9 over frames 0..=4 (single-axis), no inserted frames.
+        apply_animation(&mut state, 0, "x", 0, 9, 0, 0, false, 0, 4, false, true, 500, 0);
+        assert_eq!(anim_count(&state), 1, "one animation created");
+        let id = anim(&state).id;
+        assert_eq!((anim(&state).frames.start, anim(&state).frames.end), (0, 5));
+
+        // Edit the span end to frame 8 (end_frame 8 → exclusive 9). Re-apply.
+        apply_animation(&mut state, 0, "x", 0, 9, 0, 0, false, 0, 8, false, true, 500, 0);
+        assert_eq!(anim_count(&state), 1, "editing the span must not spawn a second animation");
+        let a = anim(&state);
+        assert_eq!(a.id, id, "the same animation is updated in place");
+        assert_eq!((a.frames.start, a.frames.end), (0, 9), "its span widened");
+
+        // The coordinate still references that one animation, and the object's
+        // visible range tracked the new span.
+        match get_coord(&state.source.objects[0], "x") {
+            Some(Coordinate::Animated { anim, .. }) => assert_eq!(anim, id),
+            other => panic!("x should still be animated: {other:?}"),
+        }
+        assert_eq!(
+            scene_object_frame_range_mut(&mut state.source.objects[0]).map(|fr| (fr.start, fr.end)),
+            Some((0, 9)),
+            "object range re-locked to the new span",
+        );
     }
 }
