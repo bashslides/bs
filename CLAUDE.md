@@ -30,6 +30,7 @@ A terminal-native presentation engine written in Rust. Presentations are ASCII a
 cargo run -- compile source.json out.json   # compile source → playable
 cargo run -- edit source.json               # interactive editor
 cargo run -- play out.json                  # play compiled presentation
+cargo run -- migrate source.json            # upgrade an old source file in place (writes source.json.bak)
 ```
 
 ## Architecture
@@ -137,7 +138,8 @@ auto groups (their members shift instead).
 
 | Path | Role |
 |------|------|
-| `src/main.rs` | CLI entry point |
+| `src/main.rs` | CLI entry point (`compile`/`edit`/`play`/`migrate`) |
+| `src/migrate.rs` | One-shot upgrade of old-format source JSON to the current animation model — works on the raw `serde_json::Value` (the current structs can't parse the old shape), assigns `id`s to `animation` objects, rewrites `{"animated":{…,start_frame,end_frame}}` coords to `{from,to,anim}` by span match (synthesizing a sidecar for orphan spans). Idempotent; self-verifies through `SourcePresentation` before writing in place (`<file>.bak` backup) |
 | `src/types.rs` | Shared types: `Color`, `Style`, `Cell`, `DrawOp`, `Frame`, `PlayablePresentation`, `CommandRegion`, `LoopRegion` |
 | `src/engine/source.rs` | `SourcePresentation` (+ `command_regions()`, `loop_regions()`, `animation_regions()`, `validate_loops()`, `link_siblings()`, and a `links` sidecar — editor-only families of object indices for *linked* paste, ignored by the engine), `SceneObject`, `Coordinate` (Fixed / Animated{from,to,anim}), `AnimId` + `AnimSpans` (the id→span table; `Coordinate::evaluate(frame, &AnimSpans)` looks a coordinate's span up there), `FrameRange` |
 | `src/engine/objects/` | Thirteen `SceneObject` types: `Label`, `HLine`, `Rect`, `Header`, `Group`, `Arrow`, `Table`, `Art`, `Command`, `List`, `Loop`, `Morph`, `Animation` — each implements `Resolve`. See the module-doc checklist in `mod.rs` for every site a new type touches. `List` (ordered/unordered) shares `Label`'s text-editing UX and the shared `wrap` helper. `Loop` (like `Group`) draws nothing; its `frames` range is the loop range and it emits a `LoopRegion` sidecar. `Morph` blends two inline ASCII-art grids (`from`→`to`) across its `frames` range — each cell flips to the `to` glyph once playback progress passes that cell's per-cell threshold (`MorphMode`: `dissolve` or four directional wipes). Fully baked into static frames in `resolve`, so the editor preview shows it for free. `Animation` (also draws nothing) **owns** the animation span (its `frames`) — the single source of truth — plus an `id` that driven `Coordinate::Animated { anim }` fields reference; it emits an `AnimationRegion` sidecar and is created by the animate sub-menu, not the Add-Object menu (the only type absent from `OBJECT_TYPES`). Each type implements `Resolve::resolve(&ResolveCtx, ops)` (the `ResolveCtx` carries `frame`, `canvas_width`, and the `&AnimSpans` table) |
@@ -371,8 +373,8 @@ copy/paste `expand_selection` +
 `clone_selection` + `link_siblings` + link-family delete maintenance;
 `editor/input.rs` — `apply_animation`/`apply_converge` id reuse + the
 "editing a span never duplicates the animation" regression). The suite
-totals 209 tests (107 integration
-+ 102 inline); `TESTS.md` is the authoritative per-test list.
+totals 214 tests (107 integration
++ 107 inline); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the

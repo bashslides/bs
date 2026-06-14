@@ -20,6 +20,7 @@ fn main() {
 const COMPILE_USAGE: &str = "bs compile <source.json> <output.json>";
 const PLAY_USAGE: &str = "bs play <presentation.json>";
 const EDIT_USAGE: &str = "bs edit <source.json>";
+const MIGRATE_USAGE: &str = "bs migrate <source.json>   (upgrades the file in place; writes <source.json>.bak)";
 
 fn run() -> Result<()> {
     let mut args = std::env::args().skip(1);
@@ -38,8 +39,12 @@ fn run() -> Result<()> {
             let path = args.next().context(EDIT_USAGE)?;
             edit(&path)
         }
+        Some("migrate") => {
+            let path = args.next().context(MIGRATE_USAGE)?;
+            bs::migrate::migrate_file(&path)
+        }
         _ => bail!(
-            "bs — terminal-native presentation engine\n\nUsage:\n  {COMPILE_USAGE}\n  {PLAY_USAGE}\n  {EDIT_USAGE}"
+            "bs — terminal-native presentation engine\n\nUsage:\n  {COMPILE_USAGE}\n  {PLAY_USAGE}\n  {EDIT_USAGE}\n  {MIGRATE_USAGE}"
         ),
     }
 }

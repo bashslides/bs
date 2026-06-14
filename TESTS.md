@@ -43,6 +43,16 @@ reconstructed character grid (some also assert on cell styles).
 | `empty_presentation_renders_blank_frames` | A presentation with no objects renders blank frames |
 | `object_with_frame_range_outside_the_deck_is_never_drawn` | An object whose frame range never intersects the deck is never drawn |
 
+### Old-format migration — `src/migrate.rs` (inline)
+
+| Test | Verifies |
+|------|----------|
+| `links_a_coord_to_its_existing_animation_by_span` | An old `{…,start_frame,end_frame}` coord is rewritten to `{from,to,anim}` referencing the id of the `animation` whose span matches; old span fields dropped; result parses |
+| `synthesizes_an_animation_for_an_orphan_span` | An animated coord with no matching `animation` gets a synthesized sidecar (correct exclusive span) which it then references |
+| `two_coords_sharing_a_span_share_one_animation` | x and y over the same span resolve to one shared animation id |
+| `already_migrated_is_a_noop` | A current-format file is left byte-identical (`Report::unchanged`) |
+| `synthesized_ids_avoid_existing_ones` | A synthesized animation's id is past the largest existing id (no collision) |
+
 ### Renderer & frame replay — `tests/renderer.rs`
 
 | Test | Verifies |
