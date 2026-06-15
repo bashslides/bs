@@ -14,6 +14,8 @@ pub enum ConfirmAction {
     /// Delete a multi-selected set of frames (0-based indices).
     DeleteFrames { frames: Vec<usize> },
     DeleteObject { object_index: usize },
+    /// Delete a multi-selected set of objects (indices into `source.objects`).
+    DeleteObjects { object_indices: Vec<usize> },
     /// Remove one member from a group (does not delete the underlying object).
     RemoveGroupMember {
         group_index: usize,
@@ -1396,6 +1398,49 @@ pub fn adjust_group_members_after_delete(source: &mut SourcePresentation, remove
     source.links.retain(|fam| fam.len() >= 2);
 }
 
+/// Delete a set of objects (indices into `source.objects`), handling each the
+/// same way single-object delete does: an `Animation` is removed through
+/// [`remove_animation`] (reverting the motion it drives, not just dropping the
+/// sidecar), every other object is removed in place with group/link index
+/// fix-up ([`adjust_group_members_after_delete`]).
+///
+/// Plain objects are removed **highest index first** so the lower indices stay
+/// valid as the array shrinks; animations are then removed **by id**, which is
+/// stable across those shifts (and lets `remove_animation` clean up the motion
+/// and any strobe clones). Returns the number of *selected* objects removed.
+pub fn delete_objects(source: &mut SourcePresentation, indices: &[usize]) -> usize {
+    let mut targets: Vec<usize> = indices.to_vec();
+    targets.sort_unstable();
+    targets.dedup();
+    targets.retain(|&i| i < source.objects.len());
+
+    // Capture animation ids up front: plain removals shift indices, but ids are
+    // stable and `remove_animation` locates its object by id.
+    let anim_ids: Vec<AnimId> = targets
+        .iter()
+        .filter_map(|&i| match &source.objects[i] {
+            SceneObject::Animation(a) => Some(a.id),
+            _ => None,
+        })
+        .collect();
+
+    // Remove the plain (non-animation) objects, highest index first.
+    for &i in targets.iter().rev() {
+        if matches!(source.objects[i], SceneObject::Animation(_)) {
+            continue;
+        }
+        source.objects.remove(i);
+        adjust_group_members_after_delete(source, i);
+    }
+
+    // Then the animations, by id (also reverts the coordinates they drove).
+    for id in anim_ids {
+        remove_animation(source, id);
+    }
+
+    targets.len()
+}
+
 /// Format a millisecond delay as a compact seconds string (e.g. `5000` → `"5s"`,
 /// `1500` → `"1.5s"`). Used for auto-advance summaries and status messages.
 pub fn format_secs(ms: u64) -> String {
@@ -2303,6 +2348,52 @@ mod tests {
         assert!(!set_frame_auto_advance(&mut p, 1, 0));
         assert_eq!(frame_auto_advance_delay(&p, 1), None);
         assert!(!p.objects.iter().any(|o| matches!(o, SceneObject::AutoAdvance(_))));
+    }
+
+    #[test]
+    fn delete_objects_removes_a_set_and_fixes_group_member_indices() {
+        // Objects: 0=A, 1=B, 2=C, 3=group(of A,C). Delete A and C (indices 0,2);
+        // the group survives with its members re-pointed (B is now index 0).
+        let mut a = label(0, 1); set_text(&mut a, "A");
+        let mut b = label(0, 1); set_text(&mut b, "B");
+        let mut c = label(0, 1); set_text(&mut c, "C");
+        let mut p = pres(2, vec![a, b, c, group(vec![0, 2])]);
+
+        let removed = delete_objects(&mut p, &[0, 2]);
+        assert_eq!(removed, 2);
+        // Survivors: B and the (now empty) group.
+        let texts: Vec<String> = p.objects.iter().map(text).filter(|t| !t.is_empty()).collect();
+        assert_eq!(texts, vec!["B"]);
+        // The group dropped both deleted members (neither index points astray).
+        let g = p.objects.iter().find(|o| matches!(o, SceneObject::Group(_))).unwrap();
+        assert!(members_of(g).is_empty());
+    }
+
+    #[test]
+    fn delete_objects_special_cases_an_animation_in_the_set() {
+        // A label whose x animates over [0,5) plus its Animation sidecar, and a
+        // second plain label. Deleting both the animated label and the Animation
+        // removes the sidecar via `remove_animation` (no orphan left behind).
+        let mut anim_label = create_default(0, 0);
+        if let SceneObject::Label(l) = &mut anim_label {
+            l.text = "moving".into();
+            l.position.x = Coordinate::Animated { from: 2, to: 12, anim: 1 };
+            l.frames = FrameRange { start: 0, end: 5 };
+        }
+        let mut plain = label(0, 5); set_text(&mut plain, "plain");
+        // objects: 0=moving (anim), 1=plain, 2=Animation sidecar
+        let mut p = pres(5, vec![anim_label, plain]);
+        ensure_animation(&mut p, 1, 0, 5, true, 500, 0);
+        assert_eq!(p.objects.len(), 3);
+
+        // Delete the animated label (0) and the Animation sidecar (2).
+        let anim_idx = p.objects.iter().position(|o| matches!(o, SceneObject::Animation(_))).unwrap();
+        let removed = delete_objects(&mut p, &[0, anim_idx]);
+        assert_eq!(removed, 2);
+        // Only the plain label survives; no Animation sidecar dangles.
+        assert!(!p.objects.iter().any(|o| matches!(o, SceneObject::Animation(_))));
+        let texts: Vec<String> = p.objects.iter().map(text).filter(|t| !t.is_empty()).collect();
+        assert_eq!(texts, vec!["plain"]);
     }
 
     #[test]

@@ -322,7 +322,7 @@ reconstructed character grid (some also assert on cell styles).
 | `animate_single_axis_layout_has_one_from_to_pair` | A 1-D coordinate (width/height) lists a single `from/to` pair (8 fields) |
 | `gap_strobes_even_without_add_frames` | `apply_animation` with gap > 0 strobes the element onto every `gap+1`th frame even when `add frames` is off (works on existing frames) |
 | `re_applying_a_gapped_animation_does_not_stack_orphan_copies` | Re-applying clears prior strobe copies first (idempotent); gap 0 removes them entirely |
-| `select_action_submenu_offers_copy_and_converge` | The post-multi-select action sub-menu lists exactly Copy then Converge |
+| `select_action_submenu_offers_copy_converge_and_delete` | The post-multi-select action sub-menu lists Copy, Converge, then Delete |
 | `converge_field_rows_omits_the_per_object_from_fields` | The Converge config lists only the shared `x to`/`y to` + span/toggles (8 fields) — no per-object `from` |
 | `converge_animates_each_object_from_its_own_spot_to_the_shared_point` | `apply_converge` animates each member's x/y from its own current position to the shared target; both axes (and all members) reference **one** shared animation id over the span |
 | `editing_an_animation_span_updates_one_animation_not_two` | Re-applying with a changed span updates the *same* `Animation` in place (same id, widened span, object range re-locked) — never spawns a second, the reported orphan-duplicate bug |
@@ -354,6 +354,8 @@ reconstructed character grid (some also assert on cell styles).
 | `parse_frame_selection_handles_lists_ranges_and_mixes` | `1,2,3` / `5-12` / mixes parse to 0-based, sorted, de-duplicated, clamped indices |
 | `parse_frame_selection_rejects_bad_input` | Frame 0, non-numbers, reversed ranges, empty, and all-out-of-range are rejected |
 | `delete_frames_removes_highest_first_and_keeps_one` | Multi-delete removes highest index first and never empties the deck (keeps ≥1) |
+| `delete_objects_removes_a_set_and_fixes_group_member_indices` | Multi-object delete removes the whole set and re-points surviving `Group.members` (no stale indices) |
+| `delete_objects_special_cases_an_animation_in_the_set` | An `Animation` in the delete set is removed via `remove_animation` (motion reverted, no orphan sidecar); plain objects in the set are removed too |
 | `set_frame_auto_advance_adds_replaces_and_removes` | The auto-advance helper adds a single-frame marker, replaces it in place on re-set (no duplicate), and removes it on delay 0 |
 | `auto_advance_marker_shifts_with_frame_insert_and_delete` | A marker's frame range shifts with a blank-frame insert and prunes when its frame is deleted (reuses object range-remapping) |
 | `delete_animation_end_frame_keeps_span_and_range_in_lockstep` | Deleting an animation's last frame shrinks the `Animation` span and the driven object's range together, so the motion still reaches `to` instead of stopping short |

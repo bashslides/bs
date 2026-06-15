@@ -1392,11 +1392,13 @@ fn handle_multi_select(state: &mut EditorState, key: KeyEvent) -> Action {
 enum SelectActionKind {
     Copy,
     Converge,
+    Delete,
 }
 
 const SELECT_ACTIONS: &[(SelectActionKind, &str)] = &[
     (SelectActionKind::Copy, "Copy"),
     (SelectActionKind::Converge, "Converge"),
+    (SelectActionKind::Delete, "Delete"),
 ];
 
 /// The action sub-menu's row labels, in display order — for the panel renderer.
@@ -1405,7 +1407,7 @@ pub(crate) fn select_action_labels() -> Vec<&'static str> {
 }
 
 /// The action sub-menu shown after selecting 2+ objects: pick what to do with
-/// the whole set (copy to clipboard, or converge onto a shared point).
+/// the whole set (copy to clipboard, converge onto a shared point, or delete).
 fn handle_select_action(state: &mut EditorState, key: KeyEvent) -> Action {
     let bindings = state.config.key_bindings.clone();
     let (members, selected) = match &state.mode {
@@ -1436,6 +1438,17 @@ fn handle_select_action(state: &mut EditorState, key: KeyEvent) -> Action {
             SelectActionKind::Converge => {
                 let expanded = super::state::expand_selection(&state.source, &members);
                 state.mode = enter_converge(state, expanded);
+            }
+            SelectActionKind::Delete => {
+                // Confirm first (multi-delete is destructive). "No" returns to
+                // the action sub-menu so the still-valid selection isn't lost.
+                let n = members.len();
+                state.mode = Mode::Confirm {
+                    message: format!("Delete {n} objects?"),
+                    selected: 0,
+                    action: ConfirmAction::DeleteObjects { object_indices: members.clone() },
+                    return_mode: Box::new(Mode::SelectAction { members, selected }),
+                };
             }
         }
         return Action::Redraw;
@@ -1937,6 +1950,17 @@ fn handle_confirm(state: &mut EditorState, key: KeyEvent) -> Action {
                             state.clipboard_sources.clear();
                             state.dirty = true;
                         }
+                        Mode::Normal
+                    }
+                    ConfirmAction::DeleteObjects { object_indices } => {
+                        let removed =
+                            super::state::delete_objects(&mut state.source, &object_indices);
+                        // Object indices shifted; a later linked paste can't trust
+                        // the copied source indices any more.
+                        state.clipboard_sources.clear();
+                        state.dirty = true;
+                        state.status_message =
+                            Some(format!("Deleted {removed} object(s)"));
                         Mode::Normal
                     }
                     ConfirmAction::RemoveGroupMember {
@@ -3802,9 +3826,9 @@ mod tests {
     }
 
     #[test]
-    fn select_action_submenu_offers_copy_and_converge() {
-        // The post-multi-select action sub-menu lists exactly Copy then Converge.
-        assert_eq!(select_action_labels(), vec!["Copy", "Converge"]);
+    fn select_action_submenu_offers_copy_converge_and_delete() {
+        // The post-multi-select action sub-menu lists Copy, Converge, then Delete.
+        assert_eq!(select_action_labels(), vec!["Copy", "Converge", "Delete"]);
     }
 
     #[test]
