@@ -7,11 +7,11 @@ use serde::{Deserialize, Serialize};
 
 // Re-export object types so they remain accessible via `engine::source::*`.
 pub use super::objects::{
-    Animation, Arrow, Art, Command, Group, HLine, Header, Label, List, Loop, Morph, MorphMode,
-    Rect, Table, TextAlign, VerticalAlign,
+    Animation, Arrow, Art, AutoAdvance, Command, Group, HLine, Header, Label, List, Loop, Morph,
+    MorphMode, Rect, Table, TextAlign, VerticalAlign,
 };
 
-use crate::types::{AnimationRegion, CommandRegion, LoopRegion};
+use crate::types::{AnimationRegion, AutoAdvanceRegion, CommandRegion, LoopRegion};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourcePresentation {
@@ -43,6 +43,7 @@ pub enum SceneObject {
     Loop(Loop),
     Morph(Morph),
     Animation(Animation),
+    AutoAdvance(AutoAdvance),
 }
 
 impl SceneObject {
@@ -64,6 +65,7 @@ impl SceneObject {
             SceneObject::Loop(l) => Some(l.frames.clone()),
             SceneObject::Morph(m) => Some(m.frames.clone()),
             SceneObject::Animation(a) => Some(a.frames.clone()),
+            SceneObject::AutoAdvance(a) => Some(a.frames.clone()),
         }
     }
 
@@ -84,6 +86,7 @@ impl SceneObject {
             SceneObject::Loop(l) => l.frames = r,
             SceneObject::Morph(m) => m.frames = r,
             SceneObject::Animation(a) => a.frames = r,
+            SceneObject::AutoAdvance(a) => a.frames = r,
         }
     }
 }
@@ -190,6 +193,20 @@ impl SourcePresentation {
             .iter()
             .filter_map(|obj| match obj {
                 SceneObject::Animation(a) => Some(a.region()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Collect the runtime auto-advance specs from all `AutoAdvance` objects.
+    /// Like loops and animations, these travel as a sidecar on the
+    /// `PlayablePresentation` — auto-advance is a play-time navigation behavior
+    /// that draws nothing into the static frames.
+    pub fn auto_advance_regions(&self) -> Vec<AutoAdvanceRegion> {
+        self.objects
+            .iter()
+            .filter_map(|obj| match obj {
+                SceneObject::AutoAdvance(a) => Some(a.region()),
                 _ => None,
             })
             .collect()

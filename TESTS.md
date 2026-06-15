@@ -195,6 +195,14 @@ reconstructed character grid (some also assert on cell styles).
 | `a_loop_cutting_an_animation_in_half_is_rejected` | A loop that partially overlaps an animation is rejected |
 | `a_loop_starting_inside_an_animation_is_rejected` | A loop starting mid-animation (partial overlap) is rejected |
 
+### Auto-advance object — `tests/autoadvance.rs`
+
+| Test | Verifies |
+|------|----------|
+| `auto_advance_regions_collects_specs_with_default_delay` | An `auto_advance` compiles to an `AutoAdvanceRegion`; omitted `delay_ms` defaults to 5000 (5 s) |
+| `auto_advance_regions_carries_an_explicit_delay_and_range` | Explicit `delay_ms` and frame range pass through to the region |
+| `auto_advance_draws_nothing_into_the_frames` | The marker renders nothing into the static frames (only the label is painted) |
+
 ### Morph object — `tests/morph.rs`
 
 | Test | Verifies |
@@ -258,6 +266,15 @@ reconstructed character grid (some also assert on cell styles).
 | `animation_cluster_keeps_disjoint_and_touching_animations_separate` | Spans that only touch at a boundary (share no frame) stay separate clusters |
 | `animation_cluster_ignores_non_auto_play_animations` | A non-auto-play animation forms no skip cluster |
 | `animation_cluster_skip_target_clamps_to_the_last_frame` | `→` skip target `hi.min(last)` lands on the last frame when the animation ends there; `←` target is the slide before the earliest start |
+
+### Per-frame auto-advance stepping — `src/player/mod.rs`
+
+| Test | Verifies |
+|------|----------|
+| `frame_auto_advance_delay_covers_its_range_but_not_the_last_frame` | A marker drives every frame in `[start, end)`; the exclusive end is not covered |
+| `frame_auto_advance_delay_is_suppressed_on_the_final_frame` | A deck-spanning marker never auto-advances the last frame (nowhere to go) |
+| `frame_auto_advance_delay_takes_the_minimum_over_overlapping_markers` | Where markers overlap, the per-frame delay is the minimum of theirs |
+| `effective_auto_delay_combines_animation_and_per_frame_markers` | The effective delay is the min of the auto-play animation boundary delay and the per-frame marker |
 
 ### Word-wrap — `src/engine/objects/wrap.rs`
 
@@ -337,6 +354,8 @@ reconstructed character grid (some also assert on cell styles).
 | `parse_frame_selection_handles_lists_ranges_and_mixes` | `1,2,3` / `5-12` / mixes parse to 0-based, sorted, de-duplicated, clamped indices |
 | `parse_frame_selection_rejects_bad_input` | Frame 0, non-numbers, reversed ranges, empty, and all-out-of-range are rejected |
 | `delete_frames_removes_highest_first_and_keeps_one` | Multi-delete removes highest index first and never empties the deck (keeps ≥1) |
+| `set_frame_auto_advance_adds_replaces_and_removes` | The auto-advance helper adds a single-frame marker, replaces it in place on re-set (no duplicate), and removes it on delay 0 |
+| `auto_advance_marker_shifts_with_frame_insert_and_delete` | A marker's frame range shifts with a blank-frame insert and prunes when its frame is deleted (reuses object range-remapping) |
 | `delete_animation_end_frame_keeps_span_and_range_in_lockstep` | Deleting an animation's last frame shrinks the `Animation` span and the driven object's range together, so the motion still reaches `to` instead of stopping short |
 | `delete_frame_range_keeps_multiple_animations_consistent` | Deleting a range straddling several animations leaves each driven object's range equal to its (also-shifted) `Animation` span |
 | `save_as_writes_the_file_and_adopts_the_path` | `save_as` writes valid JSON to the new path, adopts it as `file_path`, and clears `dirty` |

@@ -71,6 +71,12 @@ pub fn render_timeline(
             *cursor,
             "(e.g. 1,2,3 or 5-12 · Enter: select · Esc: cancel)".to_string(),
         )),
+        Mode::FrameAutoInput { buf, cursor } => Some((
+            "Auto-advance after (s): ",
+            buf.clone(),
+            *cursor,
+            "(0 = off · Enter: set · Esc: cancel)".to_string(),
+        )),
         _ => None,
     };
     if let Some((prefix, buf, cursor, instructions)) = input_field {
@@ -112,6 +118,7 @@ pub fn render_timeline(
         Mode::FrameMenu => "FRAME",
         Mode::FrameJump { .. } => "JUMP",
         Mode::FrameSelectInput { .. } => "SELECT FRAMES",
+        Mode::FrameAutoInput { .. } => "AUTO-ADVANCE",
         Mode::FrameSelected { .. } => "FRAMES SELECTED",
         Mode::FrameRangePlace { copy: false, .. } => "MOVE RANGE",
         Mode::FrameRangePlace { copy: true, .. } => "COPY RANGE",

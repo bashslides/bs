@@ -38,10 +38,16 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[o]verlay onto",
             "[j]ump",
             "[s]elect",
+            "[t] auto-advance",
             "[d]elete",
             "[m]ove",
             "[Esc] back",
             "[F]ull",
+        ],
+        Mode::FrameAutoInput { .. } => vec![
+            "[type] seconds",
+            "[Enter] set",
+            "[Esc] cancel",
         ],
         Mode::FrameJump { .. } => vec![
             "[type] frame #",

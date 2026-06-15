@@ -79,6 +79,10 @@ pub struct KeyBindings {
     /// Within the frame sub-menu: select multiple frames (list/range).
     #[serde(default = "default_frame_select")]
     pub frame_select: String,
+    /// Within the frame sub-menu: set the current frame to auto-advance after a
+    /// delay (the auto-advance / auto-transition action).
+    #[serde(default = "default_frame_auto")]
+    pub frame_auto: String,
     /// While placing a moved frame: drop it *before* the shown frame
     /// (Enter drops it after).
     #[serde(default = "default_frame_move_before")]
@@ -108,6 +112,7 @@ fn default_frame_move() -> String { "m".into() }
 fn default_frame_overlay() -> String { "o".into() }
 fn default_frame_jump() -> String { "j".into() }
 fn default_frame_select() -> String { "s".into() }
+fn default_frame_auto() -> String { "t".into() }
 fn default_frame_move_before() -> String { "b".into() }
 
 impl Default for EditorConfig {
@@ -148,6 +153,7 @@ impl Default for EditorConfig {
                 frame_overlay: default_frame_overlay(),
                 frame_jump: default_frame_jump(),
                 frame_select: default_frame_select(),
+                frame_auto: default_frame_auto(),
                 frame_move_before: default_frame_move_before(),
             },
         }

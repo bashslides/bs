@@ -32,6 +32,7 @@
 pub mod font;
 mod animation;
 mod arrow;
+mod autoadvance;
 mod art;
 mod command;
 mod group;
@@ -47,6 +48,7 @@ mod wrap;
 
 pub use animation::Animation;
 pub use arrow::Arrow;
+pub use autoadvance::AutoAdvance;
 pub use art::Art;
 pub use command::Command;
 pub use group::Group;
@@ -97,6 +99,7 @@ impl Resolve for SceneObject {
             SceneObject::Loop(o) => o.resolve(ctx, ops),
             SceneObject::Morph(o) => o.resolve(ctx, ops),
             SceneObject::Animation(o) => o.resolve(ctx, ops),
+            SceneObject::AutoAdvance(o) => o.resolve(ctx, ops),
         }
     }
 }

@@ -377,14 +377,45 @@ impl Player {
         Some((lo, hi))
     }
 
+    /// The per-frame auto-advance delay for `frame`: the **minimum** `delay_ms`
+    /// over every `AutoAdvanceRegion` covering it, provided a next frame exists to
+    /// advance to (the last frame never auto-advances). `None` when no region
+    /// covers the frame.
+    fn frame_auto_advance_delay(&self, frame: usize) -> Option<u64> {
+        if frame + 1 >= self.presentation.frames.len() {
+            return None;
+        }
+        self.presentation
+            .auto_advances
+            .iter()
+            .filter(|a| a.start_frame <= frame && frame < a.end_frame)
+            .map(|a| a.delay_ms)
+            .min()
+    }
+
+    /// The effective auto-advance delay leaving `frame` forward, combining the
+    /// auto-play **animation** boundary delay and the per-frame **auto-advance**
+    /// marker — whichever is smaller. `None` when neither applies (wait for a
+    /// keypress).
+    fn effective_auto_delay(&self, frame: usize) -> Option<u64> {
+        [
+            self.auto_advance_delay(frame, true),
+            self.frame_auto_advance_delay(frame),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+    }
+
     /// (Re)arm the non-loop auto-advance timer for the current frame. A loop, if
-    /// active, drives advancement itself, so the animation timer stays disarmed
-    /// while one is running.
+    /// active, drives advancement itself, so the timer stays disarmed while one
+    /// is running. Both auto-play animations and per-frame auto-advance markers
+    /// feed the deadline (see `effective_auto_delay`).
     fn schedule_auto(&mut self) {
         self.auto_deadline = if self.loop_play.is_some() {
             None
         } else {
-            self.auto_advance_delay(self.current_frame, true)
+            self.effective_auto_delay(self.current_frame)
                 .map(|d| Instant::now() + Duration::from_millis(d.max(1)))
         };
     }
@@ -1028,7 +1059,7 @@ pub fn to_ct_color(c: &Color) -> style::Color {
 mod tests {
     use super::{loop_next, Player};
     use crate::types::{
-        AnimationRegion, Cell, Frame, PlayablePresentation, TerminalContract,
+        AnimationRegion, AutoAdvanceRegion, Cell, Frame, PlayablePresentation, TerminalContract,
     };
 
     /// A player over `frames` blank frames carrying the given animation regions.
@@ -1040,8 +1071,71 @@ mod tests {
             commands: Vec::new(),
             loops: Vec::new(),
             animations,
+            auto_advances: Vec::new(),
         };
         Player::new(pres)
+    }
+
+    /// A player over `frames` blank frames carrying the given auto-advance regions.
+    fn player_with_auto(frames: usize, auto_advances: Vec<AutoAdvanceRegion>) -> Player {
+        let pres = PlayablePresentation {
+            contract: TerminalContract { width: 1, height: 1 },
+            frames: (0..frames).map(|_| Frame::Full { cells: vec![vec![Cell::default()]] }).collect(),
+            markers: Vec::new(),
+            commands: Vec::new(),
+            loops: Vec::new(),
+            animations: Vec::new(),
+            auto_advances,
+        };
+        Player::new(pres)
+    }
+
+    fn aa(start: usize, end: usize, delay: u64) -> AutoAdvanceRegion {
+        AutoAdvanceRegion { start_frame: start, end_frame: end, delay_ms: delay }
+    }
+
+    #[test]
+    fn frame_auto_advance_delay_covers_its_range_but_not_the_last_frame() {
+        // Region [1,3): frames 1 and 2 carry it. The last frame (frame 4 of
+        // 0..=4) never auto-advances — there is nowhere to go.
+        let p = player_with_auto(5, vec![aa(1, 3, 2000)]);
+        assert_eq!(p.frame_auto_advance_delay(0), None); // before the range
+        assert_eq!(p.frame_auto_advance_delay(1), Some(2000));
+        assert_eq!(p.frame_auto_advance_delay(2), Some(2000));
+        assert_eq!(p.frame_auto_advance_delay(3), None); // exclusive end
+    }
+
+    #[test]
+    fn frame_auto_advance_delay_is_suppressed_on_the_final_frame() {
+        // A marker spanning the whole deck still does nothing on the last frame.
+        let p = player_with_auto(3, vec![aa(0, 3, 1000)]);
+        assert_eq!(p.frame_auto_advance_delay(2), None); // last frame, no next
+        assert_eq!(p.frame_auto_advance_delay(1), Some(1000));
+    }
+
+    #[test]
+    fn frame_auto_advance_delay_takes_the_minimum_over_overlapping_markers() {
+        let p = player_with_auto(6, vec![aa(0, 4, 5000), aa(2, 5, 1500)]);
+        assert_eq!(p.frame_auto_advance_delay(1), Some(5000)); // only the first
+        assert_eq!(p.frame_auto_advance_delay(3), Some(1500)); // both → min
+    }
+
+    #[test]
+    fn effective_auto_delay_combines_animation_and_per_frame_markers() {
+        // Frame 1: a 5s per-frame marker and a 3s auto-play animation both cover
+        // the forward boundary; the faster one wins.
+        let pres = PlayablePresentation {
+            contract: TerminalContract { width: 1, height: 1 },
+            frames: (0..5).map(|_| Frame::Full { cells: vec![vec![Cell::default()]] }).collect(),
+            markers: Vec::new(),
+            commands: Vec::new(),
+            loops: Vec::new(),
+            animations: vec![anim(0, 3, 3000)],
+            auto_advances: vec![aa(0, 4, 5000)],
+        };
+        let p = Player::new(pres);
+        assert_eq!(p.effective_auto_delay(1), Some(3000)); // min(5000, 3000)
+        assert_eq!(p.effective_auto_delay(3), Some(5000)); // animation ended; marker only
     }
 
     fn anim(start: usize, end: usize, delay: u64) -> AnimationRegion {

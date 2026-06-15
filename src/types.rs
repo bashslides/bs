@@ -199,6 +199,27 @@ pub struct AnimationRegion {
     pub delay_ms: u64,
 }
 
+/// A runtime auto-advance region — the sidecar spec for an `AutoAdvance` object.
+///
+/// Like a `Loop`, an auto-advance is a play-time behavior that cannot be baked
+/// into static frames: it draws nothing and instead tells the `Player` to
+/// advance to the next frame on its own, after `delay_ms`, for every frame in
+/// `[start_frame, end_frame)` (end exclusive). The presenter can still navigate
+/// manually at any time; the player suppresses auto-advance on the last frame
+/// and while a `Loop` is driving playback. Where an auto-play `Animation` also
+/// covers a frame, the effective delay is the **minimum** of the two. The
+/// compiler emits this spec alongside the frames; the editor and renderer
+/// ignore it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AutoAdvanceRegion {
+    /// First frame that auto-advances (inclusive).
+    pub start_frame: usize,
+    /// One past the last frame that auto-advances (exclusive).
+    pub end_frame: usize,
+    /// Delay before advancing to the next frame, in milliseconds.
+    pub delay_ms: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayablePresentation {
     pub contract: TerminalContract,
@@ -211,6 +232,8 @@ pub struct PlayablePresentation {
     pub loops: Vec<LoopRegion>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub animations: Vec<AnimationRegion>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub auto_advances: Vec<AutoAdvanceRegion>,
 }
 
 impl PlayablePresentation {

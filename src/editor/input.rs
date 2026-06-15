@@ -11,8 +11,8 @@ use super::properties;
 use super::textedit::{TextAction, TextEdit};
 use super::state::{
     adjust_frames_after_delete, adjust_group_members_after_delete, copy_frame,
-    insert_blank_frame, move_frame, overlay_frame, ArtPick, ConfirmAction, EditorState, Mode,
-    MultiSelectPurpose, TableCellSubState,
+    frame_auto_advance_delay, insert_blank_frame, move_frame, overlay_frame, ArtPick,
+    ConfirmAction, EditorState, Mode, MultiSelectPurpose, TableCellSubState,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,7 +37,8 @@ fn mode_accepts_text(mode: &Mode) -> bool {
         | Mode::LoadArtFile { .. }
         | Mode::SaveAs { .. }
         | Mode::FrameJump { .. }
-        | Mode::FrameSelectInput { .. } => true,
+        | Mode::FrameSelectInput { .. }
+        | Mode::FrameAutoInput { .. } => true,
         Mode::TableEditCellProps { sub_state, .. } => match sub_state {
             TableCellSubState::EditingContent { .. } => true,
             TableCellSubState::EditingStyle { editing_value, .. } => editing_value.is_some(),
@@ -79,6 +80,7 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
         Mode::FrameMenu => handle_frame_menu(state, key),
         Mode::FrameJump { .. } => handle_frame_jump(state, key),
         Mode::FrameSelectInput { .. } => handle_frame_select_input(state, key),
+        Mode::FrameAutoInput { .. } => handle_frame_auto_input(state, key),
         Mode::FrameSelected { .. } => handle_frame_selected(state, key),
         Mode::FrameRangePlace { .. } => handle_frame_range_place(state, key),
         Mode::FrameMove { .. } => handle_frame_move(state, key),
@@ -694,6 +696,17 @@ fn handle_frame_menu(state: &mut EditorState, key: KeyEvent) -> Action {
         state.status_message = Some("Select frames: e.g. 1, 2, 3 or 5-12".into());
         return Action::Redraw;
     }
+    if matches_binding(&bindings.frame_auto, &key) {
+        // Seed the input with the existing delay (in seconds) if this frame
+        // already auto-advances, else the 5s default.
+        let buf = frame_auto_advance_delay(&state.source, state.current_frame)
+            .map(secs_string)
+            .unwrap_or_else(|| "5".into());
+        let cursor = buf.chars().count();
+        state.mode = Mode::FrameAutoInput { buf, cursor };
+        state.status_message = None;
+        return Action::Redraw;
+    }
 
     Action::Continue
 }
@@ -803,6 +816,65 @@ fn handle_frame_select_input(state: &mut EditorState, key: KeyEvent) -> Action {
         // frame-bar preview) reflect the current input.
         state.status_message = None;
         state.mode = Mode::FrameSelectInput { buf, cursor };
+        return Action::Redraw;
+    }
+    Action::Continue
+}
+
+/// Format a millisecond delay as the seconds value to seed the auto-advance
+/// input with (`5000` → `"5"`, `1500` → `"1.5"`) — no trailing `s` unit here so
+/// it edits cleanly as a number.
+fn secs_string(ms: u64) -> String {
+    format!("{}", ms as f64 / 1000.0)
+}
+
+/// Typing the auto-advance delay (in seconds) for the current frame. Enter sets
+/// it (a value of `0` or an empty field turns auto-advance off); Esc returns to
+/// the frame menu.
+fn handle_frame_auto_input(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+    let (mut buf, mut cursor) = match &state.mode {
+        Mode::FrameAutoInput { buf, cursor } => (buf.clone(), *cursor),
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::FrameMenu;
+        state.status_message = None;
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.confirm, &key) {
+        let trimmed = buf.trim();
+        let secs: f64 = if trimmed.is_empty() {
+            0.0
+        } else {
+            match trimmed.parse::<f64>() {
+                Ok(v) if v >= 0.0 => v,
+                _ => {
+                    state.status_message = Some("⚠ enter a delay in seconds (0 = off)".into());
+                    return Action::Redraw;
+                }
+            }
+        };
+        let ms = (secs * 1000.0).round() as u64;
+        let frame = state.current_frame;
+        let on = super::state::set_frame_auto_advance(&mut state.source, frame, ms);
+        state.dirty = true;
+        state.status_message = Some(if on {
+            format!(
+                "Frame {} auto-advances after {}",
+                frame + 1,
+                super::state::format_secs(ms)
+            )
+        } else {
+            format!("Frame {} auto-advance off", frame + 1)
+        });
+        state.mode = Mode::Normal;
+        return Action::Redraw;
+    }
+    if frame_text_key(&key, &mut buf, &mut cursor) {
+        state.status_message = None;
+        state.mode = Mode::FrameAutoInput { buf, cursor };
         return Action::Redraw;
     }
     Action::Continue

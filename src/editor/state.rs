@@ -2,7 +2,8 @@ use anyhow::{Context, Result};
 
 use crate::art_library::ArtItem;
 use crate::engine::source::{
-    AnimId, AnimSpans, Animation, Coordinate, FrameRange, SceneObject, SourcePresentation,
+    AnimId, AnimSpans, Animation, AutoAdvance, Coordinate, FrameRange, SceneObject,
+    SourcePresentation,
 };
 
 use super::config::EditorConfig;
@@ -274,6 +275,12 @@ pub enum Mode {
         buf: String,
         cursor: usize,
     },
+    /// Typing the auto-advance delay (in seconds) for the current frame. Enter
+    /// sets it (`0`/empty turns auto-advance off); Esc returns to the frame menu.
+    FrameAutoInput {
+        buf: String,
+        cursor: usize,
+    },
     /// A set of frames has been selected (0-based indices); `d` deletes them,
     /// and (for a contiguous range) `m` moves or `c` copies them as a block.
     FrameSelected {
@@ -425,6 +432,7 @@ pub fn scene_object_frame_range(obj: &SceneObject) -> Option<&FrameRange> {
         SceneObject::Loop(l) => Some(&l.frames),
         SceneObject::Morph(m) => Some(&m.frames),
         SceneObject::Animation(a) => Some(&a.frames),
+        SceneObject::AutoAdvance(a) => Some(&a.frames),
     }
 }
 
@@ -445,6 +453,7 @@ pub fn scene_object_frame_range_mut(obj: &mut SceneObject) -> Option<&mut FrameR
         SceneObject::Loop(l) => Some(&mut l.frames),
         SceneObject::Morph(m) => Some(&mut m.frames),
         SceneObject::Animation(a) => Some(&mut a.frames),
+        SceneObject::AutoAdvance(a) => Some(&mut a.frames),
     }
 }
 
@@ -463,6 +472,7 @@ pub fn scene_object_type_name(obj: &SceneObject) -> &'static str {
         SceneObject::Loop(_) => "Loop",
         SceneObject::Morph(_) => "Morph",
         SceneObject::Animation(_) => "Animation",
+        SceneObject::AutoAdvance(_) => "AutoAdvance",
     }
 }
 
@@ -513,6 +523,9 @@ fn scene_object_coordinates_mut(obj: &mut SceneObject) -> Vec<&mut Coordinate> {
         // An animation span has no coordinates (it draws nothing); its frame
         // range still shifts via `scene_object_frame_range_mut`.
         SceneObject::Animation(_) => vec![],
+        // Auto-advance has no coordinates (it draws nothing); its frame range
+        // still shifts via `scene_object_frame_range_mut`.
+        SceneObject::AutoAdvance(_) => vec![],
     }
 }
 
@@ -1383,6 +1396,51 @@ pub fn adjust_group_members_after_delete(source: &mut SourcePresentation, remove
     source.links.retain(|fam| fam.len() >= 2);
 }
 
+/// Format a millisecond delay as a compact seconds string (e.g. `5000` → `"5s"`,
+/// `1500` → `"1.5s"`). Used for auto-advance summaries and status messages.
+pub fn format_secs(ms: u64) -> String {
+    let s = ms as f64 / 1000.0;
+    format!("{s}s")
+}
+
+/// The auto-advance delay (ms) configured on `frame`, if any single-frame
+/// `AutoAdvance` marker covers it. Used to seed the frame sub-action's input.
+pub fn frame_auto_advance_delay(source: &SourcePresentation, frame: usize) -> Option<u64> {
+    source.objects.iter().find_map(|o| match o {
+        SceneObject::AutoAdvance(a) if a.frames.start <= frame && frame < a.frames.end => {
+            Some(a.delay_ms)
+        }
+        _ => None,
+    })
+}
+
+/// Set (or replace) the single-frame auto-advance marker on `frame`. Any
+/// existing single-frame marker on the frame is removed first; a `delay_ms` of
+/// `0` just removes it (toggle off). Returns `true` if a marker is now present.
+///
+/// Removal goes through the same index fix-up as object deletion so a stray
+/// group/link reference can never end up pointing at the wrong object.
+pub fn set_frame_auto_advance(
+    source: &mut SourcePresentation,
+    frame: usize,
+    delay_ms: u64,
+) -> bool {
+    if let Some(i) = source.objects.iter().position(|o| {
+        matches!(o, SceneObject::AutoAdvance(a) if a.frames.start == frame && a.frames.end == frame + 1)
+    }) {
+        source.objects.remove(i);
+        adjust_group_members_after_delete(source, i);
+    }
+    if delay_ms == 0 {
+        return false;
+    }
+    source.objects.push(SceneObject::AutoAdvance(AutoAdvance {
+        frames: FrameRange { start: frame, end: frame + 1 },
+        delay_ms,
+    }));
+    true
+}
+
 pub fn scene_object_summary(obj: &SceneObject) -> String {
     match obj {
         SceneObject::Label(l) => {
@@ -1425,6 +1483,11 @@ pub fn scene_object_summary(obj: &SceneObject) -> String {
             let hi = a.frames.end; // exclusive end == 1-based inclusive last
             let play = if a.auto_play { format!("auto {}ms", a.delay_ms) } else { "manual".into() };
             format!("Animation: {lo}-{hi} ({play})")
+        }
+        SceneObject::AutoAdvance(a) => {
+            let lo = a.frames.start + 1;
+            let hi = a.frames.end; // exclusive end == 1-based inclusive last
+            format!("Auto-advance: {lo}-{hi} ({})", format_secs(a.delay_ms))
         }
     }
 }
@@ -2221,5 +2284,39 @@ mod tests {
         let removed = delete_frames(&mut q, &[0, 1, 2]);
         assert_eq!(removed, 2);
         assert_eq!(q.frame_count, 1);
+    }
+
+    #[test]
+    fn set_frame_auto_advance_adds_replaces_and_removes() {
+        let mut p = pres(3, vec![]);
+        // Add on frame 1.
+        assert!(set_frame_auto_advance(&mut p, 1, 5000));
+        assert_eq!(frame_auto_advance_delay(&p, 1), Some(5000));
+        assert_eq!(p.objects.iter().filter(|o| matches!(o, SceneObject::AutoAdvance(_))).count(), 1);
+
+        // Re-setting the same frame replaces (no duplicate stacks up).
+        assert!(set_frame_auto_advance(&mut p, 1, 2000));
+        assert_eq!(frame_auto_advance_delay(&p, 1), Some(2000));
+        assert_eq!(p.objects.iter().filter(|o| matches!(o, SceneObject::AutoAdvance(_))).count(), 1);
+
+        // delay 0 turns it off (removes the marker).
+        assert!(!set_frame_auto_advance(&mut p, 1, 0));
+        assert_eq!(frame_auto_advance_delay(&p, 1), None);
+        assert!(!p.objects.iter().any(|o| matches!(o, SceneObject::AutoAdvance(_))));
+    }
+
+    #[test]
+    fn auto_advance_marker_shifts_with_frame_insert_and_delete() {
+        let mut p = pres(3, vec![]);
+        set_frame_auto_advance(&mut p, 1, 5000); // marker on frame 1 ([1,2))
+
+        // Inserting a blank frame before it (after frame 0) shifts it to frame 2.
+        insert_blank_frame(&mut p, 0);
+        assert_eq!(frame_auto_advance_delay(&p, 2), Some(5000));
+        assert_eq!(frame_auto_advance_delay(&p, 1), None);
+
+        // Deleting the frame the marker sits on collapses its range and prunes it.
+        adjust_frames_after_delete(&mut p, 2);
+        assert!(!p.objects.iter().any(|o| matches!(o, SceneObject::AutoAdvance(_))));
     }
 }

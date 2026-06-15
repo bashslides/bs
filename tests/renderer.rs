@@ -37,6 +37,7 @@ fn two_frame_presentation(diff: Vec<CellChange>) -> PlayablePresentation {
         commands: Vec::new(),
         loops: Vec::new(),
         animations: Vec::new(),
+        auto_advances: Vec::new(),
     }
 }
 
