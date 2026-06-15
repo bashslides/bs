@@ -203,6 +203,15 @@ reconstructed character grid (some also assert on cell styles).
 | `auto_advance_regions_carries_an_explicit_delay_and_range` | Explicit `delay_ms` and frame range pass through to the region |
 | `auto_advance_draws_nothing_into_the_frames` | The marker renders nothing into the static frames (only the label is painted) |
 
+### Circle object — `tests/circle.rs`
+
+| Test | Verifies |
+|------|----------|
+| `diameter_10_circle_is_round_and_filled` | A diameter-10 circle fills its 20-col central rows, has narrower round caps, vertical symmetry, an empty bounding-box corner, and a filled centre |
+| `fill_char_is_customizable` | The circle is drawn with the chosen `ch` (and never the default `@`) |
+| `circle_is_horizontally_symmetric` | Every filled row's left and right gaps match (centred span) |
+| `circle_is_hidden_outside_its_frame_range` | The circle renders only on the frames in its range |
+
 ### Morph object — `tests/morph.rs`
 
 | Test | Verifies |
@@ -240,6 +249,7 @@ reconstructed character grid (some also assert on cell styles).
 | `command_properties_roundtrip` | `Command` properties round-trip through get/set |
 | `list_properties_roundtrip` | `List` properties round-trip through get/set |
 | `loop_properties_roundtrip` | `Loop` properties round-trip; editing `delay_ms`/`bounce` sticks |
+| `circle_properties_roundtrip` | `Circle` properties (diameter, fill char, colours, frames) round-trip through get/set |
 | `unknown_property_is_rejected` | An unknown property name is rejected |
 | `coordinate_get_set_roundtrips` | Coordinate get/set round-trips |
 | `resize_group_scales_members_with_fractional_precision` | `resize_group` scales members with fractional precision |
@@ -394,6 +404,13 @@ reconstructed character grid (some also assert on cell styles).
 | `out_of_grid_cells_are_transparent_spaces` | Cells past one grid's extent resolve to (transparent) spaces |
 | `outside_the_range_emits_nothing` | Resolve emits no ops outside the frame range |
 | `mode_string_round_trips` | `MorphMode::as_str` / `from_str_opt` round-trip; unknown strings are rejected |
+
+### Circle aspect — `src/engine/objects/circle.rs`
+
+| Test | Verifies |
+|------|----------|
+| `columns_widen_the_diameter_by_the_aspect_ratio` | `Circle::columns` widens the diameter ~2× (and never below 1 column) |
+| `rows_for_width_inverts_columns` | `Circle::rows_for_width` inverts `columns` so a width-resize maps back to a diameter |
 
 ### Art library — `src/art_library.rs`
 

@@ -1,8 +1,9 @@
 use anyhow::{bail, Result};
 
 use crate::engine::source::{
-    Animation, Arrow, Art, AutoAdvance, Command, Coordinate, FrameRange, Group, HLine, Header,
-    Label, List, Loop, Morph, MorphMode, Rect, SceneObject, Table, TextAlign, VerticalAlign,
+    Animation, Arrow, Art, AutoAdvance, Circle, Command, Coordinate, FrameRange, Group, HLine,
+    Header, Label, List, Loop, Morph, MorphMode, Rect, SceneObject, Table, TextAlign,
+    VerticalAlign,
 };
 use crate::types::{Color, NamedColor};
 
@@ -180,6 +181,7 @@ fn as_editable(obj: &SceneObject) -> &dyn Editable {
         SceneObject::Morph(o) => o,
         SceneObject::Animation(o) => o,
         SceneObject::AutoAdvance(o) => o,
+        SceneObject::Circle(o) => o,
     }
 }
 
@@ -199,6 +201,85 @@ fn as_editable_mut(obj: &mut SceneObject) -> &mut dyn Editable {
         SceneObject::Morph(o) => o,
         SceneObject::Animation(o) => o,
         SceneObject::AutoAdvance(o) => o,
+        SceneObject::Circle(o) => o,
+    }
+}
+
+impl Editable for Circle {
+    fn properties(&self, _ctx: &PropContext) -> Vec<Property> {
+        vec![
+            Property { name: "x", value: format_coordinate(&self.position.x), kind: PropertyKind::Coordinate },
+            Property { name: "y", value: format_coordinate(&self.position.y), kind: PropertyKind::Coordinate },
+            Property { name: "diameter", value: self.diameter.to_string(), kind: PropertyKind::Number },
+            Property { name: "fill_char", value: self.ch.to_string(), kind: PropertyKind::Text },
+            Property { name: "fg_color", value: format_opt_color(&self.style.fg), kind: PropertyKind::Color },
+            Property { name: "bg_color", value: format_opt_color(&self.style.bg), kind: PropertyKind::Color },
+            Property { name: "bold", value: self.style.bold.to_string(), kind: PropertyKind::Bool },
+            Property { name: "dimmed", value: self.style.dim.to_string(), kind: PropertyKind::Bool },
+            Property { name: "first_frame", value: self.frames.start.to_string(), kind: PropertyKind::Number },
+            Property { name: "last_frame", value: self.frames.end.to_string(), kind: PropertyKind::Number },
+            Property { name: "z_order", value: self.z_order.to_string(), kind: PropertyKind::Number },
+        ]
+    }
+
+    fn set(&mut self, name: &str, value: &str) -> Result<()> {
+        match name {
+            "x" => self.position.x = parse_coordinate(value)?,
+            "y" => self.position.y = parse_coordinate(value)?,
+            "diameter" => self.diameter = value.trim().parse::<u16>()?.max(1),
+            "fill_char" => self.ch = parse_char(value)?,
+            "fg_color" => self.style.fg = parse_opt_color(value)?,
+            "bg_color" => self.style.bg = parse_opt_color(value)?,
+            "bold" => self.style.bold = parse_bool(value)?,
+            "dimmed" => self.style.dim = parse_bool(value)?,
+            "first_frame" => self.frames.start = value.parse()?,
+            "last_frame" => self.frames.end = value.parse()?,
+            "z_order" => self.z_order = value.parse()?,
+            _ => bail!("Unknown property: {name}"),
+        }
+        Ok(())
+    }
+
+    fn get_coord(&self, name: &str) -> Option<Coordinate> {
+        match name {
+            "x" => Some(self.position.x.clone()),
+            "y" => Some(self.position.y.clone()),
+            _ => None,
+        }
+    }
+
+    fn set_coord(&mut self, name: &str, coord: Coordinate) -> Result<()> {
+        match name {
+            "x" => self.position.x = coord,
+            "y" => self.position.y = coord,
+            _ => bail!("Unknown coordinate property: {name}"),
+        }
+        Ok(())
+    }
+
+    fn origin_x(&self) -> f64 { coord_val_f(&self.position.x) }
+    fn origin_y(&self) -> f64 { coord_val_f(&self.position.y) }
+    // The bounding box: `diameter` rows tall, derived columns wide (kept round).
+    fn dim_x(&self) -> f64 { Circle::columns(self.diameter) as f64 }
+    fn dim_y(&self) -> f64 { self.diameter as f64 }
+    fn set_origin_x(&mut self, v: f64) { set_fixed(&mut self.position.x, v); }
+    fn set_origin_y(&mut self, v: f64) { set_fixed(&mut self.position.y, v); }
+    fn set_dim_x(&mut self, v: f64) { self.diameter = Circle::rows_for_width(v).round().max(1.0) as u16; }
+    fn set_dim_y(&mut self, v: f64) { self.diameter = v.round().max(1.0) as u16; }
+
+    fn move_by(&mut self, dx: i32, dy: i32) {
+        adjust_coordinate(&mut self.position.x, dx);
+        adjust_coordinate(&mut self.position.y, dy);
+    }
+
+    // A circle has a single size knob, so either arrow grows/shrinks its diameter
+    // (anchored at the top-left corner), keeping it round.
+    fn resize_by(&mut self, dw: i32, dh: i32) {
+        self.diameter = (self.diameter as i32 + dw + dh).max(1) as u16;
+    }
+
+    fn shrink_by(&mut self, dw: i32, dh: i32) {
+        self.diameter = (self.diameter as i32 - dw.abs() - dh.abs()).max(1) as u16;
     }
 }
 
@@ -1913,6 +1994,15 @@ mod tests {
         // Both are dropdowns with the expected options.
         assert_eq!(dropdown_options_for(&PropertyKind::TextAlign), Some(TEXT_ALIGN_OPTIONS));
         assert_eq!(dropdown_options_for(&PropertyKind::VerticalAlign), Some(VERTICAL_ALIGN_OPTIONS));
+    }
+
+    #[test]
+    fn circle_properties_roundtrip() {
+        let mut o = vec![obj(
+            r##"{"type":"circle","position":{"x":{"fixed":3},"y":{"fixed":2}},
+                "diameter":8,"ch":"#","frames":{"start":0,"end":2}}"##,
+        )];
+        assert_props_roundtrip(&mut o, 0);
     }
 
     #[test]

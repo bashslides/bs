@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 // Re-export object types so they remain accessible via `engine::source::*`.
 pub use super::objects::{
-    Animation, Arrow, Art, AutoAdvance, Command, Group, HLine, Header, Label, List, Loop, Morph,
-    MorphMode, Rect, Table, TextAlign, VerticalAlign,
+    Animation, Arrow, Art, AutoAdvance, Circle, Command, Group, HLine, Header, Label, List, Loop,
+    Morph, MorphMode, Rect, Table, TextAlign, VerticalAlign,
 };
 
 use crate::types::{AnimationRegion, AutoAdvanceRegion, CommandRegion, LoopRegion};
@@ -44,6 +44,7 @@ pub enum SceneObject {
     Morph(Morph),
     Animation(Animation),
     AutoAdvance(AutoAdvance),
+    Circle(Circle),
 }
 
 impl SceneObject {
@@ -66,6 +67,7 @@ impl SceneObject {
             SceneObject::Morph(m) => Some(m.frames.clone()),
             SceneObject::Animation(a) => Some(a.frames.clone()),
             SceneObject::AutoAdvance(a) => Some(a.frames.clone()),
+            SceneObject::Circle(c) => Some(c.frames.clone()),
         }
     }
 
@@ -87,6 +89,7 @@ impl SceneObject {
             SceneObject::Morph(m) => m.frames = r,
             SceneObject::Animation(a) => a.frames = r,
             SceneObject::AutoAdvance(a) => a.frames = r,
+            SceneObject::Circle(c) => c.frames = r,
         }
     }
 }

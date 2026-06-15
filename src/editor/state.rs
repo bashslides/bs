@@ -446,6 +446,7 @@ pub fn scene_object_frame_range(obj: &SceneObject) -> Option<&FrameRange> {
         SceneObject::Morph(m) => Some(&m.frames),
         SceneObject::Animation(a) => Some(&a.frames),
         SceneObject::AutoAdvance(a) => Some(&a.frames),
+        SceneObject::Circle(c) => Some(&c.frames),
     }
 }
 
@@ -467,6 +468,7 @@ pub fn scene_object_frame_range_mut(obj: &mut SceneObject) -> Option<&mut FrameR
         SceneObject::Morph(m) => Some(&mut m.frames),
         SceneObject::Animation(a) => Some(&mut a.frames),
         SceneObject::AutoAdvance(a) => Some(&mut a.frames),
+        SceneObject::Circle(c) => Some(&mut c.frames),
     }
 }
 
@@ -486,6 +488,7 @@ pub fn scene_object_type_name(obj: &SceneObject) -> &'static str {
         SceneObject::Morph(_) => "Morph",
         SceneObject::Animation(_) => "Animation",
         SceneObject::AutoAdvance(_) => "AutoAdvance",
+        SceneObject::Circle(_) => "Circle",
     }
 }
 
@@ -539,6 +542,8 @@ fn scene_object_coordinates_mut(obj: &mut SceneObject) -> Vec<&mut Coordinate> {
         // Auto-advance has no coordinates (it draws nothing); its frame range
         // still shifts via `scene_object_frame_range_mut`.
         SceneObject::AutoAdvance(_) => vec![],
+        // A circle is positioned (x/y animate); its diameter is a plain number.
+        SceneObject::Circle(c) => vec![&mut c.position.x, &mut c.position.y],
     }
 }
 
@@ -1545,6 +1550,7 @@ pub fn scene_object_summary(obj: &SceneObject) -> String {
             let hi = a.frames.end; // exclusive end == 1-based inclusive last
             format!("Auto-advance: {lo}-{hi} ({})", format_secs(a.delay_ms))
         }
+        SceneObject::Circle(c) => format!("Circle: ⌀{} '{}'", c.diameter, c.ch),
     }
 }
 

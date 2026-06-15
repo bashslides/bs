@@ -3,16 +3,16 @@ use crate::types::Style;
 
 pub const OBJECT_TYPES: &[&str] = &[
     "Label", "HLine", "Rect", "Header", "Group", "Arrow", "Table", "Art", "Command", "List",
-    "Loop", "Morph",
+    "Loop", "Morph", "Circle",
 ];
 
 /// One quick-add shortcut per object type, aligned by index with `OBJECT_TYPES`.
 /// The Add-Object menu shows each key (`[l] Label`); pressing it adds that type
 /// directly. Keys are unique and avoid the global fullscreen key (`f`). They are
 /// the type's initial where free, else another distinctive letter (Header→`e`,
-/// Arrow→`w`, Art→`a`, List→`i`, Loop→`p`, Morph→`m`).
+/// Arrow→`w`, Art→`a`, List→`i`, Loop→`p`, Morph→`m`, Circle→`o`).
 pub const OBJECT_TYPE_KEYS: &[char] =
-    &['l', 'h', 'r', 'e', 'g', 'w', 't', 'a', 'c', 'i', 'p', 'm'];
+    &['l', 'h', 'r', 'e', 'g', 'w', 't', 'a', 'c', 'i', 'p', 'm', 'o'];
 
 /// Map a pressed character (case-insensitive) to an object-type index, if it is
 /// a quick-add shortcut.
@@ -223,6 +223,17 @@ pub fn create_default(type_index: usize, current_frame: usize) -> SceneObject {
             let (to_art, to_name) = by_name("square");
             create_morph(from_art, from_name, to_art, to_name, current_frame)
         }
+        12 => SceneObject::Circle(Circle {
+            position: Position {
+                x: Coordinate::Fixed(0.0),
+                y: Coordinate::Fixed(0.0),
+            },
+            diameter: 10,
+            ch: '@',
+            style: Style::default(),
+            frames,
+            z_order: 0,
+        }),
         _ => unreachable!(),
     }
 }
