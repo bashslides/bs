@@ -74,12 +74,9 @@ pub enum ArtPick {
 pub enum MultiSelectPurpose {
     /// Build a new `Group` from the toggled objects.
     Group,
-    /// Copy the toggled objects to the clipboard.
-    Copy,
-    /// Animate the toggled objects so they converge on a shared point.
-    Converge,
     /// General selection: Enter routes to the single-object menu (1 object) or
-    /// the action sub-menu (2+ objects). The main `s` entry point.
+    /// the action sub-menu (2+ objects). The main `s` entry point. Copy, converge,
+    /// and delete are then chosen from that action sub-menu (`SelectAction`).
     Select,
 }
 

@@ -1339,9 +1339,10 @@ fn handle_multi_select(state: &mut EditorState, key: KeyEvent) -> Action {
         };
         return Action::Redraw;
     }
-    // Enter: commit. Group/Copy/Converge act on the toggled set directly; the
-    // general Select routes to the single-object menu or the action sub-menu.
-    // With nothing explicitly toggled, fall back to the highlighted object.
+    // Enter: commit. Group builds a group from the toggled set directly; the
+    // general Select routes to the single-object menu or the action sub-menu
+    // (where copy/converge/delete live). With nothing explicitly toggled, fall
+    // back to the highlighted object.
     if matches_binding(&bindings.confirm, &key) {
         let mut chosen = members;
         if chosen.is_empty() {
@@ -1361,15 +1362,6 @@ fn handle_multi_select(state: &mut EditorState, key: KeyEvent) -> Action {
                 let new_index = state.source.objects.len() - 1;
                 state.mode = ep_browse(new_index, 0, 0);
                 state.status_message = Some("Added Group".into());
-            }
-            MultiSelectPurpose::Copy => {
-                copy_to_clipboard(state, &chosen);
-                state.mode = Mode::Normal;
-            }
-            MultiSelectPurpose::Converge => {
-                // Expand any selected group to its members so they converge too.
-                let expanded = super::state::expand_selection(&state.source, &chosen);
-                state.mode = enter_converge(state, expanded);
             }
             MultiSelectPurpose::Select => {
                 // One object → its menu; many → the action sub-menu.

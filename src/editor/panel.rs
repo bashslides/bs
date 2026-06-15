@@ -309,13 +309,11 @@ pub fn render_right_panel(
         return Ok(());
     }
 
-    // === MultiSelect (group / copy) ===
+    // === MultiSelect (group / select) ===
     if let Mode::MultiSelect { purpose, selected, members } = &state.mode {
         let selected = *selected;
         draw_header(stdout, match purpose {
             MultiSelectPurpose::Group => "Add Group",
-            MultiSelectPurpose::Copy => "Copy Objects",
-            MultiSelectPurpose::Converge => "Converge",
             MultiSelectPurpose::Select => "Select",
         })?;
         // Only the current slide's objects are groupable; `selected` and the

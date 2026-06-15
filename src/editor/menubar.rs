@@ -13,20 +13,27 @@ use super::ui::Layout;
 ///   motion → resize → property nav → value edit → escape/global
 fn mode_items(state: &EditorState) -> Vec<&'static str> {
     match &state.mode {
-        Mode::Normal => vec![
-            "[←][→] frame",
-            "[⇧←][⇧→] ±10",
-            "[a]dd",
-            "[s]elect",
-            "[c]opy",
-            "[v] paste",
-            "[f]rame",
-            "settin[g]s",
-            "[Ctrl-s]ave",
-            "[S]ave as",
-            "[q]uit",
-            "[F]ull",
-        ],
+        Mode::Normal => {
+            let mut items = vec![
+                "[←][→] frame",
+                "[⇧←][⇧→] ±10",
+                "[a]dd",
+                "[s]elect",
+                "[f]rame",
+                "settin[g]s",
+                "[Ctrl-s]ave",
+                "[S]ave as",
+                "[q]uit",
+                "[F]ull",
+            ];
+            // Paste is surfaced only once something has been copied — copy itself
+            // lives behind [s]elect (single object → its menu, or the action
+            // sub-menu for several).
+            if !state.clipboard.is_empty() {
+                items.insert(4, "[v] paste");
+            }
+            items
+        }
         Mode::SaveAs { .. } => vec![
             "[type] filename",
             "[Enter] save",
@@ -105,16 +112,24 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[Enter] do",
             "[Esc] cancel",
         ],
-        Mode::SelectedObject { .. } => vec![
-            "[←→↑↓] move",
-            "[r]esize",
-            "[Shift+←→↑↓] grow",
-            "[e]dit props",
-            "[c]opy",
-            "[d]el",
-            "[Esc] back",
-            "[F]ull",
-        ],
+        Mode::SelectedObject { .. } => {
+            let mut items = vec![
+                "[←→↑↓] move",
+                "[r]esize",
+                "[Shift+←→↑↓] grow",
+                "[e]dit props",
+                "[c]opy",
+                "[d]el",
+                "[Esc] back",
+                "[F]ull",
+            ];
+            // Paste shows right after [c]opy, but only when the clipboard has
+            // something to drop.
+            if !state.clipboard.is_empty() {
+                items.insert(5, "[v] paste");
+            }
+            items
+        }
         Mode::ResizeObject { .. } => vec![
             "[←→] width",
             "[↑↓] height",
@@ -180,8 +195,6 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             let mut hints = vec!["[↑][↓] navigate", "[Space] toggle"];
             hints.push(match purpose {
                 super::state::MultiSelectPurpose::Group => "[Enter] create group",
-                super::state::MultiSelectPurpose::Copy => "[Enter] copy",
-                super::state::MultiSelectPurpose::Converge => "[Enter] set target",
                 super::state::MultiSelectPurpose::Select => "[Enter] act",
             });
             if matches!(purpose, super::state::MultiSelectPurpose::Select) {

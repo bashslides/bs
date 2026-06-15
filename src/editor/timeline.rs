@@ -102,8 +102,6 @@ pub fn render_timeline(
         Mode::Confirm { .. } => "CONFIRM",
         Mode::MultiSelect { purpose, .. } => match purpose {
             super::state::MultiSelectPurpose::Group => "ADD GROUP",
-            super::state::MultiSelectPurpose::Copy => "COPY SELECT",
-            super::state::MultiSelectPurpose::Converge => "CONVERGE SELECT",
             super::state::MultiSelectPurpose::Select => "SELECT",
         },
         Mode::ConvergeConfig { .. } => "CONVERGE",
