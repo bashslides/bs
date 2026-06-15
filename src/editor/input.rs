@@ -30,6 +30,7 @@ pub enum Action {
 fn mode_accepts_text(mode: &Mode) -> bool {
     match mode {
         Mode::EditProperties { editing_value, .. } => editing_value.is_some(),
+        Mode::EditMultiProperties { editing_value, .. } => editing_value.is_some(),
         Mode::AnimateProperty { editing, .. } => editing.is_some(),
         Mode::Settings { .. }
         | Mode::TableAddColumn { .. }
@@ -99,6 +100,17 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
                 handle_edit_value(state, key)
             } else {
                 handle_edit_properties(state, key)
+            }
+        }
+        Mode::EditMultiProperties { editing_value, dropdown, .. } => {
+            let has_dropdown = dropdown.is_some();
+            let is_editing = editing_value.is_some();
+            if has_dropdown {
+                handle_edit_multi_dropdown(state, key)
+            } else if is_editing {
+                handle_edit_multi_value(state, key)
+            } else {
+                handle_edit_multi_properties(state, key)
             }
         }
         Mode::AnimateProperty { .. } => handle_animate_property(state, key),
@@ -191,6 +203,69 @@ fn ep_dropdown(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Mode::EditMultiProperties transition helpers — the multi-object counterparts
+// of the `ep_*` constructors above (same sub-state, but a `members` set instead
+// of a single object index).
+// ---------------------------------------------------------------------------
+
+fn emp_browse(members: Vec<usize>, selected_property: usize, panel_scroll: usize) -> Mode {
+    Mode::EditMultiProperties {
+        members,
+        selected_property,
+        editing_value: None,
+        cursor: 0,
+        scroll: 0,
+        panel_scroll,
+        dropdown: None,
+    }
+}
+
+fn emp_editing(
+    members: Vec<usize>,
+    selected_property: usize,
+    buf: String,
+    cursor: usize,
+    scroll: usize,
+    panel_scroll: usize,
+) -> Mode {
+    Mode::EditMultiProperties {
+        members,
+        selected_property,
+        editing_value: Some(buf),
+        cursor,
+        scroll,
+        panel_scroll,
+        dropdown: None,
+    }
+}
+
+fn emp_dropdown(
+    members: Vec<usize>,
+    selected_property: usize,
+    dd_sel: usize,
+    panel_scroll: usize,
+) -> Mode {
+    Mode::EditMultiProperties {
+        members,
+        selected_property,
+        editing_value: None,
+        cursor: 0,
+        scroll: 0,
+        panel_scroll,
+        dropdown: Some(dd_sel),
+    }
+}
+
+/// The `SelectAction` row index of the "Edit Props" action — used to restore the
+/// action sub-menu's highlight when Esc leaves the multi-edit panel.
+fn edit_props_action_index() -> usize {
+    SELECT_ACTIONS
+        .iter()
+        .position(|(k, _)| *k == SelectActionKind::EditProps)
+        .unwrap_or(0)
+}
+
 /// Vertical scroll so the property row at `selected_row` stays on screen. Mirrors
 /// the panel layout: menu(1) + timeline(2) + title(1) + separator(1) = 5 reserved.
 fn follow_panel_scroll(selected_row: usize, panel_scroll: usize, term_h: usize) -> usize {
@@ -277,6 +352,31 @@ fn apply_property(state: &mut EditorState, object_index: usize, name: &str, valu
         }
         Err(e) => state.status_message = Some(format!("Error: {e}")),
     }
+}
+
+/// Apply one property edit to **every** member of a multi-object selection,
+/// reusing the single-object `apply_property` per member (so group auto-range,
+/// animation re-locking, link propagation, and loop validation all behave
+/// exactly as they do for a single edit). Members lacking the property simply
+/// report an error and are skipped; a final summary replaces the per-member
+/// status. Returns nothing — the status line carries the outcome.
+fn apply_multi_property(state: &mut EditorState, members: &[usize], name: &str, value: &str) {
+    let mut ok = 0usize;
+    let mut last_err: Option<String> = None;
+    for &m in members {
+        apply_property(state, m, name, value);
+        // `apply_property` reports through the status line; sniff its result so
+        // the summary can distinguish a fully-applied edit from a partial one.
+        match state.status_message.as_deref() {
+            Some(s) if s.starts_with('⚠') || s.starts_with("Error") => last_err = Some(s.to_string()),
+            _ => ok += 1,
+        }
+    }
+    state.status_message = Some(match last_err {
+        Some(e) if ok == 0 => e,
+        Some(_) => format!("Set {name} = {value} on {ok}/{} objects", members.len()),
+        None => format!("Set {name} = {value} on {ok} objects"),
+    });
 }
 
 /// Build an Art object from `item`, append it, and jump to editing it.
@@ -1385,12 +1485,14 @@ enum SelectActionKind {
     Copy,
     Converge,
     Delete,
+    EditProps,
 }
 
 const SELECT_ACTIONS: &[(SelectActionKind, &str)] = &[
     (SelectActionKind::Copy, "Copy"),
     (SelectActionKind::Converge, "Converge"),
     (SelectActionKind::Delete, "Delete"),
+    (SelectActionKind::EditProps, "Edit Props"),
 ];
 
 /// The action sub-menu's row labels, in display order — for the panel renderer.
@@ -1441,6 +1543,24 @@ fn handle_select_action(state: &mut EditorState, key: KeyEvent) -> Action {
                     action: ConfirmAction::DeleteObjects { object_indices: members.clone() },
                     return_mode: Box::new(Mode::SelectAction { members, selected }),
                 };
+            }
+            SelectActionKind::EditProps => {
+                // Bulk-edit the shared properties. Refuse if the selection has no
+                // common editable property (e.g. a Label + a Loop).
+                let common = properties::common_properties(&state.source.objects, &members);
+                if common.is_empty() {
+                    state.status_message =
+                        Some("These objects share no editable properties".into());
+                    state.mode = Mode::SelectAction { members, selected };
+                } else {
+                    state.status_message = Some(format!(
+                        "Editing {} shared propert{} across {} objects",
+                        common.len(),
+                        if common.len() == 1 { "y" } else { "ies" },
+                        members.len(),
+                    ));
+                    state.mode = emp_browse(members, 0, 0);
+                }
             }
         }
         return Action::Redraw;
@@ -2335,6 +2455,177 @@ fn handle_dropdown(state: &mut EditorState, key: KeyEvent) -> Action {
             } else {
                 apply_property(state, object_index, prop_name, chosen);
                 state.mode = ep_browse(object_index, selected_property, panel_scroll);
+            }
+            Action::Redraw
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Multi-object property editing (Mode::EditMultiProperties)
+//
+// Slimmer cousins of the single-object handlers above: only the bulk-editable
+// property kinds appear (no animate / table / group-member / multi-line text),
+// and every edit fans out to the whole selection via `apply_multi_property`.
+// ---------------------------------------------------------------------------
+
+/// Browsing the common-property list of a multi-object selection.
+fn handle_edit_multi_properties(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+
+    let (members, selected_property, panel_scroll) = match &state.mode {
+        Mode::EditMultiProperties { members, selected_property, panel_scroll, .. } =>
+            (members.clone(), *selected_property, *panel_scroll),
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        // Back to the action sub-menu with the selection intact.
+        state.mode = Mode::SelectAction { members, selected: edit_props_action_index() };
+        return Action::Redraw;
+    }
+
+    let props = properties::common_properties(&state.source.objects, &members);
+    if props.is_empty() {
+        state.mode = Mode::Normal;
+        return Action::Redraw;
+    }
+    let prop_count = props.len();
+    let selected_property = selected_property.min(prop_count - 1);
+    let prop_kind = props[selected_property].kind.clone();
+    let prop_name = props[selected_property].name;
+    let prop_value = props[selected_property].value.clone();
+    let term_h = terminal::size().map(|(_, h)| h).unwrap_or(24) as usize;
+
+    use properties::PropertyKind;
+
+    // Up/Down, Tab/BackTab: navigate the property list (scroll follows selection).
+    if matches_binding(&bindings.move_up, &key) || key.code == KeyCode::BackTab {
+        let new_sel = if selected_property == 0 { prop_count - 1 } else { selected_property - 1 };
+        let ps = follow_panel_scroll(new_sel, panel_scroll, term_h);
+        state.mode = emp_browse(members, new_sel, ps);
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.move_down, &key)
+        || (key.code == KeyCode::Tab && key.modifiers == KeyModifiers::NONE)
+    {
+        let new_sel = (selected_property + 1) % prop_count;
+        let ps = follow_panel_scroll(new_sel, panel_scroll, term_h);
+        state.mode = emp_browse(members, new_sel, ps);
+        return Action::Redraw;
+    }
+
+    // Booleans flip in place on Space or Enter.
+    let toggle_requested = matches_binding(&bindings.confirm, &key)
+        || (key.code == KeyCode::Char(' ') && key.modifiers == KeyModifiers::NONE);
+    if prop_kind == PropertyKind::Bool && toggle_requested {
+        apply_multi_property(state, &members, prop_name, properties::toggled_bool_value(&prop_value));
+        return Action::Redraw;
+    }
+
+    // Enter: open a dropdown, or start an inline text edit. A `Coordinate` is
+    // edited as a plain value here — animation is a single-object affair.
+    if matches_binding(&bindings.confirm, &key) {
+        if let Some(opts) = properties::dropdown_options_for(&prop_kind) {
+            let dd_sel = opts.iter().position(|&o| o == prop_value).unwrap_or(0);
+            state.mode = emp_dropdown(members, selected_property, dd_sel, panel_scroll);
+        } else {
+            let cursor = prop_value.chars().count();
+            state.mode = emp_editing(members, selected_property, prop_value, cursor, 0, panel_scroll);
+        }
+        return Action::Redraw;
+    }
+
+    Action::Continue
+}
+
+/// Editing a common property's value as text; commit fans the value out to all.
+fn handle_edit_multi_value(state: &mut EditorState, key: KeyEvent) -> Action {
+    let (members, selected_property, editing_value, cursor, scroll, panel_scroll) =
+        match &state.mode {
+            Mode::EditMultiProperties {
+                members, selected_property, editing_value, cursor, scroll, panel_scroll, ..
+            } => (members.clone(), *selected_property, editing_value.clone(), *cursor, *scroll, *panel_scroll),
+            _ => return Action::Continue,
+        };
+
+    let props = properties::common_properties(&state.source.objects, &members);
+    if selected_property >= props.len() {
+        state.mode = emp_browse(members, 0, panel_scroll);
+        return Action::Redraw;
+    }
+    let prop_name = props[selected_property].name;
+    let prefix0 = prop_name.chars().count() + 2;
+
+    let newline = matches_binding(&state.config.key_bindings.insert_newline, &key);
+    let mut te = TextEdit::new(editing_value.unwrap_or_default(), cursor);
+
+    match te.handle_key(&key, newline) {
+        TextAction::Ignored => Action::Continue,
+        TextAction::Cancel => {
+            state.mode = emp_browse(members, selected_property, panel_scroll);
+            Action::Redraw
+        }
+        TextAction::Commit => {
+            apply_multi_property(state, &members, prop_name, &te.buf);
+            state.mode = emp_browse(members, selected_property, panel_scroll);
+            Action::Redraw
+        }
+        TextAction::Edited => {
+            let (new_scroll, new_ps) =
+                panel_field_scrolls(&te, selected_property, prefix0, scroll, panel_scroll);
+            state.mode = emp_editing(members, selected_property, te.buf, te.cursor, new_scroll, new_ps);
+            Action::Redraw
+        }
+    }
+}
+
+/// Navigating the dropdown of a common property (colour / alignment / …); a
+/// choice fans out to the whole selection (or opens custom text entry).
+fn handle_edit_multi_dropdown(state: &mut EditorState, key: KeyEvent) -> Action {
+    let (members, selected_property, dd_sel, panel_scroll) = match &state.mode {
+        Mode::EditMultiProperties { members, selected_property, panel_scroll, dropdown: Some(sel), .. } =>
+            (members.clone(), *selected_property, *sel, *panel_scroll),
+        _ => return Action::Continue,
+    };
+
+    let props = properties::common_properties(&state.source.objects, &members);
+    if selected_property >= props.len() {
+        state.mode = emp_browse(members, 0, panel_scroll);
+        return Action::Redraw;
+    }
+    let prop_kind = props[selected_property].kind.clone();
+    let prop_name = props[selected_property].name;
+    let prop_value = props[selected_property].value.clone();
+    let options = properties::dropdown_options_for(&prop_kind).unwrap_or(properties::COLOR_OPTIONS);
+    let sentinel = properties::dropdown_custom_sentinel(&prop_kind);
+    let bindings = state.config.key_bindings.clone();
+
+    match dropdown_key(&key, &bindings, dd_sel, options.len()) {
+        DropdownKey::Ignored => Action::Continue,
+        DropdownKey::Cancel => {
+            state.mode = emp_browse(members, selected_property, panel_scroll);
+            Action::Redraw
+        }
+        DropdownKey::Move(n) => {
+            state.mode = emp_dropdown(members, selected_property, n, panel_scroll);
+            Action::Redraw
+        }
+        DropdownKey::Choose(n) => {
+            let chosen = options[n];
+            if chosen == sentinel {
+                let initial = if prop_kind == properties::PropertyKind::Color {
+                    if prop_value.starts_with('#') { prop_value.clone() } else { "#".to_string() }
+                } else if prop_value != "auto" {
+                    prop_value.clone()
+                } else {
+                    String::new()
+                };
+                let cursor = initial.chars().count();
+                state.mode = emp_editing(members, selected_property, initial, cursor, 0, panel_scroll);
+            } else {
+                apply_multi_property(state, &members, prop_name, chosen);
+                state.mode = emp_browse(members, selected_property, panel_scroll);
             }
             Action::Redraw
         }
@@ -3818,9 +4109,13 @@ mod tests {
     }
 
     #[test]
-    fn select_action_submenu_offers_copy_converge_and_delete() {
-        // The post-multi-select action sub-menu lists Copy, Converge, then Delete.
-        assert_eq!(select_action_labels(), vec!["Copy", "Converge", "Delete"]);
+    fn select_action_submenu_offers_copy_converge_delete_and_edit_props() {
+        // The post-multi-select action sub-menu lists Copy, Converge, Delete,
+        // then Edit Props (bulk-edit the shared properties).
+        assert_eq!(
+            select_action_labels(),
+            vec!["Copy", "Converge", "Delete", "Edit Props"]
+        );
     }
 
     #[test]

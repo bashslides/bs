@@ -116,6 +116,20 @@ pub enum Mode {
         /// Index into COLOR_OPTIONS when a color dropdown is open; None otherwise.
         dropdown: Option<usize>,
     },
+    /// Bulk-edit the properties **common** to a multi-object selection (reached
+    /// from the `SelectAction` "Edit Props" action). Only the shared, simple
+    /// properties are listed; editing a value writes it to every member. Mirrors
+    /// the editing sub-state of [`Mode::EditProperties`] but carries the whole
+    /// `members` set instead of a single `object_index`.
+    EditMultiProperties {
+        members: Vec<usize>,
+        selected_property: usize,
+        editing_value: Option<String>,
+        cursor: usize,
+        scroll: usize,
+        panel_scroll: usize,
+        dropdown: Option<usize>,
+    },
     AnimateProperty {
         object_index: usize,
         /// Which property index to restore in EditProperties when exiting.

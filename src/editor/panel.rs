@@ -268,6 +268,132 @@ pub fn render_right_panel(
         return Ok(());
     }
 
+    // === EditMultiProperties (bulk-edit the shared props of a selection) ===
+    if let Mode::EditMultiProperties {
+        members, selected_property, editing_value, cursor, scroll, panel_scroll, dropdown,
+    } = &state.mode
+    {
+        let cursor = *cursor;
+        let scroll = *scroll;
+        let panel_scroll = *panel_scroll;
+        let dropdown = *dropdown;
+
+        let title: String = format!("Edit {} objects", members.len())
+            .chars().take((pw - 2) as usize).collect();
+        draw_header(stdout, &title)?;
+
+        let props = properties::common_properties(&state.source.objects, members);
+        if props.is_empty() {
+            return Ok(());
+        }
+        let selected_prop = (*selected_property).min(props.len() - 1);
+
+        let fmt_val = |v: &str| -> String {
+            v.chars().map(|c| if c == '\n' { '↵' } else { c }).collect()
+        };
+
+        let mut screen_y: u16 = cy + 2;
+        let mut visual_row: usize = 0;
+        let mut selected_screen_y: Option<u16> = None;
+
+        for (i, prop) in props.iter().enumerate() {
+            if screen_y >= cy + layout.canvas_height {
+                break;
+            }
+            if visual_row < panel_scroll {
+                visual_row += 1;
+                continue;
+            }
+
+            // Selected + actively editing: an inline single-line value field
+            // (multi-edit never touches `Text`, so there's no overlay path).
+            if i == selected_prop {
+                if let Some(buf) = editing_value.as_ref() {
+                    let prefix = format!("{}: ", prop.name);
+                    let prefix_len = prefix.chars().count();
+                    let horiz_w = max_width.saturating_sub(prefix_len);
+                    let display_line: String = buf.chars()
+                        .chain(std::iter::repeat(' '))
+                        .skip(scroll)
+                        .take(horiz_w)
+                        .collect();
+                    let display = format!("{prefix}{display_line}");
+                    let caret = Some(prefix_len + cursor.saturating_sub(scroll));
+                    draw_caret_line(stdout, panel_x + 2, screen_y, &display, caret, true, max_width)?;
+                    selected_screen_y = Some(screen_y);
+                    screen_y += 1;
+                    visual_row += 1;
+                    continue;
+                }
+            }
+
+            // Single-row display path (selected-not-editing, or any other row).
+            queue!(stdout, cursor::MoveTo(panel_x + 2, screen_y))?;
+            let display: String = if prop.kind == PropertyKind::Bool {
+                let mark = if prop.value.trim() == "true" { "x" } else { " " };
+                format!("[{}] {}", mark, prop.name).chars().take(max_width).collect()
+            } else if i == selected_prop && dropdown.is_some() {
+                format!("{}: \u{25bc} {}", prop.name, fmt_val(&prop.value)).chars().take(max_width).collect()
+            } else {
+                format!("{}: {}", prop.name, fmt_val(&prop.value)).chars().take(max_width).collect()
+            };
+
+            if i == selected_prop {
+                queue!(
+                    stdout,
+                    style::SetAttribute(style::Attribute::Reverse),
+                    style::Print(format!("{:<width$}", display, width = max_width)),
+                    style::SetAttribute(style::Attribute::Reset),
+                )?;
+                selected_screen_y = Some(screen_y);
+            } else {
+                queue!(stdout, style::Print(display))?;
+            }
+
+            // Colour rows get a swatch at the right edge (unless their dropdown
+            // is open — the option list shows swatches of its own).
+            if prop.kind == PropertyKind::Color && !(i == selected_prop && dropdown.is_some()) {
+                let sx = panel_x + 2 + (max_width as u16).saturating_sub(2);
+                draw_color_swatch(stdout, sx, screen_y, &prop.value)?;
+            }
+
+            screen_y += 1;
+            visual_row += 1;
+        }
+
+        // Dropdown overlay (colour / alignment / …).
+        if let Some(dd_sel) = dropdown {
+            let options = properties::dropdown_options_for(&props[selected_prop].kind)
+                .unwrap_or(properties::COLOR_OPTIONS);
+            let dd_start_y = selected_screen_y
+                .map(|y| y + 1)
+                .unwrap_or(cy + (selected_prop + 3) as u16);
+            for (i, opt) in options.iter().enumerate() {
+                let y = dd_start_y + i as u16;
+                if y >= cy + layout.canvas_height {
+                    break;
+                }
+                queue!(stdout, cursor::MoveTo(panel_x + 2, y))?;
+                let marker = if i == dd_sel { ">" } else { " " };
+                let line: String = format!("{} {}", marker, opt)
+                    .chars().chain(std::iter::repeat(' ')).take(max_width).collect();
+                if i == dd_sel {
+                    queue!(
+                        stdout,
+                        style::SetAttribute(style::Attribute::Reverse),
+                        style::Print(line),
+                        style::SetAttribute(style::Attribute::Reset),
+                    )?;
+                } else {
+                    queue!(stdout, style::Print(line))?;
+                }
+                draw_color_swatch(stdout, panel_x + 2 + (max_width as u16).saturating_sub(2), y, opt)?;
+            }
+        }
+
+        return Ok(());
+    }
+
     // === Confirm ===
     if let Mode::Confirm { message, selected, .. } = &state.mode {
         let message = message.as_str();

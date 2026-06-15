@@ -98,6 +98,7 @@ pub fn render_timeline(
         Mode::SelectedObject { .. } => "SELECTED",
         Mode::ResizeObject { .. } => "RESIZE",
         Mode::EditProperties { .. } => "EDIT PROPERTIES",
+        Mode::EditMultiProperties { .. } => "EDIT ALL",
         Mode::AnimateProperty { .. } => "ANIMATE",
         Mode::Confirm { .. } => "CONFIRM",
         Mode::MultiSelect { purpose, .. } => match purpose {

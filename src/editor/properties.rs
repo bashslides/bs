@@ -1516,6 +1516,43 @@ pub fn get_properties(objects: &[SceneObject], object_index: usize) -> Vec<Prope
     props
 }
 
+/// The properties common to **every** object in `members` — same `name` *and*
+/// `kind` across all of them — restricted to the kinds that make sense to
+/// bulk-edit. The value shown for each is taken from the **first** member as the
+/// representative seed; editing it in the multi-edit panel writes to all members.
+/// Empty when `members` is empty or the objects share no bulk-editable property.
+pub fn common_properties(objects: &[SceneObject], members: &[usize]) -> Vec<Property> {
+    let Some((&first, rest)) = members.split_first() else {
+        return Vec::new();
+    };
+    get_properties(objects, first)
+        .into_iter()
+        .filter(|p| is_bulk_editable_kind(&p.kind))
+        .filter(|p| {
+            rest.iter().all(|&m| {
+                get_properties(objects, m)
+                    .iter()
+                    .any(|q| q.name == p.name && q.kind == p.kind)
+            })
+        })
+        .collect()
+}
+
+/// Whether a property kind can be edited across a multi-object selection. The
+/// overlay-edited `Text`, the structural `GroupMember`/`TableColWidth`, and the
+/// non-editable `ReadOnly`/`Note` are excluded; everything else (coordinates,
+/// colours, bools, numbers, and the simple dropdowns) is fair game.
+fn is_bulk_editable_kind(kind: &PropertyKind) -> bool {
+    !matches!(
+        kind,
+        PropertyKind::Text
+            | PropertyKind::GroupMember
+            | PropertyKind::ReadOnly
+            | PropertyKind::Note
+            | PropertyKind::TableColWidth
+    )
+}
+
 pub fn set_property(obj: &mut SceneObject, name: &str, value: &str) -> Result<()> {
     if name == "first_frame" {
         // Translate the user's 1-based slide number back to the 0-based start.
@@ -1876,6 +1913,52 @@ mod tests {
         // Both are dropdowns with the expected options.
         assert_eq!(dropdown_options_for(&PropertyKind::TextAlign), Some(TEXT_ALIGN_OPTIONS));
         assert_eq!(dropdown_options_for(&PropertyKind::VerticalAlign), Some(VERTICAL_ALIGN_OPTIONS));
+    }
+
+    #[test]
+    fn common_properties_intersects_shared_editable_props() {
+        let objects = vec![
+            obj(r#"{"type":"label","text":"A","position":{"x":{"fixed":0},"y":{"fixed":0}},"frames":{"start":0,"end":2}}"#),
+            obj(r#"{"type":"rect","position":{"x":{"fixed":0},"y":{"fixed":0}},"width":4,"height":3,"frames":{"start":0,"end":2}}"#),
+        ];
+        let names: Vec<&str> =
+            common_properties(&objects, &[0, 1]).iter().map(|p| p.name).collect();
+        // Shared geometry / colour / flags / frames survive the intersection.
+        for n in ["x", "y", "width", "height", "fg_color", "bg_color", "bold", "dimmed",
+                  "first_frame", "last_frame", "z_order"] {
+            assert!(names.contains(&n), "expected common prop {n}, got {names:?}");
+        }
+        // Label-only properties do not (and `text` is Text-kind, excluded anyway).
+        assert!(!names.contains(&"text"));
+        assert!(!names.contains(&"align"));
+    }
+
+    #[test]
+    fn common_properties_shrinks_for_heterogeneous_types() {
+        // A Label and a Loop share only their frame-range numbers.
+        let objects = vec![
+            obj(r#"{"type":"label","text":"A","position":{"x":{"fixed":0},"y":{"fixed":0}},"frames":{"start":0,"end":2}}"#),
+            obj(r#"{"type":"loop","frames":{"start":0,"end":2}}"#),
+        ];
+        let names: Vec<&str> =
+            common_properties(&objects, &[0, 1]).iter().map(|p| p.name).collect();
+        assert_eq!(names, vec!["first_frame", "last_frame"]);
+        assert!(!names.contains(&"x"));
+        assert!(!names.contains(&"fg_color"));
+    }
+
+    #[test]
+    fn common_properties_value_is_the_first_members() {
+        // The representative value shown (and seeded for editing) is member 0's.
+        let objects = vec![
+            obj(r#"{"type":"label","text":"A","position":{"x":{"fixed":7},"y":{"fixed":0}},"frames":{"start":0,"end":2}}"#),
+            obj(r#"{"type":"label","text":"B","position":{"x":{"fixed":3},"y":{"fixed":0}},"frames":{"start":0,"end":2}}"#),
+        ];
+        let x = common_properties(&objects, &[0, 1])
+            .into_iter()
+            .find(|p| p.name == "x")
+            .unwrap();
+        assert_eq!(x.value, "7");
     }
 
     #[test]

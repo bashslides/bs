@@ -243,6 +243,9 @@ reconstructed character grid (some also assert on cell styles).
 | `unknown_property_is_rejected` | An unknown property name is rejected |
 | `coordinate_get_set_roundtrips` | Coordinate get/set round-trips |
 | `resize_group_scales_members_with_fractional_precision` | `resize_group` scales members with fractional precision |
+| `common_properties_intersects_shared_editable_props` | `common_properties` keeps the geometry/colour/flag/frame props a Label and Rect share, dropping type-specific ones (and `Text`-kind) |
+| `common_properties_shrinks_for_heterogeneous_types` | A Label + Loop selection intersects down to just `first_frame`/`last_frame` |
+| `common_properties_value_is_the_first_members` | The representative value shown/seeded is the first member's |
 
 ### Loop stepping — `src/player/mod.rs`
 
@@ -322,7 +325,7 @@ reconstructed character grid (some also assert on cell styles).
 | `animate_single_axis_layout_has_one_from_to_pair` | A 1-D coordinate (width/height) lists a single `from/to` pair (8 fields) |
 | `gap_strobes_even_without_add_frames` | `apply_animation` with gap > 0 strobes the element onto every `gap+1`th frame even when `add frames` is off (works on existing frames) |
 | `re_applying_a_gapped_animation_does_not_stack_orphan_copies` | Re-applying clears prior strobe copies first (idempotent); gap 0 removes them entirely |
-| `select_action_submenu_offers_copy_converge_and_delete` | The post-multi-select action sub-menu lists Copy, Converge, then Delete |
+| `select_action_submenu_offers_copy_converge_delete_and_edit_props` | The post-multi-select action sub-menu lists Copy, Converge, Delete, then Edit Props |
 | `converge_field_rows_omits_the_per_object_from_fields` | The Converge config lists only the shared `x to`/`y to` + span/toggles (8 fields) — no per-object `from` |
 | `converge_animates_each_object_from_its_own_spot_to_the_shared_point` | `apply_converge` animates each member's x/y from its own current position to the shared target; both axes (and all members) reference **one** shared animation id over the span |
 | `editing_an_animation_span_updates_one_animation_not_two` | Re-applying with a changed span updates the *same* `Animation` in place (same id, widened span, object range re-locked) — never spawns a second, the reported orphan-duplicate bug |

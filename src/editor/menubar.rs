@@ -172,6 +172,24 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[Enter] apply",
             "[Esc] cancel",
         ],
+        // Bulk-editing the shared properties of a multi-object selection.
+        Mode::EditMultiProperties { editing_value: None, members, selected_property, .. } => {
+            let props = properties::common_properties(&state.source.objects, members);
+            let is_bool = props
+                .get(*selected_property)
+                .map(|p| p.kind == PropertyKind::Bool)
+                .unwrap_or(false);
+            let mut items = vec!["[↑][↓] prop"];
+            items.push(if is_bool { "[Enter][Space] toggle" } else { "[Enter] edit" });
+            items.push("[Esc] back");
+            items.push("[F]ull");
+            items
+        }
+        Mode::EditMultiProperties { editing_value: Some(_), .. } => vec![
+            "[←][→] cursor",
+            "[Enter] apply to all",
+            "[Esc] cancel",
+        ],
         Mode::AnimateProperty { editing: None, .. } => vec![
             "[↑][↓] field",
             "[Enter] edit",
