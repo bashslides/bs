@@ -419,8 +419,8 @@ copy/paste `expand_selection` +
 `delete_objects` multi-delete (plain highest-first + `Animation` by id);
 `editor/input.rs` — `apply_animation`/`apply_converge` id reuse + the
 "editing a span never duplicates the animation" regression). The suite
-totals 235 tests (114 integration
-+ 121 inline); `TESTS.md` is the authoritative per-test list.
+totals 236 tests (114 integration
++ 122 inline); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the

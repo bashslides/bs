@@ -1,6 +1,7 @@
 use super::state::Mode;
 
-/// Width (in columns) of the right-hand property panel in EditProperties mode.
+/// Width (in columns) of the right-hand property panel (EditProperties,
+/// EditMultiProperties, and the other panel modes in `Layout::compute`).
 /// Used by both the renderer and the input handler for scroll calculations.
 pub const RIGHT_PANEL_WIDTH: u16 = 24;
 
@@ -41,6 +42,7 @@ impl Layout {
     pub fn compute(term_width: u16, term_height: u16, mode: &Mode, fullscreen: bool) -> Self {
         let right = match mode {
             Mode::EditProperties { .. }
+            | Mode::EditMultiProperties { .. }
             | Mode::AnimateProperty { .. }
             | Mode::ConvergeConfig { .. }
             | Mode::AddObject { .. }
@@ -74,5 +76,34 @@ impl Layout {
             term_width,
             menu_h,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn panel_width(mode: &Mode) -> u16 {
+        Layout::compute(120, 40, mode, false).right_panel_width
+    }
+
+    #[test]
+    fn property_panel_modes_get_a_right_panel() {
+        // Regression: every mode whose right panel is drawn by `render_right_panel`
+        // must also be allocated panel width here, or the panel silently vanishes
+        // (the bug that left EditMultiProperties invisible while still editing).
+        let edit_multi = Mode::EditMultiProperties {
+            members: vec![0, 1],
+            selected_property: 0,
+            editing_value: None,
+            cursor: 0,
+            scroll: 0,
+            panel_scroll: 0,
+            dropdown: None,
+        };
+        assert_eq!(panel_width(&edit_multi), RIGHT_PANEL_WIDTH);
+        assert_eq!(panel_width(&Mode::SelectAction { members: vec![0, 1], selected: 0 }), RIGHT_PANEL_WIDTH);
+        // A plain navigation mode keeps the full canvas (no panel).
+        assert_eq!(panel_width(&Mode::Normal), 0);
     }
 }

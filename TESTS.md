@@ -418,6 +418,12 @@ reconstructed character grid (some also assert on cell styles).
 |------|----------|
 | `builtins_are_present_and_named` | Built-in art pieces are present and named (incl. the `ball`/`square` morph pair) |
 
+### Layout — `src/editor/ui.rs`
+
+| Test | Verifies |
+|------|----------|
+| `property_panel_modes_get_a_right_panel` | Every panel mode (incl. `EditMultiProperties`) is allocated right-panel width in `Layout::compute`, so the panel can't silently vanish; navigation modes keep the full canvas |
+
 ## Not covered (intentional)
 
 These run only in the interactive TUI / at play time and are verified manually.
