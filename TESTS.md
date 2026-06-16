@@ -400,6 +400,15 @@ reconstructed character grid (some also assert on cell styles).
 | `paste_frame_block_repoints_group_members_into_destination` | Block-local `Group.members` in the clipboard are re-pointed to the new absolute indices in the destination deck |
 | `copy_frame_block_flattens_animation_outside_the_block` | A coordinate driven by an animation whose span lies outside the copied block is flattened to `Fixed` at capture (no dangling animation reference) |
 
+### Frame-bar abbreviation — `src/editor/timeline.rs`
+
+| Test | Verifies |
+|------|----------|
+| `pick_indices_shows_three_at_each_edge_plus_the_current_window` | The abbreviated bar selects the first 3 segments, a 3-wide window around the current one, and the last 3 |
+| `pick_indices_dedups_when_groups_overlap_near_an_edge` | When the cursor sits near the start/end, the current window merges into the first/last group (no duplicates) |
+| `abbreviated_indices_prefers_three_edges_when_it_fits` | A wide row shows the full first-3 / current / last-3 view |
+| `abbreviated_indices_shrinks_edges_on_a_narrow_row` | A narrow row drops segments (edge groups shrink 3→2→1) while always keeping the current frame |
+
 ### Morph stepping — `src/engine/objects/morph.rs`
 
 | Test | Verifies |

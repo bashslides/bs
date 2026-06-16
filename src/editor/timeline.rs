@@ -236,21 +236,13 @@ fn render_frame_bar(
         return Ok(());
     }
 
-    // Abbreviated view over the segment list: first, the current segment's
-    // vicinity, and last, with "..." marking the skipped gaps.
+    // Abbreviated view over the segment list: the first few segments, the current
+    // segment's vicinity, and the last few — with "..." marking skipped gaps. We
+    // aim to keep 3 segments at each edge (plus the current ±1) so both ends of
+    // the deck stay in view, shrinking the edge groups only when the row is too
+    // narrow to fit them.
     let cur = segs.iter().position(|s| s.contains(current)).unwrap_or(0);
-    let last = segs.len().saturating_sub(1);
-    let mut to_show: Vec<usize> = vec![0];
-    if cur > 1 {
-        to_show.push(cur - 1);
-    }
-    to_show.push(cur);
-    if cur + 1 < last {
-        to_show.push(cur + 1);
-    }
-    to_show.push(last);
-    to_show.sort();
-    to_show.dedup();
+    let to_show = abbreviated_indices(segs, cur, width);
 
     let mut prev: Option<usize> = None;
     for &i in &to_show {
@@ -263,6 +255,63 @@ fn render_frame_bar(
         prev = Some(i);
     }
     Ok(())
+}
+
+/// Pick the segment indices for the abbreviated bar at a given `edge` group size:
+/// the first `edge` segments, a 3-wide window centred on the current segment
+/// (`cur-1, cur, cur+1`, clamped), and the last `edge` segments — deduped and
+/// ascending. The current segment is always included, so navigation never loses
+/// sight of where it is.
+fn pick_indices(n: usize, cur: usize, edge: usize) -> Vec<usize> {
+    if n == 0 {
+        return Vec::new();
+    }
+    let last = n - 1;
+    let mut s: Vec<usize> = Vec::new();
+    for i in 0..edge.min(n) {
+        s.push(i); // first `edge`
+    }
+    for d in [cur.saturating_sub(1), cur, cur + 1] {
+        if d <= last {
+            s.push(d); // current vicinity
+        }
+    }
+    for i in 0..edge.min(n) {
+        s.push(last - i); // last `edge`
+    }
+    s.sort_unstable();
+    s.dedup();
+    s
+}
+
+/// Width the abbreviated bar occupies for `to_show`: a leading space, each cell's
+/// label plus a trailing space, and 4 columns per "... " gap.
+fn shown_width(segs: &[Seg], to_show: &[usize]) -> usize {
+    let mut w = 1; // leading space
+    let mut prev: Option<usize> = None;
+    for &i in to_show {
+        if let Some(p) = prev {
+            if i > p + 1 {
+                w += 4; // "... "
+            }
+        }
+        w += segs[i].label().chars().count() + 1;
+        prev = Some(i);
+    }
+    w
+}
+
+/// Indices for the abbreviated frame bar, preferring 3 segments at each edge but
+/// shrinking the edge groups (3 → 2 → 1) when the row is too narrow to fit them.
+fn abbreviated_indices(segs: &[Seg], cur: usize, width: usize) -> Vec<usize> {
+    for edge in [3usize, 2, 1] {
+        let idx = pick_indices(segs.len(), cur, edge);
+        if shown_width(segs, &idx) <= width {
+            return idx;
+        }
+    }
+    // Even the narrowest grouping overflows a tiny terminal — show it anyway.
+    pick_indices(segs.len(), cur, 1)
 }
 
 fn render_seg(stdout: &mut io::Stdout, seg: &Seg, current: usize, selected: &[usize]) -> anyhow::Result<()> {
@@ -280,4 +329,49 @@ fn render_seg(stdout: &mut io::Stdout, seg: &Seg, current: usize, selected: &[us
         queue!(stdout, style::Print(format!("{label} ")))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn singles(n: usize) -> Vec<Seg> {
+        (0..n).map(Seg::Single).collect()
+    }
+
+    #[test]
+    fn pick_indices_shows_three_at_each_edge_plus_the_current_window() {
+        // 20 segments, cursor at 10: first 3, the current ±1, and last 3.
+        let idx = pick_indices(20, 10, 3);
+        assert_eq!(idx, vec![0, 1, 2, 9, 10, 11, 17, 18, 19]);
+    }
+
+    #[test]
+    fn pick_indices_dedups_when_groups_overlap_near_an_edge() {
+        // Cursor near the front: the current window merges into the first group.
+        let idx = pick_indices(20, 1, 3);
+        assert_eq!(idx, vec![0, 1, 2, 17, 18, 19]);
+        // Cursor near the back: it merges into the last group.
+        let idx = pick_indices(20, 18, 3);
+        assert_eq!(idx, vec![0, 1, 2, 17, 18, 19]);
+    }
+
+    #[test]
+    fn abbreviated_indices_prefers_three_edges_when_it_fits() {
+        // Plenty of width → the full first-3 / current / last-3 view.
+        let segs = singles(30);
+        let idx = abbreviated_indices(&segs, 15, 80);
+        assert_eq!(idx, vec![0, 1, 2, 14, 15, 16, 27, 28, 29]);
+    }
+
+    #[test]
+    fn abbreviated_indices_shrinks_edges_on_a_narrow_row() {
+        // A narrow row can't fit 3+3+3, so the edge groups shrink toward 1.
+        let segs = singles(30);
+        let wide = abbreviated_indices(&segs, 15, 80).len();
+        let narrow = abbreviated_indices(&segs, 15, 30).len();
+        assert!(narrow < wide, "narrow row should drop segments: {narrow} < {wide}");
+        // The current frame is always retained.
+        assert!(abbreviated_indices(&segs, 15, 18).contains(&15));
+    }
 }

@@ -213,7 +213,7 @@ auto groups (their members shift instead).
 | `src/editor/panel.rs` | Left panel (Add Object), right panel (Properties incl. `Bool` checkboxes + colour swatches), object selection overlay, and the centred multi-line text-editing overlay (`render_text_overlay`). Every text field draws its caret through one shared helper, `draw_caret_line` (see "Text caret convention" below) |
 | `src/editor/properties.rs` | `Editable` trait — one impl per object type holds its property list, setter, coordinate + geometry accessors; generic dispatch (`get_properties`, `set_property`, `common_properties` = the intersection of bulk-editable props across a selection, …) is type-agnostic. `PropertyKind::Bool` flags toggle in place (Space/Enter); `PropertyKind::Note` renders a non-editable free-form warning line (the whole `value`, no `name:`) — the mechanism for surfacing per-object warnings in the panel |
 | `src/editor/preview.rs` | Canvas preview using Engine+Renderer |
-| `src/editor/timeline.rs` | Frame bar (row 1) and mode/status line (row 2). The frame bar is always shown; while typing a `FrameJump`/`FrameSelectInput`, it live-highlights the slides the input resolves to and the typed field + instructions render on row 2. Frames under an auto-play `Animation` collapse into a single range cell (`[10-20]`); strictly-overlapping auto-play spans merge into one range (continuous auto-advance), adjacent-but-disjoint ones stay separate |
+| `src/editor/timeline.rs` | Frame bar (row 1) and mode/status line (row 2). The frame bar is always shown; while typing a `FrameJump`/`FrameSelectInput`, it live-highlights the slides the input resolves to and the typed field + instructions render on row 2. Frames under an auto-play `Animation` collapse into a single range cell (`[10-20]`); strictly-overlapping auto-play spans merge into one range (continuous auto-advance), adjacent-but-disjoint ones stay separate. When the bar overflows the row it abbreviates to the **first 3** segments, a 3-wide window around the current frame, and the **last 3** (with `...` for skipped gaps); the edge groups shrink 3→2→1 only when the row is too narrow (`abbreviated_indices`/`pick_indices`) |
 | `src/editor/menubar.rs` | Context-sensitive menu bar |
 | `src/editor/ui.rs` | Layout computation |
 
@@ -464,9 +464,12 @@ cross-deck `copy_frame_block`/`paste_frame_block` (block-local range normalisati
 fresh `Animation` ids with no collision, group-member repoint, flatten of an
 animation outside the block);
 `editor/input.rs` — `apply_animation`/`apply_converge` id reuse + the
-"editing a span never duplicates the animation" regression). The suite
-totals 242 tests (114 integration
-+ 128 inline); `TESTS.md` is the authoritative per-test list.
+"editing a span never duplicates the animation" regression;
+`editor/timeline.rs` — `pick_indices`/`abbreviated_indices` (first-3 / current
+window / last-3 selection, dedup near the edges, and edge-group shrink on a
+narrow row)). The suite
+totals 246 tests (114 integration
++ 132 inline); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the
