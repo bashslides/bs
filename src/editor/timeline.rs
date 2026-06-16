@@ -123,6 +123,9 @@ pub fn render_timeline(
         Mode::FrameRangePlace { copy: true, .. } => "COPY RANGE",
         Mode::FrameMove { .. } | Mode::FrameMovePlace { .. } => "MOVE FRAME",
         Mode::FrameOverlay { .. } => "OVERLAY FRAME",
+        Mode::FramePastePlace => "PASTE FRAMES",
+        Mode::PresentationMenu { .. } => "PRESENTATIONS",
+        Mode::OpenFile { .. } => "OPEN FILE",
     };
     let dirty_str = if state.dirty { " [modified]" } else { "" };
     // Replace newlines so a multi-line label value doesn't scroll the terminal.

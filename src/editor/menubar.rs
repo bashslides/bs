@@ -14,17 +14,17 @@ use super::ui::Layout;
 fn mode_items(state: &EditorState) -> Vec<&'static str> {
     match &state.mode {
         Mode::Normal => {
+            // Save-as, settings and fullscreen now live in the [p]resentations
+            // hub (so several decks, plus those actions, share one entry).
             let mut items = vec![
                 "[←][→] frame",
                 "[⇧←][⇧→] ±10",
                 "[a]dd",
                 "[s]elect",
                 "[f]rame",
-                "settin[g]s",
+                "[p]resentations",
                 "[Ctrl-s]ave",
-                "[S]ave as",
                 "[q]uit",
-                "[F]ull",
             ];
             // Paste is surfaced only once something has been copied — copy itself
             // lives behind [s]elect (single object → its menu, or the action
@@ -34,23 +34,52 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             }
             items
         }
+        Mode::PresentationMenu { .. } => vec![
+            "[↑][↓] deck",
+            "[Enter] switch",
+            "[o]pen",
+            "[s]ave as",
+            "settin[g]s",
+            "[f]ullscreen",
+            "[Esc] back",
+        ],
+        Mode::OpenFile { .. } => vec![
+            "[type] file path",
+            "[Enter] open",
+            "[Esc] cancel",
+        ],
+        Mode::FramePastePlace => vec![
+            "[←][→] pick target",
+            "[Enter] paste after",
+            "[b]efore",
+            "[Esc] cancel",
+            "[F]ull",
+        ],
         Mode::SaveAs { .. } => vec![
             "[type] filename",
             "[Enter] save",
             "[Esc] cancel",
         ],
-        Mode::FrameMenu => vec![
-            "[a]dd blank",
-            "[c]opy",
-            "[o]verlay onto",
-            "[j]ump",
-            "[s]elect",
-            "[t] auto-advance",
-            "[d]elete",
-            "[m]ove",
-            "[Esc] back",
-            "[F]ull",
-        ],
+        Mode::FrameMenu => {
+            let mut items = vec![
+                "[a]dd blank",
+                "[c]opy",
+                "[o]verlay onto",
+                "[j]ump",
+                "[s]elect",
+                "[t] auto-advance",
+                "[d]elete",
+                "[m]ove",
+                "[Esc] back",
+                "[F]ull",
+            ];
+            // Paste-frames is offered only when the cross-deck frame clipboard
+            // holds something (mirrors the [v] paste convention).
+            if state.workspace.frame_clip_frames > 0 {
+                items.insert(8, "[p]aste frames");
+            }
+            items
+        }
         Mode::FrameAutoInput { .. } => vec![
             "[type] seconds",
             "[Enter] set",
@@ -70,6 +99,7 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             "[d]elete selected",
             "[m]ove range",
             "[c]opy range",
+            "[y] yank→deck",
             "[Esc] cancel",
             "[F]ull",
         ],

@@ -393,6 +393,12 @@ reconstructed character grid (some also assert on cell styles).
 | `clone_selection_drops_members_outside_the_selection` | A group member not in the selection is dropped from the clone's member list |
 | `link_siblings_returns_family_minus_self` | `link_siblings` returns the rest of an object's link family; empty when unlinked |
 | `delete_shifts_and_prunes_link_families` | Deleting an object drops it from link families, shifts higher indices, and prunes families that fall below two members |
+| `copy_frame_block_normalises_ranges_to_block_local` | `copy_frame_block` captures objects overlapping the block, clipping each range into the block's own `0..frame_count` coordinates |
+| `copy_frame_block_skips_objects_outside_the_block` | An object visible only outside the copied block is not captured |
+| `paste_frame_block_inserts_frames_and_shifts_ranges` | `paste_frame_block` inserts the block's frames into the target deck and shifts pasted ranges to the destination; a spanning background stretches over them |
+| `paste_frame_block_assigns_fresh_anim_ids_with_no_collision` | A pasted `Animation` gets a fresh id (no collision with an identically-numbered animation already in the target) and the pasted coordinates reference it, while the target's own animation keeps its id |
+| `paste_frame_block_repoints_group_members_into_destination` | Block-local `Group.members` in the clipboard are re-pointed to the new absolute indices in the destination deck |
+| `copy_frame_block_flattens_animation_outside_the_block` | A coordinate driven by an animation whose span lies outside the copied block is flattened to `Fixed` at capture (no dangling animation reference) |
 
 ### Morph stepping — `src/engine/objects/morph.rs`
 

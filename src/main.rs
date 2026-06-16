@@ -19,7 +19,7 @@ fn main() {
 
 const COMPILE_USAGE: &str = "bs compile <source.json> <output.json>";
 const PLAY_USAGE: &str = "bs play <presentation.json>";
-const EDIT_USAGE: &str = "bs edit <source.json>";
+const EDIT_USAGE: &str = "bs edit <source.json> [more.json ...]";
 const MIGRATE_USAGE: &str = "bs migrate <source.json>   (upgrades the file in place; writes <source.json>.bak)";
 
 fn run() -> Result<()> {
@@ -36,8 +36,11 @@ fn run() -> Result<()> {
             play(&path)
         }
         Some("edit") => {
-            let path = args.next().context(EDIT_USAGE)?;
-            edit(&path)
+            let paths: Vec<String> = args.collect();
+            if paths.is_empty() {
+                bail!(EDIT_USAGE);
+            }
+            edit(&paths)
         }
         Some("migrate") => {
             let path = args.next().context(MIGRATE_USAGE)?;
@@ -85,8 +88,8 @@ fn compile(source_path: &str, output_path: &str) -> Result<()> {
     Ok(())
 }
 
-fn edit(path: &str) -> Result<()> {
-    let mut editor = Editor::open(path)?;
+fn edit(paths: &[String]) -> Result<()> {
+    let mut editor = Editor::open_many(paths)?;
     editor.run()
 }
 

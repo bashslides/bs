@@ -268,6 +268,63 @@ pub fn render_right_panel(
         return Ok(());
     }
 
+    // === PresentationMenu (switch between open decks) ===
+    if let Mode::PresentationMenu { selected } = &state.mode {
+        let selected = *selected;
+        draw_header(stdout, "Presentations")?;
+        for (i, name) in state.workspace.deck_names.iter().enumerate() {
+            let y = cy + (i + 2) as u16;
+            if y >= cy + layout.canvas_height {
+                break;
+            }
+            // Mark the active deck with a leading dot; the highlighted row gets
+            // the reverse-video selection bar.
+            let marker = if i == state.workspace.active { "●" } else { " " };
+            let label: String = format!("{marker} {name}")
+                .chars().take(max_width.saturating_sub(2)).collect();
+            queue!(stdout, cursor::MoveTo(panel_x + 2, y))?;
+            if i == selected {
+                queue!(
+                    stdout,
+                    style::SetAttribute(style::Attribute::Reverse),
+                    style::Print(format!("> {:<width$}", label, width = max_width.saturating_sub(2))),
+                    style::SetAttribute(style::Attribute::Reset),
+                )?;
+            } else {
+                queue!(
+                    stdout,
+                    style::Print(format!("  {:<width$}", label, width = max_width.saturating_sub(2))),
+                )?;
+            }
+        }
+        return Ok(());
+    }
+
+    // === OpenFile (path prompt for opening another deck) ===
+    if let Mode::OpenFile { buf, cursor } = &state.mode {
+        let cursor = *cursor;
+        draw_header(stdout, "Open Presentation")?;
+        if cy + 2 < cy + layout.canvas_height {
+            let instr: String = "Path to .json:".chars().take(max_width).collect();
+            queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 2),
+                style::SetAttribute(style::Attribute::Dim),
+                style::Print(instr),
+                style::SetAttribute(style::Attribute::Reset))?;
+        }
+        if cy + 3 < cy + layout.canvas_height {
+            let caret = cursor.min(buf.chars().count());
+            draw_caret_line(stdout, panel_x + 2, cy + 3, buf, Some(caret), true, max_width)?;
+        }
+        if cy + 5 < cy + layout.canvas_height {
+            let hint: String = "Enter = open   Esc = back".chars().take(max_width).collect();
+            queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 5),
+                style::SetAttribute(style::Attribute::Dim),
+                style::Print(hint),
+                style::SetAttribute(style::Attribute::Reset))?;
+        }
+        return Ok(());
+    }
+
     // === EditMultiProperties (bulk-edit the shared props of a selection) ===
     if let Mode::EditMultiProperties {
         members, selected_property, editing_value, cursor, scroll, panel_scroll, dropdown,

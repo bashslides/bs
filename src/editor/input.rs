@@ -22,6 +22,17 @@ pub enum Action {
     BlinkSelection,
     Quit,
     ToggleFullscreen,
+    /// Switch the active presentation to the deck at this index (from the
+    /// presentations switcher). Interpreted by the `Editor`, which owns the decks.
+    SwitchDeck(usize),
+    /// Open the file at this path as a new deck (or focus it if already open).
+    OpenDeck(String),
+    /// Capture the contiguous frame block `[lo, hi]` of the active deck into the
+    /// cross-deck frame clipboard (owned by the `Editor`).
+    CopyFrameBlock { lo: usize, hi: usize },
+    /// Paste the cross-deck frame clipboard into the active deck, dropping the
+    /// block before/after `target`.
+    PasteFrameBlock { target: usize, before: bool },
 }
 
 /// Whether the current mode is actively capturing typed characters into a text
@@ -37,6 +48,7 @@ fn mode_accepts_text(mode: &Mode) -> bool {
         | Mode::TableRemoveColumn { .. }
         | Mode::LoadArtFile { .. }
         | Mode::SaveAs { .. }
+        | Mode::OpenFile { .. }
         | Mode::FrameJump { .. }
         | Mode::FrameSelectInput { .. }
         | Mode::FrameAutoInput { .. } => true,
@@ -87,6 +99,9 @@ fn handle_key(state: &mut EditorState, key: KeyEvent) -> Action {
         Mode::FrameMove { .. } => handle_frame_move(state, key),
         Mode::FrameMovePlace { .. } => handle_frame_move_place(state, key),
         Mode::FrameOverlay { .. } => handle_frame_overlay(state, key),
+        Mode::FramePastePlace => handle_frame_paste_place(state, key),
+        Mode::PresentationMenu { .. } => handle_presentation_menu(state, key),
+        Mode::OpenFile { .. } => handle_open_file(state, key),
         Mode::AddObject { .. } => handle_add_object(state, key),
         Mode::SelectAction { .. } => handle_select_action(state, key),
         Mode::SelectedObject { .. } => handle_selected_object(state, key),
@@ -713,6 +728,14 @@ fn handle_normal(state: &mut EditorState, key: KeyEvent) -> Action {
         state.status_message = None;
         return Action::Redraw;
     }
+    // Presentations hub: switch between open decks, open another file, and the
+    // save-as / settings / fullscreen actions (all also reachable elsewhere).
+    if matches_binding(&bindings.presentations_menu, &key) {
+        let selected = state.workspace.active;
+        state.mode = Mode::PresentationMenu { selected };
+        state.status_message = None;
+        return Action::Redraw;
+    }
     // Paste: place the clipboard's clones as a movable ghost on this frame.
     // (Copy and Converge are now reached via `s` select → action sub-menu.)
     if matches_binding(&bindings.paste, &key) {
@@ -729,6 +752,16 @@ fn handle_frame_menu(state: &mut EditorState, key: KeyEvent) -> Action {
 
     if matches_binding(&bindings.cancel, &key) {
         state.mode = Mode::Normal;
+        return Action::Redraw;
+    }
+    // Paste the cross-deck frame clipboard — offered only when it holds frames.
+    if state.workspace.frame_clip_frames > 0 && matches_binding(&bindings.frame_clip_paste, &key) {
+        state.current_frame = state.current_frame.min(state.source.frame_count.saturating_sub(1));
+        state.mode = Mode::FramePastePlace;
+        state.status_message = Some(format!(
+            "Paste {} frame(s) — ←/→ pick target, [Enter] after / [b] before",
+            state.workspace.frame_clip_frames
+        ));
         return Action::Redraw;
     }
     if matches_binding(&bindings.frame_add, &key) {
@@ -993,6 +1026,19 @@ fn handle_frame_selected(state: &mut EditorState, key: KeyEvent) -> Action {
         state.mode = Mode::FrameMenu;
         state.status_message = None;
         return Action::Redraw;
+    }
+    // [y] yank the (contiguous) block to the cross-deck frame clipboard, ready to
+    // paste into another open presentation.
+    if matches_binding(&bindings.frame_clip_copy, &key) {
+        if !is_contiguous_range(&frames) {
+            state.status_message =
+                Some("Select a contiguous range (e.g. 5-12) to copy across decks".into());
+            return Action::Redraw;
+        }
+        return Action::CopyFrameBlock {
+            lo: frames[0],
+            hi: frames[frames.len() - 1],
+        };
     }
     if matches_binding(&bindings.frame_delete, &key) {
         if frames.len() >= state.source.frame_count {
@@ -1279,6 +1325,129 @@ fn handle_frame_overlay(state: &mut EditorState, key: KeyEvent) -> Action {
         return Action::Redraw;
     }
 
+    Action::Continue
+}
+
+/// Scrolling the deck to choose where to drop the cross-deck frame clipboard:
+/// ←/→ pick a target slide, Enter drops the pasted block after it, `b` before it.
+/// The actual paste is performed by the `Editor` (it owns the clipboard).
+fn handle_frame_paste_place(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::FrameMenu;
+        state.status_message = Some("Paste cancelled".into());
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.next_frame, &key) {
+        let last = state.source.frame_count.saturating_sub(1);
+        if state.current_frame < last {
+            state.current_frame += 1;
+        }
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.prev_frame, &key) {
+        if state.current_frame > 0 {
+            state.current_frame -= 1;
+        }
+        return Action::Redraw;
+    }
+    let before = if matches_binding(&bindings.confirm, &key) {
+        false // Enter = after
+    } else if matches_binding(&bindings.frame_move_before, &key) {
+        true // b = before
+    } else {
+        return Action::Continue;
+    };
+    Action::PasteFrameBlock {
+        target: state.current_frame,
+        before,
+    }
+}
+
+/// The presentations hub: a list of the open decks (Enter switches to the
+/// highlighted one) plus open-file / save-as / settings / fullscreen actions.
+/// Switching decks is an `Editor`-level action (a deck can't reach its siblings),
+/// so Enter returns `Action::SwitchDeck`; the deck list itself is mirrored into
+/// `state.workspace` by the `Editor`.
+fn handle_presentation_menu(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+    let selected = match &state.mode {
+        Mode::PresentationMenu { selected } => *selected,
+        _ => return Action::Continue,
+    };
+    let count = state.workspace.deck_names.len().max(1);
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::Normal;
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.move_up, &key) {
+        let new_sel = if selected == 0 { count - 1 } else { selected - 1 };
+        state.mode = Mode::PresentationMenu { selected: new_sel };
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.move_down, &key) {
+        let new_sel = (selected + 1) % count;
+        state.mode = Mode::PresentationMenu { selected: new_sel };
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.confirm, &key) {
+        return Action::SwitchDeck(selected);
+    }
+    if matches_binding(&bindings.presentation_open, &key) {
+        state.mode = Mode::OpenFile { buf: String::new(), cursor: 0 };
+        state.status_message = Some("Open file — type a path".into());
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.presentation_save_as, &key) {
+        let buf = state.file_path.clone();
+        let cursor = buf.chars().count();
+        state.mode = Mode::SaveAs { buf, cursor };
+        state.status_message = Some("Save as — type a filename".into());
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.open_settings, &key) {
+        let width_buf = state.source.width.to_string();
+        let height_buf = state.source.height.to_string();
+        let cursor = width_buf.chars().count();
+        state.mode = Mode::Settings { selected_field: 0, width_buf, height_buf, cursor };
+        state.status_message = None;
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.presentation_fullscreen, &key) {
+        return Action::ToggleFullscreen;
+    }
+
+    Action::Continue
+}
+
+/// Typing a path to open another presentation as a new deck. Enter opens it (the
+/// `Editor` adds/focuses the deck); Esc returns to the presentations menu.
+fn handle_open_file(state: &mut EditorState, key: KeyEvent) -> Action {
+    let bindings = state.config.key_bindings.clone();
+    let (mut buf, mut cursor) = match &state.mode {
+        Mode::OpenFile { buf, cursor } => (buf.clone(), *cursor),
+        _ => return Action::Continue,
+    };
+
+    if matches_binding(&bindings.cancel, &key) {
+        state.mode = Mode::PresentationMenu { selected: state.workspace.active };
+        state.status_message = Some("Open cancelled".into());
+        return Action::Redraw;
+    }
+    if matches_binding(&bindings.confirm, &key) {
+        let path = buf.trim();
+        if path.is_empty() {
+            state.status_message = Some("Enter a file path".into());
+            return Action::Redraw;
+        }
+        return Action::OpenDeck(path.to_string());
+    }
+    if frame_text_key(&key, &mut buf, &mut cursor) {
+        state.mode = Mode::OpenFile { buf, cursor };
+        return Action::Redraw;
+    }
     Action::Continue
 }
 

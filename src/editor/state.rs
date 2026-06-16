@@ -329,6 +329,24 @@ pub enum Mode {
         /// Index of the source slide whose objects will be pasted.
         from: usize,
     },
+    /// The presentations switcher/hub: lists every open deck (Enter switches to
+    /// the highlighted one) and offers open-file / save-as / settings /
+    /// fullscreen. `selected` is the highlighted deck row (index into the active
+    /// deck's `workspace.deck_names`).
+    PresentationMenu {
+        selected: usize,
+    },
+    /// Typing a path to open another presentation as a new deck (reached from the
+    /// presentations menu). Enter opens it; Esc returns to the menu.
+    OpenFile {
+        buf: String,
+        cursor: usize,
+    },
+    /// Placing the cross-deck frame clipboard into this deck. Left/Right scroll
+    /// the deck to a target slide (tracked by `current_frame`); Enter drops the
+    /// pasted block *after* it, `b` *before* it. The block itself lives on the
+    /// workspace-level frame clipboard, so this carries no fields.
+    FramePastePlace,
     /// Navigating / selecting cells in a table to edit their properties.
     TableEditCellProps {
         object_index: usize,
@@ -338,6 +356,24 @@ pub enum Mode {
         selected_cells: Vec<(usize, usize)>,
         sub_state: TableCellSubState,
     },
+}
+
+/// A read-only snapshot of workspace-level state (the other open decks and the
+/// cross-deck frame clipboard) that the `Editor` mirrors into the active deck
+/// before each redraw. The menu bar, the presentations switcher panel, and the
+/// frame sub-menu read it; only the `Editor` writes it. Keeping it here lets the
+/// renderers and handlers stay `&EditorState`-only while still showing
+/// cross-deck information.
+#[derive(Debug, Clone, Default)]
+pub struct WorkspaceView {
+    /// Display name (file basename, with a trailing `*` when dirty) of every open
+    /// deck, in deck order.
+    pub deck_names: Vec<String>,
+    /// Index of the currently active deck within `deck_names`.
+    pub active: usize,
+    /// Number of frames currently held in the cross-deck frame clipboard (0 when
+    /// empty). Gates the "paste frames" frame-menu action.
+    pub frame_clip_frames: usize,
 }
 
 pub struct EditorState {
@@ -358,6 +394,10 @@ pub struct EditorState {
     /// Source object indices the clipboard was copied from, for a *linked* paste
     /// (so the stamped copies sync with the original). Re-validated at paste.
     pub clipboard_sources: Vec<usize>,
+    /// Mirror of workspace-level state (other open decks, the cross-deck frame
+    /// clipboard), refreshed by the `Editor` before each redraw. See
+    /// [`WorkspaceView`].
+    pub workspace: WorkspaceView,
 }
 
 impl EditorState {
@@ -388,6 +428,7 @@ impl EditorState {
             fullscreen: false,
             clipboard: Vec::new(),
             clipboard_sources: Vec::new(),
+            workspace: WorkspaceView::default(),
         })
     }
 
@@ -886,6 +927,188 @@ pub fn overlay_frame(source: &mut SourcePresentation, from: usize, onto: usize) 
     }
 
     index_map.len()
+}
+
+/// A self-contained, deck-independent capture of a contiguous block of frames,
+/// ready to paste into *any* open deck (see [`copy_frame_block`] /
+/// [`paste_frame_block`]). The capture is normalised so it carries no references
+/// into its source deck:
+///
+/// * object frame ranges are in the block's own `0..frame_count` coordinates;
+/// * `Group.members` are block-local indices (members outside the block dropped);
+/// * `Animation` ids are block-local (reassigned fresh on paste);
+/// * any animated coordinate whose driving `Animation` lies *outside* the block
+///   is flattened to a `Fixed` at capture time, so the clipboard never holds a
+///   dangling animation reference.
+///
+/// `width`/`height` are the source canvas size, so a paste can warn on a
+/// mismatch.
+#[derive(Debug, Clone)]
+pub struct FrameClipboard {
+    pub width: u16,
+    pub height: u16,
+    pub frame_count: usize,
+    pub objects: Vec<SceneObject>,
+}
+
+/// Flatten every animated coordinate on `obj` whose animation id is **not** in
+/// `keep` to a `Fixed` value sampled at `frame`. Used by [`copy_frame_block`] so a
+/// captured object never references an animation that won't travel with it.
+fn flatten_uncaptured_anims(
+    obj: &mut SceneObject,
+    frame: usize,
+    anims: &AnimSpans,
+    keep: &std::collections::HashSet<AnimId>,
+) {
+    for coord in scene_object_coordinates_mut(obj) {
+        let drop = matches!(coord, Coordinate::Animated { anim, .. } if !keep.contains(anim));
+        if drop {
+            *coord = Coordinate::Fixed(coord.evaluate(frame, anims) as f64);
+        }
+    }
+}
+
+/// Capture the contiguous frame block `[lo, hi]` (inclusive, 0-based) of `source`
+/// into a self-contained [`FrameClipboard`] (see its docs for the normalisation).
+/// Unlike [`copy_frames`] (which duplicates within one deck and relies on the
+/// deck's own spanning objects being stretched across the seam), this captures
+/// **every** object overlapping the block — the destination deck has nothing of
+/// its own to reuse. A no-op-ish empty clipboard results from an invalid block.
+pub fn copy_frame_block(source: &SourcePresentation, lo: usize, hi: usize) -> FrameClipboard {
+    if lo > hi || hi >= source.frame_count {
+        return FrameClipboard {
+            width: source.width,
+            height: source.height,
+            frame_count: 0,
+            objects: Vec::new(),
+        };
+    }
+    let count = hi - lo + 1;
+    let anims = AnimSpans::of(source);
+
+    // Objects overlapping the block by *effective* range (so auto groups, whose
+    // range derives from members, are captured too).
+    let captured: Vec<usize> = (0..source.objects.len())
+        .filter(|&i| {
+            let fr = source.effective_frame_range(i);
+            fr.start.max(lo) < fr.end.min(hi + 1)
+        })
+        .collect();
+
+    // Block-local index map (old object index -> position within the capture).
+    let pos: std::collections::HashMap<usize, usize> = captured
+        .iter()
+        .enumerate()
+        .map(|(local, &src)| (src, local))
+        .collect();
+    // Animation ids whose `Animation` object travels with the block; coordinates
+    // referencing any *other* id get flattened.
+    let kept_ids: std::collections::HashSet<AnimId> = captured
+        .iter()
+        .filter_map(|&i| match &source.objects[i] {
+            SceneObject::Animation(a) => Some(a.id),
+            _ => None,
+        })
+        .collect();
+
+    let mut objects: Vec<SceneObject> = Vec::with_capacity(captured.len());
+    for &i in &captured {
+        let mut clone = source.objects[i].clone();
+        // Flatten coordinates driven by an animation that won't travel with us,
+        // sampled at the block-clipped start of this object's own range.
+        let obj_start = source.effective_frame_range(i).start.max(lo);
+        flatten_uncaptured_anims(&mut clone, obj_start, &anims, &kept_ids);
+        // Normalise the stored range to block-local `0..count` (clipped to block).
+        if let Some(fr) = scene_object_frame_range_mut(&mut clone) {
+            fr.start = fr.start.max(lo) - lo;
+            fr.end = fr.end.min(hi + 1) - lo;
+        }
+        // Remap group members to block-local; drop members outside the block.
+        if let SceneObject::Group(g) = &mut clone {
+            g.members = g.members.iter().filter_map(|m| pos.get(m).copied()).collect();
+        }
+        objects.push(clone);
+    }
+
+    FrameClipboard {
+        width: source.width,
+        height: source.height,
+        frame_count: count,
+        objects,
+    }
+}
+
+/// Paste a [`FrameClipboard`] into `target` as a new block of frames placed
+/// immediately before (`before`) or after the `target_frame`, growing the deck by
+/// `clip.frame_count` frames. Returns `(new_current, count)`, where `new_current`
+/// is the first frame of the pasted block.
+///
+/// The clipboard is deck-independent, so this is the cross-deck counterpart of
+/// the tail of [`copy_frames`]: it inserts blank frames, appends the clones with
+/// their block-local ranges shifted into the destination, re-points cloned
+/// `Group.members` from block-local to the new absolute indices, and — the key
+/// correctness step — gives each cloned `Animation` a **fresh id** in the target
+/// (remapping the driven coordinates) so a pasted animation can never collide
+/// with or alias one already in the destination deck.
+pub fn paste_frame_block(
+    target: &mut SourcePresentation,
+    clip: &FrameClipboard,
+    target_frame: usize,
+    before: bool,
+) -> (usize, usize) {
+    if clip.frame_count == 0 {
+        return (target_frame.min(target.frame_count.saturating_sub(1)), 0);
+    }
+    let count = clip.frame_count;
+    let target_frame = target_frame.min(target.frame_count.saturating_sub(1));
+    let dest = if before { target_frame } else { target_frame + 1 };
+
+    insert_blank_frames_at(target, dest, count);
+
+    // Append the clones, shifting block-local ranges and group members into the
+    // destination. `first_new` is where the clipboard's object 0 lands.
+    let first_new = target.objects.len();
+    let mut clones = clip.objects.clone();
+    for clone in &mut clones {
+        if let Some(fr) = scene_object_frame_range_mut(clone) {
+            fr.start += dest;
+            fr.end += dest;
+        }
+        if let SceneObject::Group(g) = clone {
+            for m in &mut g.members {
+                *m += first_new;
+            }
+        }
+    }
+    target.objects.extend(clones);
+
+    // Fresh animation ids in the target; remap the cloned coordinates that
+    // referenced them so the pasted block animates independently.
+    let mut id_map: std::collections::HashMap<AnimId, AnimId> = std::collections::HashMap::new();
+    for idx in first_new..target.objects.len() {
+        if matches!(target.objects[idx], SceneObject::Animation(_)) {
+            // `next_anim_id` sees ids assigned on previous iterations, so each
+            // cloned animation gets a distinct fresh id.
+            let new = next_anim_id(target);
+            if let SceneObject::Animation(a) = &mut target.objects[idx] {
+                id_map.insert(a.id, new);
+                a.id = new;
+            }
+        }
+    }
+    if !id_map.is_empty() {
+        for idx in first_new..target.objects.len() {
+            for coord in scene_object_coordinates_mut(&mut target.objects[idx]) {
+                if let Coordinate::Animated { anim, .. } = coord {
+                    if let Some(&new) = id_map.get(anim) {
+                        *anim = new;
+                    }
+                }
+            }
+        }
+    }
+
+    (dest, count)
 }
 
 /// Give a new animation spanning `[start, end_frame]` (inclusive last animated
@@ -2426,5 +2649,127 @@ mod tests {
         // Deleting the frame the marker sits on collapses its range and prunes it.
         adjust_frames_after_delete(&mut p, 2);
         assert!(!p.objects.iter().any(|o| matches!(o, SceneObject::AutoAdvance(_))));
+    }
+
+    // --- cross-deck frame clipboard (copy_frame_block / paste_frame_block) ----
+
+    /// A Label on `[start, end)` whose x is animated by `anim` from `from`→`to`.
+    fn animated_label(start: usize, end: usize, anim: AnimId, from: u16, to: u16) -> SceneObject {
+        let mut obj = label(start, end);
+        if let SceneObject::Label(l) = &mut obj {
+            l.position.x = Coordinate::Animated { from, to, anim };
+        }
+        obj
+    }
+
+    #[test]
+    fn copy_frame_block_normalises_ranges_to_block_local() {
+        // frames 0..6: a deck-wide background (0..6) and a mid-deck label (2..5).
+        let mut bg = label(0, 6);
+        set_text(&mut bg, "bg");
+        let mut mid = label(2, 5);
+        set_text(&mut mid, "mid");
+        let p = pres(6, vec![bg, mid]);
+
+        // Copy block [2, 4] (inclusive) → 3 frames; ranges clip into 0..3.
+        let clip = copy_frame_block(&p, 2, 4);
+        assert_eq!(clip.frame_count, 3);
+        assert_eq!(clip.objects.len(), 2);
+        let got: Vec<(String, (usize, usize))> =
+            clip.objects.iter().map(|o| (text(o), range(o))).collect();
+        assert!(got.contains(&("bg".to_string(), (0, 3)))); // 0..6 ∩ 2..5 → local 0..3
+        assert!(got.contains(&("mid".to_string(), (0, 3)))); // 2..5 ∩ 2..5 → local 0..3
+    }
+
+    #[test]
+    fn copy_frame_block_skips_objects_outside_the_block() {
+        // A label only on frame 5 is not captured by a [0,1] copy.
+        let p = pres(6, vec![label(0, 1), label(5, 6)]);
+        let clip = copy_frame_block(&p, 0, 1);
+        assert_eq!(clip.objects.len(), 1);
+    }
+
+    #[test]
+    fn paste_frame_block_inserts_frames_and_shifts_ranges() {
+        let src = pres(2, vec![label(0, 2)]);
+        let clip = copy_frame_block(&src, 0, 1); // whole deck, 2 frames
+
+        let mut tgt = pres(3, vec![label(0, 3)]); // a 3-frame deck w/ a bg
+        let (new_current, count) = paste_frame_block(&mut tgt, &clip, 0, false); // after frame 0
+        assert_eq!(count, 2);
+        assert_eq!(new_current, 1); // first frame of the pasted block
+        assert_eq!(tgt.frame_count, 5);
+        // The pasted label lands on the new block [1, 3); the bg stretched to 0..5.
+        let pasted = tgt.objects.last().unwrap();
+        assert_eq!(range(pasted), (1, 3));
+        assert_eq!(range(&tgt.objects[0]), (0, 5));
+    }
+
+    #[test]
+    fn paste_frame_block_assigns_fresh_anim_ids_with_no_collision() {
+        // Source: animation id=1 over [0,2) driving a label's x (3→9).
+        let mut src = pres(2, vec![animated_label(0, 2, 1, 3, 9)]);
+        ensure_animation(&mut src, 1, 0, 2, true, 500, 0);
+        let clip = copy_frame_block(&src, 0, 1);
+
+        // Target ALSO has an animation id=1 (same id) — the collision case.
+        let mut tgt = pres(1, vec![animated_label(0, 1, 1, 0, 0)]);
+        ensure_animation(&mut tgt, 1, 0, 1, true, 500, 0);
+
+        paste_frame_block(&mut tgt, &clip, 0, false);
+
+        // Two distinct animations now exist; the original keeps id 1.
+        let ids: Vec<AnimId> = tgt
+            .objects
+            .iter()
+            .filter_map(|o| match o {
+                SceneObject::Animation(a) => Some(a.id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&1));
+        let fresh = *ids.iter().find(|&&id| id != 1).expect("a fresh id");
+        // The pasted label (last Label) references the fresh id, not the old 1.
+        let pasted_label = tgt
+            .objects
+            .iter()
+            .rev()
+            .find(|o| matches!(o, SceneObject::Label(_)))
+            .unwrap();
+        assert_eq!(referenced_anim_ids(pasted_label), vec![fresh]);
+        // The original label still references id 1.
+        assert_eq!(referenced_anim_ids(&tgt.objects[0]), vec![1]);
+    }
+
+    #[test]
+    fn paste_frame_block_repoints_group_members_into_destination() {
+        // Source: label0, label1, group(0,1) all on frame 0.
+        let src = pres(1, vec![label(0, 1), label(0, 1), group(vec![0, 1])]);
+        let clip = copy_frame_block(&src, 0, 0);
+        // In the clipboard the group's members are block-local.
+        let g = clip.objects.iter().find(|o| matches!(o, SceneObject::Group(_))).unwrap();
+        assert_eq!(members_of(g), vec![0, 1]);
+
+        // Paste into a deck that already has one object, so the block lands at
+        // indices 1,2,3 and the group must point at 1,2 (not 0,1).
+        let mut tgt = pres(1, vec![label(0, 1)]);
+        paste_frame_block(&mut tgt, &clip, 0, false);
+        let g2 = tgt.objects.iter().find(|o| matches!(o, SceneObject::Group(_))).unwrap();
+        assert_eq!(members_of(g2), vec![1, 2]);
+    }
+
+    #[test]
+    fn copy_frame_block_flattens_animation_outside_the_block() {
+        // A label is visible on [0,4) but its driving animation spans only [0,2).
+        // Copying frame 3 alone captures the label but NOT the animation object,
+        // so the dangling coordinate must be flattened to a Fixed.
+        let mut src = pres(4, vec![animated_label(0, 4, 1, 0, 30)]);
+        ensure_animation(&mut src, 1, 0, 2, true, 500, 0);
+        let clip = copy_frame_block(&src, 3, 3);
+        // Only the label travels (the animation's span is outside the block)...
+        assert_eq!(clip.objects.len(), 1);
+        // ...and it keeps no animated coordinate (it was flattened).
+        assert!(referenced_anim_ids(&clip.objects[0]).is_empty());
     }
 }

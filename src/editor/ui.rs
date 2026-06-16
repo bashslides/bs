@@ -51,6 +51,8 @@ impl Layout {
             | Mode::MultiSelect { .. }
             | Mode::AddArt { .. }
             | Mode::LoadArtFile { .. }
+            | Mode::PresentationMenu { .. }
+            | Mode::OpenFile { .. }
             | Mode::Settings { .. } => RIGHT_PANEL_WIDTH,
             _ => 0,
         };

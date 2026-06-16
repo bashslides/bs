@@ -87,6 +87,26 @@ pub struct KeyBindings {
     /// (Enter drops it after).
     #[serde(default = "default_frame_move_before")]
     pub frame_move_before: String,
+    /// Open the presentations switcher/hub menu from Normal mode.
+    #[serde(default = "default_presentations_menu")]
+    pub presentations_menu: String,
+    /// Within the presentations menu: open another file as a new deck.
+    #[serde(default = "default_presentation_open")]
+    pub presentation_open: String,
+    /// Within the presentations menu: save the active deck under a new name.
+    #[serde(default = "default_presentation_save_as")]
+    pub presentation_save_as: String,
+    /// Within the presentations menu: toggle fullscreen ("no bars") mode.
+    #[serde(default = "default_presentation_fullscreen")]
+    pub presentation_fullscreen: String,
+    /// In a frame selection: copy the (contiguous) block to the cross-deck frame
+    /// clipboard so it can be pasted into another open presentation.
+    #[serde(default = "default_frame_clip_copy")]
+    pub frame_clip_copy: String,
+    /// In the frame sub-menu: paste the cross-deck frame clipboard into this deck
+    /// (only offered when the clipboard holds frames).
+    #[serde(default = "default_frame_clip_paste")]
+    pub frame_clip_paste: String,
 }
 
 fn default_table_add_col_after() -> String { "Alt-a".into() }
@@ -114,6 +134,12 @@ fn default_frame_jump() -> String { "j".into() }
 fn default_frame_select() -> String { "s".into() }
 fn default_frame_auto() -> String { "t".into() }
 fn default_frame_move_before() -> String { "b".into() }
+fn default_presentations_menu() -> String { "p".into() }
+fn default_presentation_open() -> String { "o".into() }
+fn default_presentation_save_as() -> String { "s".into() }
+fn default_presentation_fullscreen() -> String { "f".into() }
+fn default_frame_clip_copy() -> String { "y".into() }
+fn default_frame_clip_paste() -> String { "p".into() }
 
 impl Default for EditorConfig {
     fn default() -> Self {
@@ -155,6 +181,12 @@ impl Default for EditorConfig {
                 frame_select: default_frame_select(),
                 frame_auto: default_frame_auto(),
                 frame_move_before: default_frame_move_before(),
+                presentations_menu: default_presentations_menu(),
+                presentation_open: default_presentation_open(),
+                presentation_save_as: default_presentation_save_as(),
+                presentation_fullscreen: default_presentation_fullscreen(),
+                frame_clip_copy: default_frame_clip_copy(),
+                frame_clip_paste: default_frame_clip_paste(),
             },
         }
     }
