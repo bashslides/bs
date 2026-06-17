@@ -107,6 +107,16 @@ pub struct KeyBindings {
     /// (only offered when the clipboard holds frames).
     #[serde(default = "default_frame_clip_paste")]
     pub frame_clip_paste: String,
+    /// Normal mode: jump to the frame *before* the animation under the cursor (or a
+    /// coarse back-scrub off an animation). A reliably-delivered alias of Shift+←,
+    /// for the many terminals that don't send a distinct Shift+arrow.
+    #[serde(default = "default_anim_skip_prev")]
+    pub anim_skip_prev: String,
+    /// Normal mode: jump to the frame *after* the animation under the cursor (or a
+    /// coarse forward-scrub off an animation). A reliably-delivered alias of
+    /// Shift+→.
+    #[serde(default = "default_anim_skip_next")]
+    pub anim_skip_next: String,
 }
 
 fn default_table_add_col_after() -> String { "Alt-a".into() }
@@ -140,6 +150,11 @@ fn default_presentation_save_as() -> String { "s".into() }
 fn default_presentation_fullscreen() -> String { "f".into() }
 fn default_frame_clip_copy() -> String { "y".into() }
 fn default_frame_clip_paste() -> String { "p".into() }
+// `[` / `]` are sent identically by every terminal (unlike Shift+arrow, which
+// macOS Terminal.app and many tmux setups deliver as a bare arrow), so they make
+// the animation-skip jump usable everywhere.
+fn default_anim_skip_prev() -> String { "[".into() }
+fn default_anim_skip_next() -> String { "]".into() }
 
 impl Default for EditorConfig {
     fn default() -> Self {
@@ -187,6 +202,8 @@ impl Default for EditorConfig {
                 presentation_fullscreen: default_presentation_fullscreen(),
                 frame_clip_copy: default_frame_clip_copy(),
                 frame_clip_paste: default_frame_clip_paste(),
+                anim_skip_prev: default_anim_skip_prev(),
+                anim_skip_next: default_anim_skip_next(),
             },
         }
     }

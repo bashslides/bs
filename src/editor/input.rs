@@ -689,39 +689,58 @@ fn animation_cluster(objects: &[SceneObject], frame: usize) -> Option<(usize, us
     Some((lo, hi))
 }
 
+/// Target frame for a "big jump" from `frame` in a deck whose last frame is
+/// `last`. When `frame` sits inside an animation, the jump lands just past the
+/// merged span (`forward`) or just before it (`!forward`) — the player-style
+/// animation skip. Otherwise it is a coarse `FRAMES_PER_JUMP` scrub. Shared by the
+/// Shift+←/→ keys and their always-deliverable `[` / `]` aliases.
+fn jump_target(objects: &[SceneObject], frame: usize, last: usize, forward: bool) -> usize {
+    match animation_cluster(objects, frame) {
+        Some((lo, hi)) => {
+            if forward {
+                hi.min(last)
+            } else {
+                lo.saturating_sub(1)
+            }
+        }
+        None => {
+            if forward {
+                (frame + FRAMES_PER_JUMP).min(last)
+            } else {
+                frame.saturating_sub(FRAMES_PER_JUMP)
+            }
+        }
+    }
+}
+
 fn handle_normal(state: &mut EditorState, key: KeyEvent) -> Action {
     let bindings = &state.config.key_bindings;
 
     if matches_binding(&bindings.quit, &key) {
         return Action::Quit;
     }
-    // Shift + the frame-nav keys skip an animation span when the current frame is
-    // covered by one (jump to the first frame before/after the merged span, like
-    // the player's arrows), and otherwise jump FRAMES_PER_JUMP frames at once
-    // (clamped). Checked before the plain 1-frame nav, which also matches a
-    // shifted arrow (`matches_binding` ignores Shift on bare keys).
-    if key.modifiers.contains(KeyModifiers::SHIFT) {
-        let last = state.source.frame_count.saturating_sub(1);
-        let cluster = animation_cluster(&state.source.objects, state.current_frame);
-        if matches_binding(&bindings.next_frame, &key) {
-            state.current_frame = match cluster {
-                // On an animation: jump to the first frame past its span (clamped).
-                Some((_, hi)) => hi.min(last),
-                // Off an animation: a coarse FRAMES_PER_JUMP scrub.
-                None => (state.current_frame + FRAMES_PER_JUMP).min(last),
-            };
-            state.status_message = None;
-            return Action::Redraw;
-        }
-        if matches_binding(&bindings.prev_frame, &key) {
-            state.current_frame = match cluster {
-                // On an animation: jump to the first frame before its span.
-                Some((lo, _)) => lo.saturating_sub(1),
-                None => state.current_frame.saturating_sub(FRAMES_PER_JUMP),
-            };
-            state.status_message = None;
-            return Action::Redraw;
-        }
+    // The "big jump" keys: when the cursor is on an animation, skip to just
+    // before/after its span (like the player's arrows); otherwise scrub
+    // FRAMES_PER_JUMP frames. Two equivalent triggers — Shift+←/→, and the
+    // always-deliverable `[` / `]` aliases (Shift+arrow is sent as a bare arrow by
+    // macOS Terminal.app and many tmux setups, so it can't be relied on alone).
+    // Checked before the plain 1-frame nav, which a shifted arrow also matches
+    // (`matches_binding` ignores Shift on bare keys).
+    let last = state.source.frame_count.saturating_sub(1);
+    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+    let jump_fwd = matches_binding(&bindings.anim_skip_next, &key)
+        || (shift && matches_binding(&bindings.next_frame, &key));
+    let jump_back = matches_binding(&bindings.anim_skip_prev, &key)
+        || (shift && matches_binding(&bindings.prev_frame, &key));
+    if jump_fwd {
+        state.current_frame = jump_target(&state.source.objects, state.current_frame, last, true);
+        state.status_message = None;
+        return Action::Redraw;
+    }
+    if jump_back {
+        state.current_frame = jump_target(&state.source.objects, state.current_frame, last, false);
+        state.status_message = None;
+        return Action::Redraw;
     }
     if matches_binding(&bindings.next_frame, &key) {
         let last = state.source.frame_count.saturating_sub(1);
@@ -4282,6 +4301,55 @@ mod tests {
         let objs = vec![anim(1, 1, 3, true), anim(2, 3, 5, true)];
         assert_eq!(animation_cluster(&objs, 2), Some((1, 3)));
         assert_eq!(animation_cluster(&objs, 3), Some((3, 5)));
+    }
+
+    #[test]
+    fn shift_arrow_through_handle_key_jumps_across_an_animation() {
+        // End-to-end through the real dispatch: a Shift+Right on a frame inside an
+        // animation span must land on the first frame past the span, and Shift+Left
+        // on the first frame before it.
+        use crate::editor::object_defaults::create_default;
+        use crate::editor::state::scene_object_frame_range_mut;
+
+        let mut state =
+            EditorState::open("/tmp/bs_shift_arrow_regression_does_not_exist_77.json").unwrap();
+        state.source.frame_count = 12;
+        let mut label = create_default(0, 0);
+        if let Some(fr) = scene_object_frame_range_mut(&mut label) {
+            fr.start = 0;
+            fr.end = 12;
+        }
+        state.source.objects = vec![label, anim(1, 3, 7, true)];
+        state.mode = Mode::Normal;
+
+        let shift_right = KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT);
+        let shift_left = KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT);
+
+        // Inside the span (frame 4) → Shift+Right lands past the span (frame 7).
+        state.current_frame = 4;
+        handle_key(&mut state, shift_right);
+        assert_eq!(state.current_frame, 7, "Shift+Right should skip to past the animation");
+
+        // Inside the span (frame 4) → Shift+Left lands just before it (frame 2).
+        state.current_frame = 4;
+        handle_key(&mut state, shift_left);
+        assert_eq!(state.current_frame, 2, "Shift+Left should skip to before the animation");
+
+        // Off the span (frame 11) → Shift+Left falls back to the ±10 coarse scrub.
+        state.current_frame = 11;
+        handle_key(&mut state, shift_left);
+        assert_eq!(state.current_frame, 1, "off-animation Shift+Left keeps the ±10 jump");
+
+        // The `[` / `]` aliases do the same jump on terminals that swallow
+        // Shift+arrow — `]` skips past the span, `[` skips before it.
+        let bracket_right = KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE);
+        let bracket_left = KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE);
+        state.current_frame = 4;
+        handle_key(&mut state, bracket_right);
+        assert_eq!(state.current_frame, 7, "] should skip to past the animation");
+        state.current_frame = 4;
+        handle_key(&mut state, bracket_left);
+        assert_eq!(state.current_frame, 2, "[ should skip to before the animation");
     }
 
     #[test]

@@ -18,7 +18,7 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
             // hub (so several decks, plus those actions, share one entry).
             let mut items = vec![
                 "[←][→] frame",
-                "[⇧←][⇧→] ±10",
+                "[⇧←][⇧→] or [ / ] jump",
                 "[a]dd",
                 "[s]elect",
                 "[f]rame",
