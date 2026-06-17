@@ -238,7 +238,7 @@ fn render_frame_bar(
 
     // Abbreviated view over the segment list: the first few segments, the current
     // segment's vicinity, and the last few — with "..." marking skipped gaps. We
-    // aim to keep 3 segments at each edge (plus the current ±1) so both ends of
+    // aim to keep 3 segments at each edge (plus the current ±3) so both ends of
     // the deck stay in view, shrinking the edge groups only when the row is too
     // narrow to fit them.
     let cur = segs.iter().position(|s| s.contains(current)).unwrap_or(0);
@@ -257,11 +257,15 @@ fn render_frame_bar(
     Ok(())
 }
 
+/// Number of segments shown on each side of the current segment in the
+/// abbreviated bar's central window (so the window is `2*WINDOW_RADIUS + 1` wide).
+const WINDOW_RADIUS: usize = 3;
+
 /// Pick the segment indices for the abbreviated bar at a given `edge` group size:
-/// the first `edge` segments, a 3-wide window centred on the current segment
-/// (`cur-1, cur, cur+1`, clamped), and the last `edge` segments — deduped and
-/// ascending. The current segment is always included, so navigation never loses
-/// sight of where it is.
+/// the first `edge` segments, a window of [`WINDOW_RADIUS`] segments on each side
+/// of the current segment (`cur-3 ..= cur+3`, clamped), and the last `edge`
+/// segments — deduped and ascending. The current segment is always included, so
+/// navigation never loses sight of where it is.
 fn pick_indices(n: usize, cur: usize, edge: usize) -> Vec<usize> {
     if n == 0 {
         return Vec::new();
@@ -271,9 +275,9 @@ fn pick_indices(n: usize, cur: usize, edge: usize) -> Vec<usize> {
     for i in 0..edge.min(n) {
         s.push(i); // first `edge`
     }
-    for d in [cur.saturating_sub(1), cur, cur + 1] {
+    for d in cur.saturating_sub(WINDOW_RADIUS)..=cur + WINDOW_RADIUS {
         if d <= last {
-            s.push(d); // current vicinity
+            s.push(d); // current vicinity (±WINDOW_RADIUS)
         }
     }
     for i in 0..edge.min(n) {
@@ -341,27 +345,27 @@ mod tests {
 
     #[test]
     fn pick_indices_shows_three_at_each_edge_plus_the_current_window() {
-        // 20 segments, cursor at 10: first 3, the current ±1, and last 3.
+        // 20 segments, cursor at 10: first 3, the current ±3, and last 3.
         let idx = pick_indices(20, 10, 3);
-        assert_eq!(idx, vec![0, 1, 2, 9, 10, 11, 17, 18, 19]);
+        assert_eq!(idx, vec![0, 1, 2, 7, 8, 9, 10, 11, 12, 13, 17, 18, 19]);
     }
 
     #[test]
     fn pick_indices_dedups_when_groups_overlap_near_an_edge() {
-        // Cursor near the front: the current window merges into the first group.
+        // Cursor near the front: the current ±3 window merges into the first group.
         let idx = pick_indices(20, 1, 3);
-        assert_eq!(idx, vec![0, 1, 2, 17, 18, 19]);
+        assert_eq!(idx, vec![0, 1, 2, 3, 4, 17, 18, 19]);
         // Cursor near the back: it merges into the last group.
         let idx = pick_indices(20, 18, 3);
-        assert_eq!(idx, vec![0, 1, 2, 17, 18, 19]);
+        assert_eq!(idx, vec![0, 1, 2, 15, 16, 17, 18, 19]);
     }
 
     #[test]
     fn abbreviated_indices_prefers_three_edges_when_it_fits() {
-        // Plenty of width → the full first-3 / current / last-3 view.
+        // Plenty of width → the full first-3 / current ±3 / last-3 view.
         let segs = singles(30);
         let idx = abbreviated_indices(&segs, 15, 80);
-        assert_eq!(idx, vec![0, 1, 2, 14, 15, 16, 27, 28, 29]);
+        assert_eq!(idx, vec![0, 1, 2, 12, 13, 14, 15, 16, 17, 18, 27, 28, 29]);
     }
 
     #[test]
