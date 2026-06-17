@@ -639,24 +639,86 @@ fn handle_settings(state: &mut EditorState, key: KeyEvent) -> Action {
 /// Frames moved per Shift+arrow jump in top-level (Normal) frame navigation.
 const FRAMES_PER_JUMP: usize = 10;
 
+/// The merged animation span covering `frame`, as `(lo, hi)` — `lo` the earliest
+/// start and `hi` the (exclusive) latest end of every `Animation` whose span
+/// transitively overlaps one covering `frame`. `None` when no animation covers it.
+///
+/// Mirrors `Player::animation_cluster` so the editor's Shift+←/→ skips an
+/// animation the same way the player's arrows do. Unlike the player it considers
+/// **all** animations, not just `auto_play` ones: the editor has no auto-advance,
+/// so while authoring you want to jump across any animation's span.
+fn animation_cluster(objects: &[SceneObject], frame: usize) -> Option<(usize, usize)> {
+    let spans: Vec<(usize, usize)> = objects
+        .iter()
+        .filter_map(|o| match o {
+            SceneObject::Animation(a) => Some((a.frames.start, a.frames.end)),
+            _ => None,
+        })
+        .collect();
+    // Seed the cluster with every span covering `frame`.
+    let mut lo = usize::MAX;
+    let mut hi = 0usize;
+    for &(s, e) in &spans {
+        if s <= frame && frame < e {
+            lo = lo.min(s);
+            hi = hi.max(e);
+        }
+    }
+    if lo == usize::MAX {
+        return None;
+    }
+    // Grow across overlaps (`s < hi && lo < e`) until the cluster is closed.
+    loop {
+        let mut grew = false;
+        for &(s, e) in &spans {
+            if s < hi && lo < e {
+                if s < lo {
+                    lo = s;
+                    grew = true;
+                }
+                if e > hi {
+                    hi = e;
+                    grew = true;
+                }
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    Some((lo, hi))
+}
+
 fn handle_normal(state: &mut EditorState, key: KeyEvent) -> Action {
     let bindings = &state.config.key_bindings;
 
     if matches_binding(&bindings.quit, &key) {
         return Action::Quit;
     }
-    // Shift + the frame-nav keys jump FRAMES_PER_JUMP frames at once (clamped).
-    // Checked before the plain 1-frame nav, which also matches a shifted arrow
-    // (`matches_binding` ignores Shift on bare keys).
+    // Shift + the frame-nav keys skip an animation span when the current frame is
+    // covered by one (jump to the first frame before/after the merged span, like
+    // the player's arrows), and otherwise jump FRAMES_PER_JUMP frames at once
+    // (clamped). Checked before the plain 1-frame nav, which also matches a
+    // shifted arrow (`matches_binding` ignores Shift on bare keys).
     if key.modifiers.contains(KeyModifiers::SHIFT) {
         let last = state.source.frame_count.saturating_sub(1);
+        let cluster = animation_cluster(&state.source.objects, state.current_frame);
         if matches_binding(&bindings.next_frame, &key) {
-            state.current_frame = (state.current_frame + FRAMES_PER_JUMP).min(last);
+            state.current_frame = match cluster {
+                // On an animation: jump to the first frame past its span (clamped).
+                Some((_, hi)) => hi.min(last),
+                // Off an animation: a coarse FRAMES_PER_JUMP scrub.
+                None => (state.current_frame + FRAMES_PER_JUMP).min(last),
+            };
             state.status_message = None;
             return Action::Redraw;
         }
         if matches_binding(&bindings.prev_frame, &key) {
-            state.current_frame = state.current_frame.saturating_sub(FRAMES_PER_JUMP);
+            state.current_frame = match cluster {
+                // On an animation: jump to the first frame before its span.
+                Some((lo, _)) => lo.saturating_sub(1),
+                None => state.current_frame.saturating_sub(FRAMES_PER_JUMP),
+            };
             state.status_message = None;
             return Action::Redraw;
         }
@@ -4181,6 +4243,54 @@ fn apply_cell_style(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn anim(id: AnimId, start: usize, end: usize, auto_play: bool) -> SceneObject {
+        use crate::engine::objects::Animation;
+        use crate::engine::source::FrameRange;
+        SceneObject::Animation(Animation {
+            id,
+            frames: FrameRange { start, end },
+            auto_play,
+            delay_ms: 500,
+            gap_frames: 0,
+        })
+    }
+
+    #[test]
+    fn shift_skip_cluster_spans_a_single_animation() {
+        // Inside the span → its (start, end); outside → None. End is exclusive,
+        // so the start frame counts and the end frame does not.
+        let objs = vec![anim(1, 2, 5, true)];
+        assert_eq!(animation_cluster(&objs, 2), Some((2, 5)));
+        assert_eq!(animation_cluster(&objs, 4), Some((2, 5)));
+        assert_eq!(animation_cluster(&objs, 1), None);
+        assert_eq!(animation_cluster(&objs, 5), None);
+    }
+
+    #[test]
+    fn shift_skip_cluster_merges_overlapping_animations() {
+        // Two overlapping spans merge to their union from any covered frame, so a
+        // Shift+←/→ jumps clear of the whole overlapping group.
+        let objs = vec![anim(1, 0, 6, true), anim(2, 3, 8, true)];
+        assert_eq!(animation_cluster(&objs, 1), Some((0, 8)));
+        assert_eq!(animation_cluster(&objs, 7), Some((0, 8)));
+    }
+
+    #[test]
+    fn shift_skip_cluster_keeps_disjoint_animations_separate() {
+        // Touching-but-disjoint spans (end == next start) stay separate.
+        let objs = vec![anim(1, 1, 3, true), anim(2, 3, 5, true)];
+        assert_eq!(animation_cluster(&objs, 2), Some((1, 3)));
+        assert_eq!(animation_cluster(&objs, 3), Some((3, 5)));
+    }
+
+    #[test]
+    fn shift_skip_cluster_includes_non_auto_play_animations() {
+        // Unlike the player, the editor jump considers every animation, since
+        // there is no auto-advance distinction while authoring.
+        let objs = vec![anim(1, 2, 5, false)];
+        assert_eq!(animation_cluster(&objs, 3), Some((2, 5)));
+    }
 
     #[test]
     fn animate_two_axis_layout_exposes_x_and_y_fields() {
