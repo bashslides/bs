@@ -54,6 +54,14 @@ SourcePresentation (JSON)
 The interactive editor runs the same Engine + Renderer pipeline live for a
 WYSIWYG preview. See `CLAUDE.md` for the full architecture and module map.
 
+## For AI coding agents
+
+Start with `AGENTS.md` — the vendor-neutral quickstart (hard rules, exact
+build/test commands, architecture, and a "where to look" map). It points on to
+`docs/AI_MAINTAINABILITY.md` (compact architecture + invariants), `CLAUDE.md`
+(the full reference), and `PRESENTATION_FORMAT.md` (source-format spec). Gemini
+/ Vertex agents are routed to the same content via `GEMINI.md`.
+
 ## Source format
 
 ```json
@@ -65,18 +73,23 @@ WYSIWYG preview. See `CLAUDE.md` for the full architecture and module map.
       "text": "Hello",
       "position": {
         "x": { "fixed": 10 },
-        "y": { "animated": { "from": 2, "to": 8, "start_frame": 0, "end_frame": 4 } }
+        "y": { "animated": { "from": 2, "to": 8, "anim": 1 } }
       },
       "style": { "fg": "red", "bold": true },
       "frames": { "start": 0, "end": 8 },
       "z_order": 1
-    }
+    },
+    { "type": "animation", "id": 1, "frames": { "start": 0, "end": 4 } }
   ]
 }
 ```
 
 - Object types (JSON `type` tag): `label`, `h_line`, `rect`, `header`, `group`,
-  `arrow`, `table`, `art`
+  `arrow`, `table`, `art`, `command`, `list`, `loop`, `morph`, `animation`,
+  `auto_advance`, `circle` (15 total)
+- An animated coordinate references an `animation` object by `anim` id; the span
+  lives only on that object (its `frames`), never on the coordinate. See
+  `PRESENTATION_FORMAT.md` for the full format.
 - `style` is optional; `frames.end` is exclusive
 - Colors: named (`black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`,
   `white`) or `{ "rgb": [r, g, b] }`

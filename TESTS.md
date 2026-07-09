@@ -1,8 +1,8 @@
 # Test overview
 
 A list of the test cases in this repository, grouped by area. The suite has
-98 tests: 74 integration tests under `tests/` and 24 inline unit tests in
-`src/`.
+251 tests: 114 integration tests under `tests/` and 137 inline unit tests in
+`src/` (counted with `cargo test -- --list`).
 
 Integration tests follow one pattern: author a presentation in the JSON source
 format, run it through `Engine::compile` + `Renderer::render`, and assert on the

@@ -2,6 +2,13 @@
 
 A terminal-native presentation engine written in Rust. Presentations are ASCII art animations that render in the terminal.
 
+> **AI agents:** this is the canonical, detailed reference (Claude loads it
+> automatically). A shorter vendor-neutral quickstart lives in `AGENTS.md`
+> (what Codex/Cursor/most tools read), with a compact architecture companion in
+> `docs/AI_MAINTAINABILITY.md`; Gemini/Vertex agents are routed here via
+> `GEMINI.md`. If you change the hard rules or the build/test commands, mirror
+> the change in `AGENTS.md`.
+
 ## Working in this repo (read first)
 
 - **Never commit or push.** Do not run `git commit`, `git push`, `git add`, or any
@@ -467,9 +474,8 @@ animation outside the block);
 "editing a span never duplicates the animation" regression;
 `editor/timeline.rs` — `pick_indices`/`abbreviated_indices` (first-3 / current
 window / last-3 selection, dedup near the edges, and edge-group shrink on a
-narrow row)). The suite
-totals 246 tests (114 integration
-+ 132 inline); `TESTS.md` is the authoritative per-test list.
+narrow row)). The suite totals 251 tests (114 integration + 137 inline, counted
+with `cargo test -- --list`); `TESTS.md` is the authoritative per-test list.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the
