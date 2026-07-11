@@ -19,15 +19,38 @@
 //!    `loop_regions()`) collect it there.
 //! 4. **`src/editor/properties.rs`** — `impl Editable for <New>`, plus an arm
 //!    in both `as_editable()` and `as_editable_mut()`.
-//! 5. **`src/editor/object_defaults.rs`** — add the display name to
-//!    `OBJECT_TYPES` and a construction arm in `create_default()`.
-//! 6. **`src/editor/state.rs`** — add an arm to `object_type_name()`.
+//! 5. **`src/editor/object_defaults.rs`** — add an `AddableObjectType { name,
+//!    shortcut }` entry to `OBJECT_TYPES` (a unique quick-add letter, not the
+//!    global fullscreen `f`) and a construction arm in `create_default()`.
+//!    Skip this only for a type created through a dedicated editor sub-menu
+//!    rather than the Add-Object menu (like `Animation`/`AutoAdvance`).
+//! 6. **`src/engine/source.rs`** — add the display name to
+//!    `SceneObject::type_name()`.
 //! 7. **`src/editor/input.rs`** — only if the type needs special-case editing
 //!    behaviour (e.g. the `Group`/`Table`/`Art` `matches!` checks). Plain
 //!    types that edit through the `Editable` trait need nothing here.
+//! 8. **Docs + tests** — add the type to `PRESENTATION_FORMAT.md` (the §4
+//!    catalog row, its own field-table section, and the §10 tag list), the
+//!    object-type list in `AGENTS.md`, the `src/engine/objects/` row of
+//!    `CLAUDE.md`'s module map, and `README.md`'s catalog if the user-facing
+//!    list changes; write a `tests/<type>.rs` behaviour test and list it in
+//!    `TESTS.md`. `tests/docs.rs` fails the build on a missing catalog row, a
+//!    stale type count, or an unlisted test — but it cannot judge prose, so
+//!    still describe the type properly.
 //!
 //! `panel.rs`, `menubar.rs`, and `preview.rs` are driven by `OBJECT_TYPES` and
 //! the generic `Editable` dispatch, so they usually need no changes.
+//!
+//! **What's enforced.** The compiler catches the missing `match` arms (steps 2,
+//! 3, 6, and `as_editable`). The lookup *tables* it can't see are guarded by
+//! tests instead: `object_defaults::tests::object_type_registry_is_complete`
+//! constructs one of every `SceneObject` variant (an exhaustive `match` there
+//! makes a new variant fail to compile until you list it) and asserts the enum,
+//! `OBJECT_TYPES`, and the documented sub-menu-only set name exactly the same
+//! types. `create_default_covers_every_object_type` and
+//! `properties::tests::*_properties_roundtrip` cover steps 4–5, and `tests/docs.rs`
+//! covers step 8. So: add the variant, run `cargo test`, and let the failures
+//! walk you through the rest.
 
 pub mod font;
 mod animation;

@@ -513,26 +513,6 @@ pub fn scene_object_frame_range_mut(obj: &mut SceneObject) -> Option<&mut FrameR
     }
 }
 
-pub fn scene_object_type_name(obj: &SceneObject) -> &'static str {
-    match obj {
-        SceneObject::Label(_) => "Label",
-        SceneObject::HLine(_) => "HLine",
-        SceneObject::Rect(_) => "Rect",
-        SceneObject::Header(_) => "Header",
-        SceneObject::Group(_) => "Group",
-        SceneObject::Arrow(_) => "Arrow",
-        SceneObject::Table(_) => "Table",
-        SceneObject::Art(_) => "Art",
-        SceneObject::Command(_) => "Command",
-        SceneObject::List(_) => "List",
-        SceneObject::Loop(_) => "Loop",
-        SceneObject::Morph(_) => "Morph",
-        SceneObject::Animation(_) => "Animation",
-        SceneObject::AutoAdvance(_) => "AutoAdvance",
-        SceneObject::Circle(_) => "Circle",
-    }
-}
-
 /// Collect mutable references to all Coordinate fields of a SceneObject.
 fn scene_object_coordinates_mut(obj: &mut SceneObject) -> Vec<&mut Coordinate> {
     match obj {

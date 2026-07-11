@@ -48,6 +48,31 @@ pub enum SceneObject {
 }
 
 impl SceneObject {
+    /// Stable, human-facing name for editor UI and diagnostics.
+    ///
+    /// Keep this mapping next to the enum rather than in an editor module: the
+    /// source schema owns the set of object variants, while several consumers
+    /// need a display name for the same variant.
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            SceneObject::Label(_) => "Label",
+            SceneObject::HLine(_) => "HLine",
+            SceneObject::Rect(_) => "Rect",
+            SceneObject::Header(_) => "Header",
+            SceneObject::Group(_) => "Group",
+            SceneObject::Arrow(_) => "Arrow",
+            SceneObject::Table(_) => "Table",
+            SceneObject::Art(_) => "Art",
+            SceneObject::Command(_) => "Command",
+            SceneObject::List(_) => "List",
+            SceneObject::Loop(_) => "Loop",
+            SceneObject::Morph(_) => "Morph",
+            SceneObject::Animation(_) => "Animation",
+            SceneObject::AutoAdvance(_) => "AutoAdvance",
+            SceneObject::Circle(_) => "Circle",
+        }
+    }
+
     /// The object's own declared frame range. A `Group` with an *auto* range
     /// (`frames = None`) has no declared range and returns `None`; every other
     /// object (and an explicit-range group) returns `Some`.

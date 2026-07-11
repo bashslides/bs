@@ -205,10 +205,13 @@ auto groups (their members shift instead).
 | Path | Role |
 |------|------|
 | `src/main.rs` | CLI entry point (`compile`/`edit`/`play`/`migrate`) |
+| `src/lib.rs` | Crate root — declares the public modules so integration tests and `examples/hello.rs` drive the pipeline as a library |
+| `src/menubar.rs` | Shared `print_menu_item` helper (bolds the `[k]` shortcut inside a dim menu string) used by both the player and `src/editor/menubar.rs` |
 | `src/migrate.rs` | One-shot upgrade of old-format source JSON to the current animation model — works on the raw `serde_json::Value` (the current structs can't parse the old shape), assigns `id`s to `animation` objects, rewrites `{"animated":{…,start_frame,end_frame}}` coords to `{from,to,anim}` by span match (synthesizing a sidecar for orphan spans). Idempotent; self-verifies through `SourcePresentation` before writing in place (`<file>.bak` backup) |
 | `src/types.rs` | Shared types: `Color`, `Style`, `Cell`, `DrawOp`, `Frame`, `PlayablePresentation`, `CommandRegion`, `LoopRegion`, `AnimationRegion`, `AutoAdvanceRegion` |
-| `src/engine/source.rs` | `SourcePresentation` (+ `command_regions()`, `loop_regions()`, `animation_regions()`, `auto_advance_regions()`, `validate_loops()`, `link_siblings()`, and a `links` sidecar — editor-only families of object indices for *linked* paste, ignored by the engine), `SceneObject`, `Coordinate` (Fixed / Animated{from,to,anim}), `AnimId` + `AnimSpans` (the id→span table; `Coordinate::evaluate(frame, &AnimSpans)` looks a coordinate's span up there), `FrameRange` |
-| `src/engine/objects/` | Fifteen `SceneObject` types: `Label`, `HLine`, `Rect`, `Header`, `Group`, `Arrow`, `Table`, `Art`, `Command`, `List`, `Loop`, `Morph`, `Animation`, `AutoAdvance`, `Circle` — each implements `Resolve`. See the module-doc checklist in `mod.rs` for every site a new type touches. `List` (ordered/unordered) shares `Label`'s text-editing UX and the shared `wrap` helper. `Loop` (like `Group`) draws nothing; its `frames` range is the loop range and it emits a `LoopRegion` sidecar. `Morph` blends two inline ASCII-art grids (`from`→`to`) across its `frames` range — each cell flips to the `to` glyph once playback progress passes that cell's per-cell threshold (`MorphMode`: `dissolve` or four directional wipes). Fully baked into static frames in `resolve`, so the editor preview shows it for free. `Animation` (also draws nothing) **owns** the animation span (its `frames`) — the single source of truth — plus an `id` that driven `Coordinate::Animated { anim }` fields reference; it emits an `AnimationRegion` sidecar and is created by the animate sub-menu, not the Add-Object menu. `AutoAdvance` (also draws nothing) makes its `frames` auto-transition to the next slide after `delay_ms` (default 5 s); it emits an `AutoAdvanceRegion` sidecar and is created by the **frame** sub-menu's auto-advance action — so `Animation` and `AutoAdvance` are the two types absent from `OBJECT_TYPES`. `Circle` is a **parametric** filled circle (unlike the static `Art` pieces): editable `diameter` (rows) + fill `ch` (default `@`), with the column extent derived from the diameter (`Circle::columns`, ~2× for the terminal's 2:1 cell aspect) so it stays round; added from the **Add-Object** menu (quick-add `o`) and baked into static frames in `resolve`. Each type implements `Resolve::resolve(&ResolveCtx, ops)` (the `ResolveCtx` carries `frame`, `canvas_width`, and the `&AnimSpans` table) |
+| `src/engine/source.rs` | `SourcePresentation` (+ `command_regions()`, `loop_regions()`, `animation_regions()`, `auto_advance_regions()`, `validate_loops()`, `link_siblings()`, and a `links` sidecar — editor-only families of object indices for *linked* paste, ignored by the engine), `SceneObject` (including the canonical `type_name()` display names), `Coordinate` (Fixed / Animated{from,to,anim}), `AnimId` + `AnimSpans` (the id→span table; `Coordinate::evaluate(frame, &AnimSpans)` looks a coordinate's span up there), `FrameRange` |
+| `src/engine/mod.rs` | `Engine::compile` — walks `0..frame_count`, applies `Group` member overrides, resolves every object into per-frame `DrawOp`s |
+| `src/engine/objects/` | The 15 `SceneObject` types: `Label`, `HLine`, `Rect`, `Header`, `Group`, `Arrow`, `Table`, `Art`, `Command`, `List`, `Loop`, `Morph`, `Animation`, `AutoAdvance`, `Circle` — each implements `Resolve`. See the module-doc checklist in `mod.rs` for every site a new type touches. `List` (ordered/unordered) shares `Label`'s text-editing UX and the shared `wrap` helper. `Loop` (like `Group`) draws nothing; its `frames` range is the loop range and it emits a `LoopRegion` sidecar. `Morph` blends two inline ASCII-art grids (`from`→`to`) across its `frames` range — each cell flips to the `to` glyph once playback progress passes that cell's per-cell threshold (`MorphMode`: `dissolve` or four directional wipes). Fully baked into static frames in `resolve`, so the editor preview shows it for free. `Animation` (also draws nothing) **owns** the animation span (its `frames`) — the single source of truth — plus an `id` that driven `Coordinate::Animated { anim }` fields reference; it emits an `AnimationRegion` sidecar and is created by the animate sub-menu, not the Add-Object menu. `AutoAdvance` (also draws nothing) makes its `frames` auto-transition to the next slide after `delay_ms` (default 5 s); it emits an `AutoAdvanceRegion` sidecar and is created by the **frame** sub-menu's auto-advance action — so `Animation` and `AutoAdvance` are the two types absent from `OBJECT_TYPES`. `Circle` is a **parametric** filled circle (unlike the static `Art` pieces): editable `diameter` (rows) + fill `ch` (default `@`), with the column extent derived from the diameter (`Circle::columns`, ~2× for the terminal's 2:1 cell aspect) so it stays round; added from the **Add-Object** menu (quick-add `o`) and baked into static frames in `resolve`. Each type implements `Resolve::resolve(&ResolveCtx, ops)` (the `ResolveCtx` carries `frame`, `canvas_width`, and the `&AnimSpans` table) |
 | `src/art_library.rs` | Built-in + user ASCII-art palette (`~/.config/bs/art/`, one file per piece); pieces are copied into self-contained `Art` objects when added. Includes a matched `ball`/`square` pair used as the default `Morph` endpoints. The picker (`Mode::AddArt`/`LoadArtFile`) carries an `ArtPick` purpose so the same flow serves a standalone `Art` or the two-stage `from`/`to` pick of a `Morph` |
 | `src/renderer/mod.rs` | Rasterizes DrawOps into cell grid; diffs frames |
 | `src/player/mod.rs` | Playback loop, keyboard nav (arrows, Shift+←/→ jump ±10 frames, space, q, f=fullscreen); runs `Command` objects (piped, async, timeout) and overlays output; drives `Loop` regions (timer-based auto-advance + bounce + arrow-key break-out) via the pure `loop_next` step fn; auto-advances across auto-play `Animation` spans (`auto_deadline`), using `auto_advance_delay` = the **min** `delay_ms` over the animations covering each boundary, with the loop's own delay as the fallback for gaps inside a loop. On an auto-play animation (no loop), an arrow **skips** the whole span: `→` jumps to the first frame past the last-ending overlapping animation (clamped to the last frame), `←` to the slide before the earliest-starting one — the merged cluster comes from `animation_cluster` (connected by overlap). Also auto-advances across `AutoAdvance` regions: `frame_auto_advance_delay` is the **min** `delay_ms` over the markers covering a frame (None on the last frame), and `effective_auto_delay` = the min of that and the animation boundary delay, feeding the same `auto_deadline` timer (suppressed while a loop drives) |
@@ -219,6 +222,7 @@ auto groups (their members shift instead).
 | `src/editor/textedit.rs` | `TextEdit` — reusable text-buffer + cursor used by every text field (property values, the multi-line overlay, cell-style values); translates key events into edits (insert/delete/arrows/home-end/newline) |
 | `src/editor/panel.rs` | Left panel (Add Object), right panel (Properties incl. `Bool` checkboxes + colour swatches), object selection overlay, and the centred multi-line text-editing overlay (`render_text_overlay`). Every text field draws its caret through one shared helper, `draw_caret_line` (see "Text caret convention" below) |
 | `src/editor/properties.rs` | `Editable` trait — one impl per object type holds its property list, setter, coordinate + geometry accessors; generic dispatch (`get_properties`, `set_property`, `common_properties` = the intersection of bulk-editable props across a selection, …) is type-agnostic. `PropertyKind::Bool` flags toggle in place (Space/Enter); `PropertyKind::Note` renders a non-editable free-form warning line (the whole `value`, no `name:`) — the mechanism for surfacing per-object warnings in the panel |
+| `src/editor/object_defaults.rs` | `OBJECT_TYPES` (the Add-Object menu list — each entry an `AddableObjectType { name, shortcut }` descriptor so a type's display name and quick-add letter live in one record, not index-aligned parallel arrays) + `create_default()` — the lookup table the compiler can't check when a type is added; the inline `object_type_registry_is_complete` test cross-checks it against the `SceneObject` enum (see the checklist in `src/engine/objects/mod.rs`) |
 | `src/editor/preview.rs` | Canvas preview using Engine+Renderer |
 | `src/editor/timeline.rs` | Frame bar (row 1) and mode/status line (row 2). The frame bar is always shown; while typing a `FrameJump`/`FrameSelectInput`, it live-highlights the slides the input resolves to and the typed field + instructions render on row 2. Frames under an auto-play `Animation` collapse into a single range cell (`[10-20]`); strictly-overlapping auto-play spans merge into one range (continuous auto-advance), adjacent-but-disjoint ones stay separate. When the bar overflows the row it abbreviates to the **first 3** segments, a 3-wide window around the current frame, and the **last 3** (with `...` for skipped gaps); the edge groups shrink 3→2→1 only when the row is too narrow (`abbreviated_indices`/`pick_indices`) |
 | `src/editor/menubar.rs` | Context-sensitive menu bar |
@@ -242,7 +246,7 @@ Normal ──a──→ AddObject ──Enter──→ Normal (object added)
 - **FrameRangePlace**: place a moved or copied **contiguous** frame block (reached from FrameSelected via `m`/`c`; the block must be contiguous — a scattered selection is rejected). ←/→ scroll the deck to a target slide; `Enter` drops the block *after* it, `b` *before* it (the `copy` flag picks the verb). **Move** calls `state::move_frames` (pure reorder; the target may not lie inside the moved block). **Copy** calls `state::copy_frames`, which inserts `count` new frames at the destination (`insert_blank_frames_at`) and deep-clones the block's content onto them — per-frame objects land on their copy frame, objects spanning within the block stay single spanning clones, and a deck-wide background the insert already stretches over the new frames is *not* re-cloned. The deck lands on the first frame of the result
 - **FramePastePlace** (reached from the frame sub-menu's `p` paste-frames action, only when the cross-deck frame clipboard is non-empty): ←/→ scroll the deck to a target slide; `Enter` drops the pasted block *after* it, `b` *before* it (`Action::PasteFrameBlock` → `state::paste_frame_block`, which inserts the frames, shifts ranges/group-members into the destination, and assigns each cloned `Animation` a fresh id so it can't collide with the target deck's). The frame clipboard lives on the `Editor`, so it persists across deck switches and re-pastes
 - **Settings**: edit the output frame size (width × height in cells); ↑↓/Tab switch field, Enter apply, Esc cancel
-- **AddObject**: choose object type from the list (↑/↓ + Enter) or press its **quick-add shortcut** — one unique letter per type, shown as `[l] Label` and defined by `object_defaults::OBJECT_TYPE_KEYS` (`object_type_for_key` maps a keypress to the type). Either path runs the shared `commit_add_object`. After committing, most types land in `EditProperties` (browse); `Group`/`Art` enter their member/library pickers; `Morph` runs the art-library picker **twice** (pick the `from` piece, then the `to` piece) before landing in `EditProperties`; `Label` and `List` jump straight into the centred multi-line text overlay (empty buffer) so you can type content immediately — Esc keeps the default text, Enter commits
+- **AddObject**: choose object type from the list (↑/↓ + Enter) or press its **quick-add shortcut** — one unique letter per type, shown as `[l] Label` and defined together with its display name by `object_defaults::OBJECT_TYPES` (each an `AddableObjectType { name, shortcut }`; `object_type_for_key` maps a keypress to the type). Either path runs the shared `commit_add_object`. After committing, most types land in `EditProperties` (browse); `Group`/`Art` enter their member/library pickers; `Morph` runs the art-library picker **twice** (pick the `from` piece, then the `to` piece) before landing in `EditProperties`; `Label` and `List` jump straight into the centred multi-line text overlay (empty buffer) so you can type content immediately — Esc keeps the default text, Enter commits
 - **Select** (`s`, the single entry point): a **multi-select** reusing the `MultiSelect` toggle flow (`MultiSelectPurpose::Select`). `Space` toggles members (the cursor object is highlighted on the canvas; a `Group` expands to its members), `d` deletes the highlighted object (the old browse-and-delete), `Enter` **acts** on the chosen set (toggled members, or the highlighted object if none toggled): **1 object → `SelectedObject`** (its move/resize/edit/delete/copy menu), **2+ objects → `SelectAction`**. There is no longer a separate single-pick `SelectObject` mode.
 - **SelectAction**: the action sub-menu shown after selecting 2+ objects (`SELECT_ACTIONS`, ↑/↓ + Enter). Currently **Copy** (`copy_to_clipboard`), **Converge** (`expand_selection` → `enter_converge`), **Delete** (confirm → `state::delete_objects`, removing the whole selected set at once), and **Edit Props** (bulk-edit the shared properties → `EditMultiProperties`). Copy & converge moved here from their old top-level `c`/`Shift+C` keys; delete is the multi-object counterpart to `SelectedObject`'s single `d`.
 - **EditMultiProperties** (reached via **Select → SelectAction → Edit Props**): bulk-edit the properties **common** to every selected object. The panel lists only the props all members share by name *and* kind, restricted to the bulk-editable kinds (`properties::common_properties` — geometry/colour/flags/numbers/simple dropdowns; `Text`, group-member, table-column, read-only/note are excluded). Values shown are the **first member's** (the representative seed). Editing one value writes it to **every** member: `input::apply_multi_property` just calls the single-object `apply_property` per member, so group auto-range, animation re-locking, link propagation, and loop validation all behave exactly as for a single edit. The handlers (`handle_edit_multi_properties`/`_value`/`_dropdown`, `emp_*` constructors) are slim cousins of the `EditProperties` ones — no animate/table/group-member/multi-line-text path, since those kinds never enter the common set. `Esc` returns to `SelectAction` with the selection intact.
@@ -454,6 +458,7 @@ targets the pure, deterministic core):
 | `tests/morph.rs` | `Morph`: end-to-end blend — `from` on the first frame / `to` on the last, `wipe-right` half-done at the midpoint, smaller grid padded with transparent space, hidden outside its range. The per-cell threshold/progress fns are tested inline in `engine/objects/morph.rs` |
 | `tests/engine.rs` | `Engine::compile`: one scene per frame, empty deck, object outside `frame_count` |
 | `tests/renderer.rs` | Renderer + `grid_at`: equal-z-order source order, clamp past end, out-of-bounds diff skip |
+| `tests/docs.rs` | Docs ↔ code sync (see "Docs are load-bearing — and machine-checked" below): every test is listed in `TESTS.md` (and none is phantom), the documented test totals match, doc-referenced repo paths exist, the object-type lists match the `SceneObject` enum, every complete JSON example in the docs parses/compiles, the copy-paste build commands are identical across `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`, and this file's Module Map covers every core module |
 
 Inline unit tests also live in `src/` (e.g. `editor/properties.rs`,
 `engine/objects/wrap.rs`, `editor/textedit.rs`, `editor/object_defaults.rs`,
@@ -474,53 +479,48 @@ animation outside the block);
 "editing a span never duplicates the animation" regression;
 `editor/timeline.rs` — `pick_indices`/`abbreviated_indices` (first-3 / current
 window / last-3 selection, dedup near the edges, and edge-group shrink on a
-narrow row)). The suite totals 251 tests (114 integration + 137 inline, counted
-with `cargo test -- --list`); `TESTS.md` is the authoritative per-test list.
+narrow row)). The suite totals 263 tests (122 integration + 141 inline);
+`TESTS.md` is the authoritative per-test list, and `tests/docs.rs` fails the
+build if this count line or `TESTS.md` drifts from the code.
 
 Pattern: write a presentation in the documented JSON format, render it, and
 assert on the reconstructed grid — so tests pin behavior without coupling to the
 editor. Expected geometry is hand-derived from the layout spec, not snapshotted.
 
-## Status & known issues
+## Docs are load-bearing — and machine-checked
 
-Recent work: object property handling is now a single `Editable` trait with one
-impl per type (was ~64 per-type match arms across ~8 functions) — adding a
-property touches only that type's impl. Table fixes: `Table.height` now pads
-short tables (never clips taller content) via a shared `Table::row_heights`;
-`col_pixel_range` now includes the column's border columns per its doc.
+The markdown docs here are the interface other agents act on, so drift is a
+bug, not a cosmetic issue. `tests/docs.rs` (part of `cargo test`) enforces the
+sync rules mechanically: `TESTS.md`'s per-test list and totals (and the count
+line above) match the code, doc-referenced repo paths exist, the object-type
+lists in `AGENTS.md`/`PRESENTATION_FORMAT.md`/this file match the
+`SceneObject` enum, every complete JSON example in the docs still parses (full
+decks also compile and render), the copy-paste build commands stay identical
+across `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`, and this file's Module Map covers
+every core module. Each failure message names the doc and line to fix. The
+rules it can't check remain manual: if you change behavior, update the
+matching doc (and `AGENTS.md`'s hard rules if those change) in the same edit.
 
-Menu/property UX overhaul: `PropertyKind::Bool` renders as a checkbox and toggles
-in place on Space/Enter (no text detour); `Text` values edit in a centred
-multi-line overlay over the canvas instead of the cramped ~21-col panel field;
-colour rows/dropdowns show a swatch. The three `handle_table_cell_style_*`
-handlers no longer duplicate the object-property flow — text editing goes through
-the shared `TextEdit` buffer (`textedit.rs`), dropdown navigation through
-`dropdown_key`, and `Mode::EditProperties` is built via the `ep_*` constructors
-(which also fixed browse-mode scroll not following the selection).
+## Shared helpers (extend these; don't fork a parallel copy)
 
-Recent maintainability work (from a code review):
+- Word-wrap: `engine::objects::wrap` (`wrap_line_indexed` + `indexed_to_chars`)
+  — used by `Label`, `List`, and `Table` so glyphs and source indices can't drift.
+- Frame replay: `PlayablePresentation::grid_at` (`src/types.rs`) — the player
+  (`rebuild_grid`), the editor preview, and the test harness (`frame_lines`)
+  all replay full+diff frames through it.
+- Text carets: `panel.rs::draw_caret_line` — every text field renders its
+  caret through it (see "Text caret convention" above).
+- Object properties: the `Editable` trait (`src/editor/properties.rs`) — one
+  impl per type; the panel/menu/dispatch code is type-agnostic.
+- Adding an object type: follow the checklist in the module doc of
+  `src/engine/objects/mod.rs`; the compiler only catches some touch sites.
 
-- A "how to add an object type" checklist now lives in the module doc of
-  `src/engine/objects/mod.rs`, enumerating every touch site (the compiler only
-  catches some).
-- Word-wrap is no longer duplicated: `label.rs` and `table.rs` both call the
-  shared `engine::objects::wrap` helper (`wrap_line_indexed` + `indexed_to_chars`),
-  so the glyphs and their source indices can't drift.
-- Frame replay is unified in `PlayablePresentation::grid_at` (`types.rs`); the
-  player (`rebuild_grid`), the editor preview, and the test harness
-  (`frame_lines`) all go through it instead of re-implementing diff replay.
-- Text-caret rendering is unified in `panel.rs::draw_caret_line`; all nine text
-  fields (Settings, load-art-file, AnimateProperty, table add/remove-column,
-  table cell content + cell-style, the property-panel inline editor, and the
-  `render_text_overlay` text box) call it instead of each open-coding a caret.
-  This replaced three divergent styles (reverse-video block, a spliced `█`
-  glyph, a bold char on a reversed line). See "Text caret convention" below.
+## Known maintainability debt (not yet done)
 
-Outstanding maintainability work (from a code review; not yet done):
-
-- The `Mode` FSM (~16 variants, some with 7–15 fields) grows with every object type.
-- `panel.rs::render_right_panel` is one ~900-line function covering 12 modes.
-  The caret rendering is now shared (`draw_caret_line`), but the list-row and
-  dropdown render patterns are still duplicated inline.
-- The nine `Editable` impls repeat near-identical `set()` arms and geometry
+- The `Mode` FSM (~30 variants, some with 7–15 fields) grows with every object
+  type and editor feature.
+- `panel.rs::render_right_panel` is one large multi-mode renderer. The caret
+  rendering is shared (`draw_caret_line`), but the list-row and dropdown render
+  patterns are still duplicated inline.
+- The `Editable` impls repeat near-identical `set()` arms and geometry
   accessors for the common x/y/width/height/style/frame fields.

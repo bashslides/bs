@@ -1,8 +1,12 @@
 # Test overview
 
 A list of the test cases in this repository, grouped by area. The suite has
-251 tests: 114 integration tests under `tests/` and 137 inline unit tests in
-`src/` (counted with `cargo test -- --list`).
+263 tests: 122 integration tests under `tests/` and
+141 inline unit tests in `src/`.
+
+This file is not maintained on trust: `tests/docs.rs` fails `cargo test` when a
+test exists that is not listed here, when a listed test does not exist, or when
+the totals above are stale.
 
 Integration tests follow one pattern: author a presentation in the JSON source
 format, run it through `Engine::compile` + `Renderer::render`, and assert on the
@@ -42,16 +46,6 @@ reconstructed character grid (some also assert on cell styles).
 | `compile_produces_one_scene_per_frame` | `Engine::compile` yields one scene per frame |
 | `empty_presentation_renders_blank_frames` | A presentation with no objects renders blank frames |
 | `object_with_frame_range_outside_the_deck_is_never_drawn` | An object whose frame range never intersects the deck is never drawn |
-
-### Old-format migration — `src/migrate.rs` (inline)
-
-| Test | Verifies |
-|------|----------|
-| `links_a_coord_to_its_existing_animation_by_span` | An old `{…,start_frame,end_frame}` coord is rewritten to `{from,to,anim}` referencing the id of the `animation` whose span matches; old span fields dropped; result parses |
-| `synthesizes_an_animation_for_an_orphan_span` | An animated coord with no matching `animation` gets a synthesized sidecar (correct exclusive span) which it then references |
-| `two_coords_sharing_a_span_share_one_animation` | x and y over the same span resolve to one shared animation id |
-| `already_migrated_is_a_noop` | A current-format file is left byte-identical (`Report::unchanged`) |
-| `synthesized_ids_avoid_existing_ones` | A synthesized animation's id is past the largest existing id (no collision) |
 
 ### Renderer & frame replay — `tests/renderer.rs`
 
@@ -231,7 +225,34 @@ reconstructed character grid (some also assert on cell styles).
 | `border_can_be_disabled_for_a_frameless_region` | The border can be disabled for a frameless region |
 | `command_output_renders_clipped_into_region` | Command output renders clipped into the region |
 
+### Docs ↔ code sync — `tests/docs.rs`
+
+The markdown docs (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `TESTS.md`,
+`PRESENTATION_FORMAT.md`, `docs/AI_MAINTAINABILITY.md`) are load-bearing for AI
+agents; these tests turn their sync rules into build failures.
+
+| Test | Verifies |
+|------|----------|
+| `every_test_function_is_listed_in_tests_md` | Every test function in `tests/` and `src/` has a row in this file |
+| `tests_md_names_no_test_that_does_not_exist` | This file names no phantom test (rows survive renames/deletes) |
+| `documented_test_counts_match_the_code` | The totals at the top of this file and CLAUDE.md's count sentence match the code |
+| `doc_referenced_repo_paths_exist` | Every backticked `src/…`/`tests/…`/`docs/…`/`examples/…`/`scripts/…` path in the docs exists |
+| `object_type_docs_match_the_scene_object_enum` | The object-type lists/counts in AGENTS.md, PRESENTATION_FORMAT.md's catalog, and CLAUDE.md match the `SceneObject` enum (serde snake_case tags) |
+| `doc_json_examples_parse_and_compile` | Every complete JSON example in the docs parses with the current serde structs; full decks also validate, compile, and render |
+| `build_commands_are_identical_across_agent_docs` | The copy-paste build-setup lines are present verbatim in CLAUDE.md, AGENTS.md, and GEMINI.md |
+| `claude_md_module_map_covers_every_core_module` | Every `.rs` file in `src/`, `src/editor/`, `src/engine/`, `src/renderer/`, `src/player/` is mentioned in CLAUDE.md (per-object files under `src/engine/objects/` are exempt) |
+
 ## Inline unit tests (`src/`)
+
+### Old-format migration — `src/migrate.rs`
+
+| Test | Verifies |
+|------|----------|
+| `links_a_coord_to_its_existing_animation_by_span` | An old `{…,start_frame,end_frame}` coord is rewritten to `{from,to,anim}` referencing the id of the `animation` whose span matches; old span fields dropped; result parses |
+| `synthesizes_an_animation_for_an_orphan_span` | An animated coord with no matching `animation` gets a synthesized sidecar (correct exclusive span) which it then references |
+| `two_coords_sharing_a_span_share_one_animation` | x and y over the same span resolve to one shared animation id |
+| `already_migrated_is_a_noop` | A current-format file is left byte-identical (`Report::unchanged`) |
+| `synthesized_ids_avoid_existing_ones` | A synthesized animation's id is past the largest existing id (no collision) |
 
 ### Property editing — `src/editor/properties.rs`
 
@@ -244,6 +265,9 @@ reconstructed character grid (some also assert on cell styles).
 | `arrow_properties_roundtrip` | `Arrow` properties round-trip through get/set |
 | `art_properties_roundtrip` | `Art` properties round-trip through get/set |
 | `table_properties_roundtrip` | `Table` properties round-trip through get/set |
+| `morph_properties_roundtrip` | `Morph` properties round-trip through get/set |
+| `animation_properties_roundtrip` | `Animation` properties round-trip through get/set |
+| `auto_advance_properties_roundtrip` | `AutoAdvance` properties round-trip through get/set |
 | `group_properties_roundtrip_and_bounds` | `Group` properties round-trip and bounds compute; explicit range shows values + override note |
 | `auto_group_shows_blank_frames_and_no_note` | An auto group shows blank first/last frame and no override note |
 | `command_properties_roundtrip` | `Command` properties round-trip through get/set |
@@ -256,6 +280,7 @@ reconstructed character grid (some also assert on cell styles).
 | `common_properties_intersects_shared_editable_props` | `common_properties` keeps the geometry/colour/flag/frame props a Label and Rect share, dropping type-specific ones (and `Text`-kind) |
 | `common_properties_shrinks_for_heterogeneous_types` | A Label + Loop selection intersects down to just `first_frame`/`last_frame` |
 | `common_properties_value_is_the_first_members` | The representative value shown/seeded is the first member's |
+| `label_exposes_align_and_valign_dropdowns` | `Label` lists `align`/`valign` as dropdown properties with the expected option lists and defaults (`left`/`top`) |
 
 ### Loop stepping — `src/player/mod.rs`
 
@@ -316,8 +341,9 @@ reconstructed character grid (some also assert on cell styles).
 
 | Test | Verifies |
 |------|----------|
+| `object_type_registry_is_complete` | The `SceneObject` enum, `OBJECT_TYPES`, and the documented sub-menu-only set name exactly the same types (exhaustive-match guard forces every new variant through this check) |
 | `create_default_covers_every_object_type` | `create_default` builds the expected variant for every `OBJECT_TYPES` index |
-| `every_type_has_a_unique_shortcut_key` | Each type has a unique quick-add key (case-insensitive, not the global `f`) aligned with `OBJECT_TYPES` |
+| `every_type_has_a_unique_shortcut_key` | Each type has a unique quick-add key (case-insensitive, not the global `f`) carried on its `OBJECT_TYPES` descriptor |
 
 ### Key bindings — `src/editor/config.rs`
 
@@ -339,6 +365,16 @@ reconstructed character grid (some also assert on cell styles).
 | `converge_field_rows_omits_the_per_object_from_fields` | The Converge config lists only the shared `x to`/`y to` + span/toggles (8 fields) — no per-object `from` |
 | `converge_animates_each_object_from_its_own_spot_to_the_shared_point` | `apply_converge` animates each member's x/y from its own current position to the shared target; both axes (and all members) reference **one** shared animation id over the span |
 | `editing_an_animation_span_updates_one_animation_not_two` | Re-applying with a changed span updates the *same* `Animation` in place (same id, widened span, object range re-locked) — never spawns a second, the reported orphan-duplicate bug |
+
+### Editor animation-skip navigation — `src/editor/input.rs`
+
+| Test | Verifies |
+|------|----------|
+| `shift_skip_cluster_spans_a_single_animation` | The editor's skip cluster for a frame inside a span is that span (exclusive end); frames outside yield `None` |
+| `shift_skip_cluster_merges_overlapping_animations` | Overlapping spans merge into one cluster, so a skip clears the whole group |
+| `shift_skip_cluster_keeps_disjoint_animations_separate` | Spans that only touch at a boundary stay separate clusters |
+| `shift_skip_cluster_includes_non_auto_play_animations` | Unlike the player's cluster, the editor's includes non-auto-play animations (no auto-advance distinction while authoring) |
+| `shift_arrow_through_handle_key_jumps_across_an_animation` | End-to-end through `handle_key`: Shift+→/← inside a span land just past/before it, fall back to the ±10 scrub off-span, and the `[`/`]` aliases do the same jump |
 
 ### Frame operations — `src/editor/state.rs`
 

@@ -2104,6 +2104,33 @@ mod tests {
     }
 
     #[test]
+    fn morph_properties_roundtrip() {
+        let mut o = vec![obj(
+            r#"{"type":"morph","position":{"x":{"fixed":2},"y":{"fixed":1}},
+                "from":"AB\nCD","to":"XY\nZW","name":"ball→square","mode":"wipe-right",
+                "frames":{"start":0,"end":3}}"#,
+        )];
+        assert_props_roundtrip(&mut o, 0);
+    }
+
+    #[test]
+    fn animation_properties_roundtrip() {
+        let mut o = vec![obj(
+            r#"{"type":"animation","id":1,"frames":{"start":0,"end":4},
+                "auto_play":false,"delay_ms":250}"#,
+        )];
+        assert_props_roundtrip(&mut o, 0);
+    }
+
+    #[test]
+    fn auto_advance_properties_roundtrip() {
+        let mut o = vec![obj(
+            r#"{"type":"auto_advance","frames":{"start":1,"end":3},"delay_ms":2000}"#,
+        )];
+        assert_props_roundtrip(&mut o, 0);
+    }
+
+    #[test]
     fn group_properties_roundtrip_and_bounds() {
         // Group at index 1 wraps the label at index 0.
         let mut o = vec![

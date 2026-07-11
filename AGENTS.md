@@ -88,16 +88,20 @@ Rust `edition = "2024"`. `src/lib.rs` exposes the crate; `src/main.rs` is the CL
 | Understand the whole architecture, editor FSM, every module's role | **[`CLAUDE.md`](CLAUDE.md)** (canonical, detailed) |
 | **Add a new object type** | the checklist in the module doc of `src/engine/objects/mod.rs` — it enumerates *every* touch site (the compiler catches only some) |
 | Author or hand-edit a `.json` presentation (source format) | **[`PRESENTATION_FORMAT.md`](PRESENTATION_FORMAT.md)** |
-| See what each test covers before adding one | **[`TESTS.md`](TESTS.md)** (authoritative per-test list) |
+| See what each test covers before adding one | **[`TESTS.md`](TESTS.md)** (authoritative per-test list, enforced by `tests/docs.rs`) |
+| Check the docs haven't drifted from the code | `cargo test --test docs` (`tests/docs.rs` — runs in the full suite too) |
 | Build/run/install | **[`README.md`](README.md)** |
 
 ## Conventions & landmines
 
-- **Docs are load-bearing.** `CLAUDE.md`, `docs/AI_MAINTAINABILITY.md`,
-  `PRESENTATION_FORMAT.md`, and `TESTS.md` describe real behavior other agents
-  rely on. If you change behavior, update the matching doc in the same edit.
-  When adding tests, add the row to `TESTS.md` and keep its total count line
-  accurate.
+- **Docs are load-bearing — and machine-checked.** `CLAUDE.md`,
+  `docs/AI_MAINTAINABILITY.md`, `PRESENTATION_FORMAT.md`, and `TESTS.md`
+  describe real behavior other agents rely on. If you change behavior, update
+  the matching doc in the same edit. `tests/docs.rs` (part of `cargo test`)
+  enforces the mechanical half: `TESTS.md`'s rows and totals, doc-referenced
+  paths, the object-type lists, the JSON examples, and the build-command
+  copies. When it fails, the message names the doc and line to fix — fix the
+  doc, don't weaken the test. Prose accuracy is still on you.
 - **The 15 object types** and their JSON `type` tags (snake_case) are the enum in
   `src/engine/source.rs`: `label`, `h_line`, `rect`, `header`, `group`, `arrow`,
   `table`, `art`, `command`, `list`, `loop`, `morph`, `animation`, `auto_advance`,
@@ -116,5 +120,5 @@ Rust `edition = "2024"`. `src/lib.rs` exposes the crate; `src/main.rs` is the CL
 - **Prefer the shared helper over a new one:** word-wrap (`engine::objects::wrap`),
   frame replay (`PlayablePresentation::grid_at`), text carets
   (`panel.rs::draw_caret_line`), object properties (the `Editable` trait). See
-  CLAUDE.md's "Status & known issues" for the consolidation already done and the
-  refactors still outstanding.
+  CLAUDE.md's "Shared helpers" and "Known maintainability debt" sections for the
+  consolidation already done and the refactors still outstanding.

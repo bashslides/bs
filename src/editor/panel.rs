@@ -5,7 +5,7 @@ use crossterm::{cursor, queue, style};
 use crate::engine::source::SceneObject;
 use super::object_defaults;
 use super::properties::{self, PropertyKind};
-use super::state::{scene_object_summary, scene_object_type_name, ArtPick, EditorState, Mode, MultiSelectPurpose, TableCellSubState};
+use super::state::{scene_object_summary, ArtPick, EditorState, Mode, MultiSelectPurpose, TableCellSubState};
 use super::ui::Layout;
 
 /// If `value` names a concrete colour (named or `#rrggbb`), paint a two-cell
@@ -108,14 +108,13 @@ pub fn render_right_panel(
         let selected = *selected;
         draw_header(stdout, "Add Object")?;
         let types = object_defaults::OBJECT_TYPES;
-        for (i, name) in types.iter().enumerate() {
+        for (i, kind) in types.iter().enumerate() {
             let y = cy + (i + 2) as u16;
             if y >= cy + layout.canvas_height {
                 break;
             }
             // Prefix each type with its quick-add shortcut, e.g. "[l] Label".
-            let key = object_defaults::OBJECT_TYPE_KEYS.get(i).copied().unwrap_or(' ');
-            let label = format!("[{key}] {name}");
+            let label = format!("[{}] {}", kind.shortcut, kind.name);
             queue!(stdout, cursor::MoveTo(panel_x + 2, y))?;
             if i == selected {
                 queue!(
@@ -937,7 +936,7 @@ pub fn render_right_panel(
     };
 
     let obj = &state.source.objects[object_index];
-    draw_header(stdout, scene_object_type_name(obj))?;
+    draw_header(stdout, obj.type_name())?;
 
     // Render \n as ↵ in any value for display purposes (non-editing rows).
     let fmt_val = |v: &str| -> String {

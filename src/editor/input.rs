@@ -1578,7 +1578,7 @@ fn handle_add_object(state: &mut EditorState, key: KeyEvent) -> Action {
 /// via Enter or a quick-add shortcut). Most types land in EditProperties; Group
 /// and Art first enter their own member/library pickers.
 fn commit_add_object(state: &mut EditorState, index: usize) -> Action {
-    let type_name = object_defaults::OBJECT_TYPES[index];
+    let type_name = object_defaults::OBJECT_TYPES[index].name;
     if type_name == "Group" {
         // Group members are chosen from the objects on the current slide.
         if state.objects_on_current_frame().is_empty() {
