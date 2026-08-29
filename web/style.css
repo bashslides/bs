@@ -241,8 +241,14 @@ button.primary:hover:not(:disabled) { background: #161616; }
   padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
 }
 
-#framebar { display: flex; gap: 1px; height: 4px; margin-bottom: 8px; }
-#framebar i { flex: 1 1 0; min-width: 1px; background: var(--line); cursor: pointer; }
+#framebar {
+  display: flex;
+  gap: 1px;               /* keep in sync with TICK_GAP in app.js */
+  height: 4px;
+  margin-bottom: 8px;
+  overflow: hidden;       /* a bar can never widen the page */
+}
+#framebar i { flex: 1 1 0; min-width: 0; background: var(--line); cursor: pointer; }
 #framebar i.region  { background: #444; }
 #framebar i.current { background: var(--hi); }
 

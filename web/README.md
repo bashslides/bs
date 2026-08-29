@@ -130,6 +130,14 @@ On iPhone, `requestFullscreen` is refused for non-video elements, so `full`
 hides the bars without entering browser fullscreen. That is the useful half, and
 the exit button works the same either way.
 
+The frame bar shows one tick per frame only while that fits. A tick cannot
+render below about a pixel, so past roughly 120 frames on a phone the ticks
+would overflow the bar, widen the page, and — because the horizontal scrollbar
+then steals width from the stage — shrink the deck itself. Beyond that point
+each tick stands for a contiguous *range* of frames instead, so the bar always
+fits exactly and a 2000-frame deck renders at the same scale as a 15-frame one.
+Clicking still seeks; loops and animations are still marked.
+
 A small slide number (`12/15`) sits at the right of the footer. It disappears in
 fullscreen along with the rest of the chrome, which is the point — nothing but
 the deck.

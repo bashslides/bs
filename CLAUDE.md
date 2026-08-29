@@ -565,6 +565,15 @@ in the box-drawing block are stretched to the full cell width so long runs tile
 without gaps. The empty/error state is a separate `#msg` layer, since a canvas
 cannot show text on its own.
 
+**The frame bar buckets past the width it can draw.** One `<i>` per frame only
+works while each tick has a pixel to occupy; beyond that the bar overflows,
+widens the page, and the resulting horizontal scrollbar shrinks `#stage` — so a
+long deck rendered *smaller* than a short one. `renderFrameBar` therefore caps
+the tick count to what fits (`frameBarBuckets`), each tick standing for a frame
+range (`tickRange`); seeking and region marking work off the range. `#framebar`
+also carries `overflow: hidden` so the bar can never widen the page even if the
+maths is wrong.
+
 **Nothing in the viewer is keyboard-only.** Every key has a tap target, because
 a phone has none: the footer holds real buttons (prev/next/first/last/open/
 fullscreen) plus a small slide counter, tapping the canvas steps, and the frame
