@@ -119,6 +119,21 @@ did not. `present.html` reads whichever store holds it.
 | <kbd>f</kbd> | fullscreen; <kbd>Esc</kbd> leaves |
 | <kbd>o</kbd> | open a compiled `.json` |
 
+**Nothing is keyboard-only.** A phone has no keyboard, so every action also has a
+tap target: the footer carries real buttons (`←` `→` `⇤` `⇥` `open` `full`),
+tapping the canvas steps (left third back, the rest forward), and the frame bar
+jumps to any frame. Fullscreen hides both bars, so it gets its own way out — a
+dim `✕ full` button pinned to the top-right corner, the only route back on a
+device with no <kbd>Esc</kbd>.
+
+On iPhone, `requestFullscreen` is refused for non-video elements, so `full`
+hides the bars without entering browser fullscreen. That is the useful half, and
+the exit button works the same either way.
+
+A small slide number (`12/15`) sits at the right of the footer. It disappears in
+fullscreen along with the rest of the chrome, which is the point — nothing but
+the deck.
+
 `Command` objects cannot run in a browser. The compiler bakes their placeholder
 box into the static frames, so the slide renders correctly — the viewer names
 the command in the status bar instead of executing it.

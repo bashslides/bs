@@ -41,6 +41,15 @@ const el = {
   note: document.getElementById('note'),
   framebar: document.getElementById('framebar'),
   file: document.getElementById('file'),
+  controls: {
+    prev: document.getElementById('btn-prev'),
+    next: document.getElementById('btn-next'),
+    first: document.getElementById('btn-first'),
+    last: document.getElementById('btn-last'),
+    open: document.getElementById('btn-open'),
+    full: document.getElementById('btn-full'),
+    exitFull: document.getElementById('exit-full'),
+  },
 };
 
 /** @type {object|null} the loaded PlayablePresentation */
@@ -470,6 +479,21 @@ function setBare(on) {
   layout();
 }
 
+/**
+ * Toggle the no-bars view, and ask for real browser fullscreen alongside it.
+ *
+ * The two are deliberately separate: iOS Safari refuses `requestFullscreen` on
+ * a non-video element, so on iPhone only the bars-hidden half happens — which
+ * is the part that matters. Leaving is what needs care there: with the bars
+ * gone and no keyboard, `#exit-full` is the only way back, so it is shown
+ * whenever `body.bare` is set.
+ */
+function toggleFullscreen(on = !document.body.classList.contains('bare')) {
+  setBare(on);
+  if (on) document.documentElement.requestFullscreen?.().catch(() => {});
+  else if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+}
+
 document.addEventListener('keydown', (e) => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const k = e.key;
@@ -495,12 +519,7 @@ document.addEventListener('keydown', (e) => {
     case 'Home': jumpTo(0); break;
     case 'End': jumpTo(last); break;
     case 'f': case 'F':
-      setBare(!document.body.classList.contains('bare'));
-      if (document.body.classList.contains('bare')) {
-        document.documentElement.requestFullscreen?.().catch(() => {});
-      } else if (document.fullscreenElement) {
-        document.exitFullscreen?.().catch(() => {});
-      }
+      toggleFullscreen();
       break;
     case 'Escape':
       if (document.body.classList.contains('bare')) setBare(false);
@@ -514,6 +533,18 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('fullscreenchange', () => {
   if (!document.fullscreenElement) setBare(false);
 });
+
+// Bottom-bar controls. Each mirrors a key, so a phone can reach everything the
+// keyboard can. They sit in #foot, outside #stage, so pressing one never also
+// triggers the tap-to-step handler on the canvas.
+const c = el.controls;
+c.prev.addEventListener('click', () => deck && back());
+c.next.addEventListener('click', () => deck && forward());
+c.first.addEventListener('click', () => deck && jumpTo(0));
+c.last.addEventListener('click', () => deck && jumpTo(deck.frames.length - 1));
+c.open.addEventListener('click', () => el.file.click());
+c.full.addEventListener('click', () => toggleFullscreen());
+c.exitFull.addEventListener('click', () => toggleFullscreen(false));
 
 // Tap/click the canvas to step (left third goes back, the rest forward).
 el.stage.addEventListener('click', (e) => {
@@ -580,7 +611,6 @@ el.file.addEventListener('change', () => {
   if (f) loadFile(f);
   el.file.value = '';
 });
-document.getElementById('open').addEventListener('click', () => el.file.click());
 
 let dragDepth = 0;
 window.addEventListener('dragenter', (e) => {

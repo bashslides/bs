@@ -238,7 +238,7 @@ button.primary:hover:not(:disabled) { background: #161616; }
 #foot {
   flex: none;
   border-top: 1px solid var(--line);
-  padding: 8px 14px calc(10px + env(safe-area-inset-bottom));
+  padding: 8px 12px calc(10px + env(safe-area-inset-bottom));
 }
 
 #framebar { display: flex; gap: 1px; height: 4px; margin-bottom: 8px; }
@@ -246,28 +246,51 @@ button.primary:hover:not(:disabled) { background: #161616; }
 #framebar i.region  { background: #444; }
 #framebar i.current { background: var(--hi); }
 
-#hint { color: var(--dim); font-size: 12px; }
-#hint b { color: var(--fg); font-weight: 400; }
-@media (max-width: 560px) { #hint .wide { display: none; } }
-
 body.bare #bar, body.bare #foot { display: none; }
 body.bare #stage { padding: 0; }
 
-/* The present page's deck-name button reads as a link, not a button. Scoped to
-   #bar so it cannot leak onto the compile page's own #open button. */
-#bar #open {
-  font: inherit;
-  color: var(--fg);
-  background: none;
-  border: 0;
-  padding: 0;
-  min-height: 0;
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-color: var(--line);
+/* ------------------------------------------------------ present controls */
+
+#controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
-#bar #open:hover { color: var(--hi); }
+
+#controls button {
+  padding: 8px 10px;
+  min-width: 40px;          /* arrows stay a comfortable tap target */
+  min-height: 40px;
+  line-height: 1;
+  text-align: center;
+}
+
+/* The slide number: small, dim, pinned right — and gone in fullscreen, since
+   the whole footer is hidden there. */
+#counter {
+  margin-left: auto;
+  padding-left: 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;   /* no width jitter as frames advance */
+}
+
+/* The only way out of fullscreen on a device with no keyboard. Dim enough to
+   stay out of the deck's way, solid enough to find. */
+#exit-full {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top));
+  right: max(10px, env(safe-area-inset-right));
+  z-index: 5;
+  display: none;
+  opacity: .5;
+  background: rgba(0, 0, 0, .6);
+  font-size: 12px;
+  min-height: 36px;
+  padding: 6px 10px;
+}
+#exit-full:hover, #exit-full:active { opacity: 1; }
+body.bare #exit-full { display: inline-flex; align-items: center; }
 
 /* =========================================================================
    Instructions
