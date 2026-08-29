@@ -70,9 +70,9 @@ python3 -m http.server -d web 8000                        # http://localhost:800
 
 A deck can also be dropped onto the page, opened with `o`, or passed as
 `?deck=<url>`. `.github/workflows/pages.yml` publishes `web/` to GitHub Pages on
-every push to `main` that touches it — enable it once under **Settings → Pages →
-Build and deployment → Source: GitHub Actions**. See `web/README.md` for the
-keys and the Rust→JS mapping.
+every push to `main` that touches it; it creates the Pages site itself
+(`configure-pages` with `enablement: true`), so no Settings click is needed. See
+`web/README.md` for the keys and the Rust→JS mapping.
 
 ## For AI coding agents
 
