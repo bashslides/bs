@@ -1,0 +1,147 @@
+/* bs web viewer — black-and-white terminal chrome.
+   The chrome is deliberately monochrome; the deck's own cells keep whatever
+   colours the compiler baked into them. */
+
+:root {
+  --bg: #000;
+  --fg: #d0d0d0;
+  --dim: #6a6a6a;
+  --line: #2a2a2a;
+  --hi: #e8e8e8;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+          "DejaVu Sans Mono", "Liberation Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------------------------------------------------------------- top bar */
+
+#bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+#bar .brand { color: var(--hi); font-weight: 700; }
+#bar .grow { flex: 1; }
+
+.dim { color: var(--dim); }
+
+#open {
+  font: inherit;
+  color: var(--fg);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--line);
+}
+#open:hover { color: var(--hi); text-decoration-color: var(--dim); }
+
+#note { overflow: hidden; text-overflow: ellipsis; }
+
+/* ------------------------------------------------------------------ stage */
+
+#stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.metrics {
+  margin: 0;
+  font-family: var(--mono);
+  line-height: 1.15;
+  white-space: pre;
+  tab-size: 8;
+}
+
+#screen {
+  color: var(--fg);
+  cursor: pointer;          /* left/right halves step the deck */
+  user-select: none;
+}
+
+#screen .msg { color: var(--dim); }
+#screen .msg b { color: var(--hi); font-weight: 700; }
+
+#probe {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  top: -9999px;
+  left: -9999px;
+  font-size: 100px;
+}
+
+/* ------------------------------------------------------------- bottom bar */
+
+#foot {
+  border-top: 1px solid var(--line);
+  padding: 6px 10px 8px;
+}
+
+#framebar {
+  display: flex;
+  gap: 1px;
+  height: 4px;
+  margin-bottom: 7px;
+}
+
+#framebar i {
+  flex: 1 1 0;
+  min-width: 1px;
+  background: var(--line);
+  cursor: pointer;
+}
+#framebar i.region  { background: #444; }
+#framebar i.current { background: var(--hi); }
+
+#hint b { color: var(--fg); font-weight: 400; }
+
+/* ------------------------------------------------------------- fullscreen */
+
+body.bare #bar,
+body.bare #foot { display: none; }
+body.bare #stage { padding: 0; }
+
+/* ------------------------------------------------------- drag-drop target */
+
+#drop {
+  position: fixed;
+  inset: 0;
+  display: none;
+  place-items: center;
+  background: rgba(0, 0, 0, .85);
+  color: var(--hi);
+}
+#drop span {
+  border: 1px dashed var(--dim);
+  padding: 24px 32px;
+}
+body.dragging #drop { display: grid; }

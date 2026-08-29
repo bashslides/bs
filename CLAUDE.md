@@ -501,6 +501,28 @@ every core module. Each failure message names the doc and line to fix. The
 rules it can't check remain manual: if you change behavior, update the
 matching doc (and `AGENTS.md`'s hard rules if those change) in the same edit.
 
+## Web viewer (`web/`, deployed to GitHub Pages)
+
+A dependency-free static page (`web/index.html` + `style.css` + `app.js`, no
+build step) that plays a **compiled** `PlayablePresentation` in the browser. The
+chrome is deliberately black-and-white terminal style; the deck's own cell
+colours render as compiled. `.github/workflows/pages.yml` uploads `web/` to
+GitHub Pages on pushes to `main` that touch it. A deck is loaded from
+`?deck=<url>`, else `web/presentation.json` (the committed sample), else a
+drag-drop / `o` file pick.
+
+**It is a port, so it can drift.** `web/app.js` re-implements the player's
+*pure* logic in JS — `PlayablePresentation::grid_at` → `gridAt`,
+`player::loop_next` → `loopNext`, and `Player::{auto_advance_delay,
+animation_cluster, frame_auto_advance_delay, effective_auto_delay}` → the
+same-named camelCase functions — plus the player's arrow-key semantics
+(animation/loop skip, Shift+arrows = ±10). **If you change any of those in
+`src/player/mod.rs`, mirror it in `web/app.js` in the same edit**; `cargo test`
+cannot catch this drift. `Command` objects are the one runtime feature the
+browser cannot provide (they run a local binary): the compiler has already baked
+their placeholder box into the static frames, so the slide still renders and the
+viewer names the command in the status bar instead of executing it.
+
 ## Shared helpers (extend these; don't fork a parallel copy)
 
 - Word-wrap: `engine::objects::wrap` (`wrap_line_indexed` + `indexed_to_chars`)
