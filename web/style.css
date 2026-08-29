@@ -97,11 +97,56 @@ button.primary:hover:not(:disabled) { background: #161616; }
   overflow: hidden;
   flex: none;
 }
-.brand { color: var(--hi); font-weight: 700; text-decoration: none; }
-.brand:hover { text-decoration: underline; text-underline-offset: 3px; }
+.brand {
+  color: var(--hi);
+  font-weight: 700;
+  background: none;
+  border: 1px solid transparent;
+  padding: 6px 8px;
+  min-height: 36px;
+  cursor: pointer;
+}
+.brand:hover { border-color: var(--line); }
+.brand.active { border-color: var(--line); background: #0b0b0b; }
+
+/* The title page: a heading and one paragraph. Nothing else. */
+#home {
+  max-width: 62ch;
+  margin: 0 auto;
+  padding: 48px 20px;
+  overflow-y: auto;
+}
+#home h1 { margin: 0 0 14px; font-size: 20px; color: var(--hi); letter-spacing: 1px; }
+#home p { margin: 0; color: var(--dim); line-height: 1.9; }
+#home b { color: var(--fg); font-weight: 700; }
+
+/* A button that reads as a link, so the paragraph can name the views. */
+.link {
+  font: inherit;
+  color: var(--hi);
+  background: none;
+  border: 0;
+  padding: 0;
+  min-height: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--dim);
+}
+.link:hover { text-decoration-color: var(--hi); }
+
+@media (max-width: 480px) { #home { padding: 28px 16px; } }
 #bar .ellipsis { overflow: hidden; text-overflow: ellipsis; }
 
 #tabs { display: flex; gap: 4px; margin-left: 4px; }
+
+/* library / open — present-view actions, in the topmost bar so fullscreen hides
+   them with everything else. Declared BEFORE the narrow-screen media queries
+   below, which swap the labels for shorter ones. */
+#bar-actions { display: flex; gap: 6px; }
+#bar-actions[hidden] { display: none; }
+#bar-actions button { padding: 6px 10px; min-height: 34px; }
+#bar-actions .ico { display: none; }
 
 .tab {
   border: 1px solid transparent;
@@ -122,9 +167,29 @@ button.primary:hover:not(:disabled) { background: #161616; }
 .view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .view[hidden] { display: none; }
 
+/* The bar carries the brand, three tabs and two actions. On a phone that only
+   fits if it tightens and the actions become glyphs — measured at 320/360/390. */
+@media (max-width: 560px) {
+  #bar { padding: 8px 6px; gap: 2px; }
+  #tabs { gap: 2px; margin-left: 2px; }
+  .brand { padding: 6px 5px; }
+  .tab, #bar-actions button { font-size: 12px; padding: 6px 5px; }
+  #note { display: none; }          /* the footer is tight enough already */
+}
 @media (max-width: 430px) {
-  #bar { padding: 8px 10px; gap: 6px; }
-  .tab { padding: 6px 7px; }
+  #bar-actions .lbl { display: none; }
+  #bar-actions .ico { display: inline; }
+  #bar-actions button { min-width: 34px; padding: 6px 6px; }
+}
+/* Smallest phones still in use (320 CSS px). Measured: the bar needs every one
+   of these to seat the brand, three tabs and two actions without clipping. */
+@media (max-width: 400px) {
+  #bar { padding: 8px 4px; gap: 1px; }
+  #tabs { gap: 1px; }
+  .brand { padding: 6px 4px; }
+  .tab { font-size: 11px; padding: 6px 3px; }
+  #bar-actions { gap: 4px; }
+  #bar-actions button { min-width: 0; padding: 6px 5px; }
 }
 
 /* =========================================================================
@@ -187,17 +252,6 @@ button.primary:hover:not(:disabled) { background: #161616; }
    Present
    ========================================================================= */
 
-#deck-bar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line);
-  white-space: nowrap;
-  overflow: hidden;
-}
-#deck-bar button { padding: 6px 10px; min-height: 34px; }
 #btn-library.active { color: var(--hi); border-color: var(--dim); background: #161616; }
 
 #stage {
@@ -314,8 +368,14 @@ body.bare #stage { padding: 0; }
 
 /* The slide number: small, dim, pinned right — and gone in fullscreen, since
    the whole footer is hidden there. */
-#counter {
+#note {
   margin-left: auto;
+  min-width: 0;
+  font-size: 12px;
+  text-align: right;
+}
+
+#counter {
   padding-left: 8px;
   font-size: 12px;
   font-variant-numeric: tabular-nums;   /* no width jitter as frames advance */

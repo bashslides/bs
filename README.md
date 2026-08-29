@@ -58,7 +58,8 @@ WYSIWYG preview. See `CLAUDE.md` for the full architecture and module map.
 ## Web tools (GitHub Pages)
 
 `web/` is a dependency-free, installable web app — black-and-white terminal
-styling, no framework, no npm. One page, three views:
+styling, no framework, no npm. One page: a title page (the `bs` wordmark) plus
+three views —
 
 - **instructions** — the full source-format reference with a copy-all button,
   for pasting into an LLM that will write a deck for you, plus a download of the

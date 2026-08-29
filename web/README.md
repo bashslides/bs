@@ -3,9 +3,17 @@
 A dependency-free static site: no framework, no bundler, no npm. Four pages,
 plain HTML/CSS/JS, plus the engine compiled to WebAssembly.
 
-**One page, three views** — instructions → compile → present, in that order —
-so the WebAssembly engine, the loaded deck and the saved-deck library are shared
-state: compiling and then presenting reloads nothing.
+**One page, four views** — a title page plus instructions → compile → present,
+in that order — so the WebAssembly engine, the loaded deck and the saved-deck
+library are shared state: compiling and then presenting reloads nothing. The
+`bs` wordmark in the bar is the title page: one paragraph on what the tool is
+and how to use it.
+
+The topmost bar holds the wordmark, the tabs and the present view's **library**
+and **open** buttons; fullscreen hides it along with the footer. There is no
+separate deck-title bar — the document title carries the deck name. That bar has
+to fit a 320px phone, so the two action labels shorten to `lib` / `open` below
+430px and the type tightens below 400px (measured, not guessed).
 
 ```
 web/
@@ -155,7 +163,7 @@ terminal player still jumps one frame further, to the first slide after the
 span.)
 
 **Nothing is keyboard-only.** A phone has no keyboard, so every action also has a
-tap target: the footer carries real buttons (`←` `→` `⇤` `⇥` `full`), the deck
+tap target: the footer carries real buttons (`←` `→` `⇤` `⇥` `full`), the top
 bar carries `library` and `open`, tapping the canvas steps (left third back, the
 rest forward), and the frame bar jumps to any frame. Fullscreen hides both bars, so it gets its own way out — a
 dim `✕ full` button pinned to the top-right corner, the only route back on a

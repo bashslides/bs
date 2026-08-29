@@ -18,13 +18,37 @@
 <body>
   <div id="app">
     <header id="bar">
-      <span class="brand">bs</span>
+      <button id="tab-home" class="brand" type="button" title="what this is">bs</button>
       <nav id="tabs" role="tablist">
         <button id="tab-instructions" class="tab" type="button" role="tab" aria-selected="false">instructions</button>
         <button id="tab-compile"      class="tab" type="button" role="tab" aria-selected="false">compile</button>
         <button id="tab-present"      class="tab" type="button" role="tab" aria-selected="true">present</button>
       </nav>
+      <span class="grow"></span>
+      <!-- Only meaningful while presenting, so shown with that view. -->
+      <div id="bar-actions">
+        <button id="btn-library" type="button" aria-label="saved decks"><span class="lbl">library</span><span class="ico">lib</span></button>
+        <button id="btn-open" type="button" aria-label="open a compiled deck"><span class="lbl">open</span><span class="ico">open</span></button>
+      </div>
     </header>
+
+    <!-- ────────────────────────────────────────────────────── home ── -->
+    <section id="view-home" class="view" role="tabpanel" hidden>
+      <div id="home">
+        <h1>bs</h1>
+        <p><b>bs</b> is a terminal-native presentation engine: a deck is a grid of
+          character cells and a timeline of frames, written as JSON, compiled into
+          those frames, and played in a terminal — or right here. To use it, copy
+          the <button class="link" data-go="instructions">instructions</button> into
+          an AI assistant and describe the deck you want; paste or open what it
+          writes in <button class="link" data-go="compile">compile</button>, which
+          runs the real engine as WebAssembly in your browser, so it works offline
+          and produces exactly what the command-line compiler would; then
+          <button class="link" data-go="present">present</button> it, stepping with
+          the arrows or tapping the sides of the slide, and every deck you compile
+          or open is kept in a local library you can reopen or delete later.</p>
+      </div>
+    </section>
 
     <!-- ─────────────────────────────────────────────── instructions ── -->
     <section id="view-instructions" class="view" role="tabpanel" hidden>
@@ -71,14 +95,6 @@
 
     <!-- ───────────────────────────────────────────────────── present ── -->
     <section id="view-present" class="view" role="tabpanel">
-      <div id="deck-bar">
-        <span id="deck-name" class="ellipsis dim">no deck</span>
-        <span class="grow"></span>
-        <span id="note" class="dim ellipsis"></span>
-        <button id="btn-library" type="button">library</button>
-        <button id="btn-open" type="button">open</button>
-      </div>
-
       <main id="stage">
         <canvas id="screen" role="img" aria-label="presentation canvas"></canvas>
         <pre id="msg" class="metrics" hidden></pre>
@@ -105,6 +121,7 @@
           <button id="btn-first" type="button" title="first frame (home)" aria-label="first frame">⇤</button>
           <button id="btn-last"  type="button" title="last frame (end)" aria-label="last frame">⇥</button>
           <button id="btn-full"  type="button" title="fullscreen (f)">full</button>
+          <span id="note" class="dim ellipsis"></span>
           <span id="counter" class="dim">--/--</span>
         </div>
       </footer>
