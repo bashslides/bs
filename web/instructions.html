@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>bs — instructions</title>
 <meta name="description" content="The bs source format, ready to paste into an LLM so it can author a deck.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23000'/%3E%3Ctext x='2' y='12' font-family='monospace' font-size='11' fill='%23e0e0e0'%3Ebs%3C/text%3E%3C/svg%3E">
@@ -15,25 +15,27 @@
       <span class="dim">/</span>
       <span>instructions</span>
       <span class="grow"></span>
-      <span id="meta" class="dim"></span>
+      <span id="meta" class="dim ellipsis"></span>
     </header>
 
     <main id="doc-pane">
       <section id="intro">
-        <p>This is the complete <strong>source format</strong> reference — every field,
-           default and enum spelling, taken from the engine's own definitions. Copy it
-           into an LLM and ask for a deck; the result compiles.</p>
-        <ol class="steps">
-          <li><b>Copy</b> the reference below.</li>
-          <li><b>Paste</b> it into your assistant, then describe the deck you want.</li>
-          <li><b>Compile</b> its <code>source.json</code> on the
-              <a href="compile.html">compile</a> page.</li>
-          <li><b>Present</b> the result on the <a href="present.html">present</a> page.</li>
-        </ol>
+        <p>The complete source-format reference. Copy it into an assistant and
+           describe the deck you want, then <a href="compile.html">compile</a> what it
+           writes and <a href="present.html">present</a> the result.</p>
         <div class="row">
           <button id="copy" type="button" class="primary">copy all</button>
           <button id="download" type="button">download .md</button>
           <span id="copy-note" class="dim"></span>
+        </div>
+
+        <div class="skill">
+          <p>Using Claude Code? Install the packaged skill instead — save it as
+             <code>.claude/skills/bs-deck/SKILL.md</code> and it loads itself
+             whenever you ask for a deck.</p>
+          <div class="row">
+            <a class="btn" href="bs-deck-skill.md" download="SKILL.md">download SKILL.md</a>
+          </div>
         </div>
       </section>
 

@@ -39,6 +39,10 @@ const DOCS: &[&str] = &[
     "TESTS.md",
     "PRESENTATION_FORMAT.md",
     "docs/AI_MAINTAINABILITY.md",
+    // The packaged Claude skill for authoring decks. It restates the source
+    // format, so it rots exactly like the rest of the docs — hold it to the
+    // same machine-checked standard.
+    ".claude/skills/bs-deck/SKILL.md",
 ];
 
 /// The docs that must carry identical copy-paste build/test commands.

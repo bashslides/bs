@@ -18,6 +18,14 @@
 
 const FRAMES_PER_JUMP = 10; // matches player::FRAMES_PER_JUMP
 
+// Kept in sync with --mono in style.css. "Courier New" is the last real family
+// before the generic keyword because it is present on essentially every mobile
+// platform, so the stack lands on a genuine fixed-pitch face rather than the
+// system UI font.
+const FONT_STACK = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, ' +
+  'Consolas, "DejaVu Sans Mono", "Liberation Mono", "Courier New", monospace';
+const DEFAULT_FG = '#d0d0d0';
+
 // The 8 NamedColors, in a muted terminal palette.
 const PALETTE = {
   black: '#1c1c1c', red: '#d75f5f', green: '#87af5f', yellow: '#d7af5f',
@@ -25,8 +33,8 @@ const PALETTE = {
 };
 
 const el = {
-  screen: document.getElementById('screen'),
-  probe: document.getElementById('probe'),
+  screen: document.getElementById('screen'),   // <canvas>
+  msg: document.getElementById('msg'),         // empty/error state
   stage: document.getElementById('stage'),
   name: document.getElementById('deck-name'),
   counter: document.getElementById('counter'),
@@ -54,24 +62,6 @@ function cssColor(c) {
   if (typeof c.r === 'number') return `rgb(${c.r},${c.g},${c.b})`;
   if (Array.isArray(c.rgb)) return `rgb(${c.rgb[0]},${c.rgb[1]},${c.rgb[2]})`;
   return null;
-}
-
-const styleCache = new WeakMap();
-
-/** A Style → inline CSS. Empty string for the default style. */
-function styleCss(s) {
-  if (!s) return '';
-  const hit = styleCache.get(s);
-  if (hit !== undefined) return hit;
-  let out = '';
-  const fg = cssColor(s.fg);
-  const bg = cssColor(s.bg);
-  if (fg) out += `color:${fg};`;
-  if (bg) out += `background:${bg};`;
-  if (s.bold) out += 'font-weight:700;';
-  if (s.dim) out += 'opacity:.55;';
-  styleCache.set(s, out);
-  return out;
 }
 
 const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;' };
@@ -124,29 +114,133 @@ function gridFor(n) {
 // Rendering
 // ---------------------------------------------------------------------------
 
-/** Rasterize a cell grid to HTML, coalescing runs that share a style. */
-function gridHtml(grid) {
-  let html = '';
-  for (const row of grid) {
-    let i = 0;
-    while (i < row.length) {
-      const css = styleCss(row[i].style);
-      let buf = '';
-      let j = i;
-      while (j < row.length && styleCss(row[j].style) === css) {
-        buf += row[j].ch;
-        j++;
+// The deck is a fixed character grid, so it is drawn on a canvas with one
+// `fillText` per cell at an exact cell origin — never as a run of text.
+//
+// Why: a run of text only lines up if the font is truly monospaced AND has a
+// glyph for every character used. On mobile, neither holds reliably — the
+// platform's "monospace" can resolve to a proportional face, and box-drawing
+// characters (─ │ ┌ █ …) routinely come from a *fallback* font with different
+// metrics. Either one shears the grid apart, most visibly as spaces that are
+// narrower than everything else. Positioning each cell ourselves makes the
+// layout independent of whatever font the device actually picks.
+
+/** Advance width and line height per 1px of font-size, for the resolved font. */
+let ADV = 0.6;
+let LINE = 1.2;
+
+/** Cell geometry in CSS pixels, recomputed by layout(). */
+let cellW = 0;
+let cellH = 0;
+let fontPx = 0;
+
+const ctx = el.screen.getContext('2d');
+
+/** Width of one glyph at the current font, cached (used to stretch box art). */
+const glyphWidth = new Map();
+
+/** Box-drawing and block elements — the characters that must tile seamlessly. */
+const isBoxArt = (ch) => {
+  const c = ch.codePointAt(0);
+  return c >= 0x2500 && c <= 0x259f;
+};
+
+/** Measure the resolved monospace font once, in font-size-relative units. */
+function measure() {
+  ctx.font = `100px ${FONT_STACK}`;
+  ADV = ctx.measureText('M').width / 100 || 0.6;
+  LINE = 1.2;
+  glyphWidth.clear();
+}
+
+/** Size the canvas so the whole grid fits the stage, crisp on any DPI. */
+function layout() {
+  if (!deck) return;
+  const cols = deck.contract.width;
+  const rows = deck.contract.height;
+  const cs = getComputedStyle(el.stage);
+  const availW = el.stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const availH = el.stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  if (availW <= 0 || availH <= 0) return;
+
+  fontPx = Math.max(4, Math.min(availW / (cols * ADV), availH / (rows * LINE)));
+  cellW = fontPx * ADV;
+  cellH = fontPx * LINE;
+
+  const dpr = window.devicePixelRatio || 1;
+  el.screen.style.width = `${cols * cellW}px`;
+  el.screen.style.height = `${rows * cellH}px`;
+  el.screen.width = Math.round(cols * cellW * dpr);
+  el.screen.height = Math.round(rows * cellH * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  glyphWidth.clear();
+  if (deck) paint(gridFor(frame));
+}
+
+/** Draw one cell grid onto the canvas. */
+function paint(grid) {
+  const cols = deck.contract.width;
+  const rows = deck.contract.height;
+
+  ctx.clearRect(0, 0, cols * cellW, rows * cellH);
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+
+  for (let y = 0; y < rows && y < grid.length; y++) {
+    const row = grid[y];
+    const py = y * cellH;
+    for (let x = 0; x < cols && x < row.length; x++) {
+      const cell = row[x];
+      const st = cell.style;
+      const px = x * cellW;
+
+      if (st) {
+        const bg = cssColor(st.bg);
+        if (bg) {
+          ctx.fillStyle = bg;
+          // Overdraw by a hair so neighbouring fills never leave a seam.
+          ctx.fillRect(px, py, cellW + 0.5, cellH + 0.5);
+        }
       }
-      html += css ? `<span style="${css}">${esc(buf)}</span>` : esc(buf);
-      i = j;
+
+      const ch = cell.ch;
+      if (!ch || ch === ' ') continue;
+
+      const bold = !!(st && st.bold);
+      ctx.font = `${bold ? 'bold ' : ''}${fontPx}px ${FONT_STACK}`;
+      ctx.fillStyle = (st && cssColor(st.fg)) || DEFAULT_FG;
+      ctx.globalAlpha = st && st.dim ? 0.55 : 1;
+
+      // A glyph pulled from a fallback font can be narrower than the cell,
+      // which would break long runs of ─ or █ into dashes. Stretch just those
+      // to the full cell width; ordinary text is left at its natural width.
+      if (isBoxArt(ch)) {
+        const key = `${ch}|${bold}`;
+        let w = glyphWidth.get(key);
+        if (w === undefined) {
+          w = ctx.measureText(ch).width;
+          glyphWidth.set(key, w);
+        }
+        if (w > 0.1 && Math.abs(w - cellW) > 0.5) {
+          ctx.save();
+          ctx.translate(px + cellW / 2, py + cellH / 2);
+          ctx.scale(cellW / w, 1);
+          ctx.fillText(ch, 0, 0);
+          ctx.restore();
+          ctx.globalAlpha = 1;
+          continue;
+        }
+      }
+
+      ctx.fillText(ch, px + cellW / 2, py + cellH / 2);
+      ctx.globalAlpha = 1;
     }
-    html += '\n';
   }
-  return html;
 }
 
 function render() {
-  el.screen.innerHTML = gridHtml(gridFor(frame));
+  showCanvas();
+  paint(gridFor(frame));
   const total = deck.frames.length;
   el.counter.textContent = `${String(frame + 1).padStart(2, '0')}/${String(total).padStart(2, '0')}`;
   el.note.textContent = statusNote();
@@ -188,28 +282,6 @@ function renderFrameBar() {
       (deck.auto_advances || []).some((r) => covers(r, i));
     kids[i].className = i === frame ? 'current' : inRegion ? 'region' : '';
   }
-}
-
-/** Scale the canvas so the whole grid fits the stage. */
-let CW = 0; // char width at font-size 1px
-let LH = 0; // line height at font-size 1px
-
-function measure() {
-  el.probe.textContent = 'M'.repeat(10) + '\n' + 'M'.repeat(10);
-  const r = el.probe.getBoundingClientRect();
-  CW = r.width / 10 / 100;
-  LH = r.height / 2 / 100;
-}
-
-function fit() {
-  if (!deck || !CW || !LH) return;
-  const cols = deck.contract.width;
-  const rows = deck.contract.height;
-  const cs = getComputedStyle(el.stage);
-  const availW = el.stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-  const availH = el.stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-  const size = Math.max(4, Math.min(availW / (cols * CW), availH / (rows * LH)));
-  el.screen.style.fontSize = size + 'px';
 }
 
 // ---------------------------------------------------------------------------
@@ -395,7 +467,7 @@ function jumpTo(n) {
 
 function setBare(on) {
   document.body.classList.toggle('bare', on);
-  fit();
+  layout();
 }
 
 document.addEventListener('keydown', (e) => {
@@ -444,9 +516,9 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 // Tap/click the canvas to step (left third goes back, the rest forward).
-el.screen.addEventListener('click', (e) => {
+el.stage.addEventListener('click', (e) => {
   if (!deck) return;
-  const box = el.screen.getBoundingClientRect();
+  const box = el.stage.getBoundingClientRect();
   if (e.clientX < box.left + box.width / 3) back();
   else forward();
 });
@@ -455,9 +527,15 @@ el.screen.addEventListener('click', (e) => {
 // Loading
 // ---------------------------------------------------------------------------
 
+function showCanvas() {
+  el.screen.hidden = false;
+  el.msg.hidden = true;
+}
+
 function message(lines) {
-  el.screen.style.fontSize = '';
-  el.screen.innerHTML = `<span class="msg">${lines.join('\n')}</span>`;
+  el.screen.hidden = true;
+  el.msg.hidden = false;
+  el.msg.innerHTML = lines.join('\n');
   el.counter.textContent = '--/--';
   el.note.textContent = '';
   el.framebar.innerHTML = '';
@@ -478,8 +556,9 @@ function load(data, name) {
   cache = { frame: -1, grid: null };
   el.name.textContent = name;
   document.title = `${name} — bs`;
+  showCanvas();
+  layout();
   render();
-  fit();
   armLoop(null);
   reschedule();
 }
@@ -521,12 +600,13 @@ window.addEventListener('drop', (e) => {
   if (f) loadFile(f);
 });
 
-window.addEventListener('resize', fit);
+window.addEventListener('resize', layout);
+window.addEventListener('orientationchange', () => setTimeout(layout, 200));
 // Metrics can shift once webfonts settle; re-measure when they do.
 if (document.fonts && document.fonts.ready) {
-  document.fonts.ready.then(() => { measure(); fit(); });
+  document.fonts.ready.then(() => { measure(); layout(); });
 }
-if (window.ResizeObserver) new ResizeObserver(fit).observe(el.stage);
+if (window.ResizeObserver) new ResizeObserver(layout).observe(el.stage);
 
 async function boot() {
   measure();
@@ -535,11 +615,15 @@ async function boot() {
   // `?deck=session` is the hand-off from the compile page, which stashes the
   // freshly compiled deck in sessionStorage rather than round-tripping a file.
   if (src === 'session') {
+    // The compile page writes to whichever store it could use, so read both.
     let stashed = null;
-    try {
-      stashed = sessionStorage.getItem('bs:deck');
-    } catch {
-      // storage blocked (private mode) — fall through to the empty state
+    for (const get of [() => sessionStorage, () => localStorage]) {
+      try {
+        stashed = get().getItem('bs:deck');
+        if (stashed) break;
+      } catch {
+        // storage blocked (private mode, file://) — try the next one
+      }
     }
     if (stashed) {
       try {

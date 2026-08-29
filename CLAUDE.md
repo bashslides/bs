@@ -497,7 +497,8 @@ bug, not a cosmetic issue. `tests/docs.rs` (part of `cargo test`) enforces the
 sync rules mechanically: `TESTS.md`'s per-test list and totals (and the count
 line above) match the code, doc-referenced repo paths exist, the object-type
 lists in `AGENTS.md`/`PRESENTATION_FORMAT.md`/this file match the
-`SceneObject` enum, every complete JSON example in the docs still parses (full
+`SceneObject` enum, every complete JSON example in the docs — including the
+packaged skill at `.claude/skills/bs-deck/SKILL.md` — still parses (full
 decks also compile and render), the copy-paste build commands stay identical
 across `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`, and this file's Module Map covers
 every core module. Each failure message names the doc and line to fix. The
@@ -511,9 +512,9 @@ page (`web/index.html`) offering three tools:
 
 | Page | Does |
 |------|------|
-| `web/present.html` + `web/app.js` | Plays a **compiled** deck. A JS port of the player's pure logic (see the drift warning below) |
+| `web/present.html` + `web/app.js` | Plays a **compiled** deck on a `<canvas>`. A JS port of the player's pure logic (see the drift warning below) |
 | `web/compile.html` + `web/compile.js` + `web/wasm.js` | Turns a **source** deck into a playable one by running the real engine, built to WebAssembly |
-| `web/instructions.html` + `web/instructions.js` | Serves `PRESENTATION_FORMAT.md` verbatim with a copy-all button, for handing to an LLM |
+| `web/instructions.html` + `web/instructions.js` | Serves `PRESENTATION_FORMAT.md` verbatim with a copy-all button, for handing to an LLM; also offers the packaged Claude skill as a download |
 
 **Build and test it locally — never hand-assemble the site:**
 
@@ -523,9 +524,23 @@ page (`web/index.html`) offering three tools:
 ```
 
 `scripts/build-web.sh` produces `_site/` (gitignored): `web/` plus the built
-`bs.wasm`, `PRESENTATION_FORMAT.md` (as `presentation-format.md`) and
+`bs.wasm`, `PRESENTATION_FORMAT.md` (as `presentation-format.md`),
+`.claude/skills/bs-deck/SKILL.md` (as `bs-deck-skill.md`) and
 `examples/demo.json` (as `demo.json`, the compile page's sample). CI runs the
 **same script**, so a green local build is what deploys.
+
+## The packaged Claude skill
+
+`.claude/skills/bs-deck/SKILL.md` is a Claude Code skill (frontmatter `name:
+bs-deck`) that teaches an assistant to author `bs` source JSON. Living at the
+conventional path, it loads automatically for anyone using Claude Code in this
+repo; the instructions page also offers it for download so it can be installed
+elsewhere.
+
+It restates the source format, so it rots like any other doc — it is therefore
+in `tests/docs.rs`'s `DOCS` list, which parses every JSON example in it against
+the serde structs and compiles the complete decks. **If you change the format,
+update this file too**, exactly as you would `PRESENTATION_FORMAT.md`.
 
 **The compile tool cannot drift — by construction.** `wasm/src/lib.rs` is a
 ~90-line `extern "C"` shim (no wasm-bindgen, no wasm-pack, no Node) over
@@ -536,6 +551,19 @@ and detach it. `scripts/test-web.sh` compiles one deck both ways in a headless
 browser and asserts the outputs are **byte-identical**, which is what catches an
 ABI or glue mistake (an engine change moves both sides together, so the
 deck-shape assertions in that script cover engine regressions).
+
+**The grid is drawn on a canvas, one `fillText` per cell.** Never render the
+deck as runs of text: a run only lines up if the device resolves a *truly*
+monospaced font that also has a glyph for every character in the deck. On mobile
+neither holds — the platform "monospace" can be a proportional face, and
+box-drawing characters (`─ │ ┌ █`) routinely come from a fallback font with
+different metrics. Either shears the grid, most visibly as spaces narrower than
+everything else. `app.js` therefore measures the resolved font once (`measure`),
+derives a cell size (`layout`, device-pixel-ratio aware), and paints each cell at
+its exact origin (`paint`) — so alignment is independent of the font. Characters
+in the box-drawing block are stretched to the full cell width so long runs tile
+without gaps. The empty/error state is a separate `#msg` layer, since a canvas
+cannot show text on its own.
 
 **The present tool *is* a port, so it can drift.** `web/app.js` re-implements
 the player's *pure* logic in JS — `PlayablePresentation::grid_at` → `gridAt`,

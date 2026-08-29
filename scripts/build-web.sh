@@ -11,7 +11,8 @@
 #                               compiler rather than a re-implementation
 #   3. PRESENTATION_FORMAT.md   copied from the repo root, so the instructions
 #                               page can never drift from the reference
-#   4. examples/demo.json       the sample source deck the compile page loads
+#   4. .claude/skills/…/SKILL.md the packaged Claude skill, offered for download
+#   5. examples/demo.json       the sample source deck the compile page loads
 #
 # The same script runs in CI (.github/workflows/pages.yml), so a green local
 # build is the thing that gets deployed.
@@ -62,6 +63,7 @@ mkdir -p "$OUT"
 cp -R web/. "$OUT"/
 cp "$WASM_SRC" "$OUT/bs.wasm"
 cp PRESENTATION_FORMAT.md "$OUT/presentation-format.md"
+cp .claude/skills/bs-deck/SKILL.md "$OUT/bs-deck-skill.md"
 cp examples/demo.json "$OUT/demo.json"
 touch "$OUT/.nojekyll"
 
