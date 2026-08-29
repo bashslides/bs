@@ -15,10 +15,9 @@
       <span class="dim">/</span>
       <span>present</span>
       <span class="dim">/</span>
-      <button id="open" type="button" title="Open a compiled presentation (o)"><span id="deck-name">no deck</span></button>
+      <span id="deck-name" class="ellipsis dim">no deck</span>
       <span class="grow"></span>
       <span id="note" class="dim ellipsis"></span>
-      <span id="counter" class="dim">--/--</span>
     </header>
 
     <main id="stage">
@@ -28,14 +27,21 @@
 
     <footer id="foot">
       <div id="framebar" aria-hidden="true"></div>
-      <div id="hint" class="dim">
-        tap sides to step &nbsp;·&nbsp; <b>←</b>/<b>→</b><span class="wide"> step
-        &nbsp;·&nbsp; <b>shift</b>+<b>←</b>/<b>→</b> ±10 &nbsp;·&nbsp; <b>home</b>/<b>end</b>
-        &nbsp;·&nbsp; <b>o</b> open</span> &nbsp;·&nbsp; <b>f</b> fullscreen
+      <!-- Every control here is a real button: on a phone there is no keyboard,
+           so anything that is only a key hint is unreachable. -->
+      <div id="controls">
+        <button id="btn-prev"  type="button" title="previous frame (←)" aria-label="previous frame">←</button>
+        <button id="btn-next"  type="button" title="next frame (→)" aria-label="next frame">→</button>
+        <button id="btn-first" type="button" title="first frame (home)" aria-label="first frame">⇤</button>
+        <button id="btn-last"  type="button" title="last frame (end)" aria-label="last frame">⇥</button>
+        <button id="btn-open"  type="button" title="open a compiled deck (o)">open</button>
+        <button id="btn-full"  type="button" title="fullscreen (f)">full</button>
+        <span id="counter" class="dim">--/--</span>
       </div>
     </footer>
   </div>
 
+  <button id="exit-full" type="button" title="leave fullscreen (esc)">✕ full</button>
   <div id="drop"><span>drop a compiled presentation</span></div>
   <input id="file" type="file" accept=".json,application/json" hidden>
 

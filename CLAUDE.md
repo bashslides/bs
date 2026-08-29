@@ -565,6 +565,14 @@ in the box-drawing block are stretched to the full cell width so long runs tile
 without gaps. The empty/error state is a separate `#msg` layer, since a canvas
 cannot show text on its own.
 
+**Nothing in the viewer is keyboard-only.** Every key has a tap target, because
+a phone has none: the footer holds real buttons (prev/next/first/last/open/
+fullscreen) plus a small slide counter, tapping the canvas steps, and the frame
+bar jumps. Fullscreen hides both bars, so it carries its own dim `✕ full` button
+(`#exit-full`, shown by `body.bare`) — on iPhone `requestFullscreen` is refused
+for non-video elements, so `toggleFullscreen` treats the bars-hidden state and
+real browser fullscreen as separate concerns and always leaves a way back.
+
 **The present tool *is* a port, so it can drift.** `web/app.js` re-implements
 the player's *pure* logic in JS — `PlayablePresentation::grid_at` → `gridAt`,
 `player::loop_next` → `loopNext`, and `Player::{auto_advance_delay,
