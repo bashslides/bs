@@ -66,7 +66,8 @@ framework, no npm — with three tools behind a home page:
   engine**, built to WebAssembly, so the browser and `bs compile` produce
   byte-identical output.
 - **instructions** — the full source-format reference with a copy-all button,
-  for pasting into an LLM that will write a deck for you.
+  for pasting into an LLM that will write a deck for you, plus a download of the
+  packaged Claude skill.
 
 ```bash
 ./scripts/build-web.sh --serve   # engine → wasm, assemble _site/, serve :8000
@@ -82,6 +83,18 @@ so no Settings click is needed. See `web/README.md` for the details.
 The one runtime feature the browser cannot provide is the `Command` object,
 which runs a local binary; its placeholder box is already baked into the
 compiled frames, so decks using it still render.
+
+## Authoring decks with an assistant
+
+Two ways, both kept in sync with the engine by `tests/docs.rs`:
+
+- **Claude Code** — `.claude/skills/bs-deck/SKILL.md` is a skill (`name:
+  bs-deck`) that loads itself whenever you ask for a deck. It is already at the
+  conventional path in this repo; to use it elsewhere, save it as
+  `.claude/skills/bs-deck/SKILL.md` in that project (the instructions page has a
+  download button).
+- **Any other assistant** — paste `PRESENTATION_FORMAT.md`, or use the copy-all
+  button on the instructions page.
 
 ## For AI coding agents
 

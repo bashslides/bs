@@ -5,14 +5,20 @@ plain HTML/CSS/JS, plus the engine compiled to WebAssembly.
 
 ```
 web/
-  index.html                     home — pick a tool
+  index.html                     home — a sentence and three links, nothing else
   present.html      + app.js     play a compiled deck
   compile.html      + compile.js source deck → playable deck (wasm)
   instructions.html + instructions.js   the format reference, copy-all
   wasm.js                        loader/glue for the compiler module
-  style.css                      shared black-and-white terminal chrome
+  style.css                      shared terminal styling, mobile-first
   presentation.json              the deck present.html loads by default
 ```
+
+Every page is single-column and works on a phone: `100dvh` shells that track
+mobile browser chrome, 16px form controls (below that iOS zooms on focus),
+40px-minimum touch targets, `env(safe-area-inset-bottom)` padding, and no
+horizontal page scroll. On `present`, tapping the left third of the canvas steps
+back and the rest steps forward.
 
 ## Build and run it
 
@@ -32,6 +38,7 @@ It writes `_site/` (gitignored) containing `web/` plus:
 |------------|------|-----|
 | `bs.wasm` | `cargo build -p bs-wasm --target wasm32-unknown-unknown --profile wasm-release` | the compile tool's engine |
 | `presentation-format.md` | `PRESENTATION_FORMAT.md` | so the instructions page can't drift from the repo's reference |
+| `bs-deck-skill.md` | `.claude/skills/bs-deck/SKILL.md` | the packaged Claude skill, offered for download (as `SKILL.md`) |
 | `demo.json` | `examples/demo.json` | the compile page's `sample` button |
 
 Needs the `wasm32-unknown-unknown` target — `./scripts/install-toolchain.sh`
@@ -67,7 +74,20 @@ says so and points at the CLI rather than silently doing nothing.
 
 ## The present tool
 
-`app.js` is a port of the terminal player's *pure* parts, so playback matches:
+The deck is drawn on a `<canvas>`, **one `fillText` per cell at an exact cell
+origin** — never as runs of text. A run of text only lines up if the device
+resolves a genuinely monospaced font that also covers every character used, and
+on mobile neither is guaranteed: the platform "monospace" can be a proportional
+face, and box-drawing characters often come from a fallback font with different
+metrics. Either one shears the grid apart — the giveaway is spaces looking
+narrower than other characters. Positioning every cell ourselves makes the
+layout independent of whatever font the device picks (verified by forcing a
+proportional serif and checking the grid still lands on the lattice). Characters
+in the box-drawing block are stretched to the cell width so long runs of `─` or
+`█` tile without gaps, and the canvas is sized in device pixels so it stays
+crisp on high-DPI screens.
+
+`app.js` is also a port of the terminal player's *pure* parts, so playback matches:
 
 | Rust | JS |
 |------|----|
@@ -81,8 +101,14 @@ says so and points at the CLI rather than silently doing nothing.
 Being a port, it *can* drift — change the player and mirror it here.
 
 Loading a deck, in priority order: `?deck=<url>`; `?deck=session` (the hand-off
-from the compile page, via `sessionStorage`); `presentation.json` next to the
-page; or drag-drop / <kbd>o</kbd>.
+from the compile page); `presentation.json` next to the page; or drag-drop /
+<kbd>o</kbd>.
+
+The hand-off writes the compiled deck to `sessionStorage`, falling back to
+`localStorage` — which of the two is writable varies with privacy settings, and
+on a `file://` page both can throw. The compile page **verifies the write stuck**
+before navigating, and says so instead of sending you to an empty viewer if it
+did not. `present.html` reads whichever store holds it.
 
 | Key | Action |
 |-----|--------|

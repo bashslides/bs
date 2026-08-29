@@ -102,7 +102,7 @@ compiler (`wasm/`) call it, so they cannot disagree. The terminal UI
 | A compact architecture map, invariants, and change playbooks | **[`docs/AI_MAINTAINABILITY.md`](docs/AI_MAINTAINABILITY.md)** (read this first) |
 | Understand the whole architecture, editor FSM, every module's role | **[`CLAUDE.md`](CLAUDE.md)** (canonical, detailed) |
 | **Add a new object type** | the checklist in the module doc of `src/engine/objects/mod.rs` — it enumerates *every* touch site (the compiler catches only some) |
-| Author or hand-edit a `.json` presentation (source format) | **[`PRESENTATION_FORMAT.md`](PRESENTATION_FORMAT.md)** |
+| Author or hand-edit a `.json` presentation (source format) | **[`PRESENTATION_FORMAT.md`](PRESENTATION_FORMAT.md)**, or the packaged Claude skill at `.claude/skills/bs-deck/SKILL.md` (same rules, condensed) |
 | See what each test covers before adding one | **[`TESTS.md`](TESTS.md)** (authoritative per-test list, enforced by `tests/docs.rs`) |
 | Check the docs haven't drifted from the code | `cargo test --test docs` (`tests/docs.rs` — runs in the full suite too) |
 | Build/run/install | **[`README.md`](README.md)** |

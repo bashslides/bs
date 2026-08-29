@@ -1,6 +1,6 @@
-/* bs web viewer — black-and-white terminal chrome.
-   The chrome is deliberately monochrome; the deck's own cells keep whatever
-   colours the compiler baked into them. */
+/* bs web tools — black-and-white terminal styling.
+   Mobile-first: dynamic viewport units, 16px form controls (so iOS does not
+   zoom on focus), touch-sized targets, and no horizontal page scroll. */
 
 :root {
   --bg: #000;
@@ -8,61 +8,201 @@
   --dim: #6a6a6a;
   --line: #2a2a2a;
   --hi: #e8e8e8;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-          "DejaVu Sans Mono", "Liberation Mono", monospace;
+  /* "Courier New" is the last real family before the generic keyword: it ships
+     on essentially every mobile platform, so the stack lands on a genuine
+     fixed-pitch face instead of falling through to the system UI font.
+     Kept in sync with FONT_STACK in app.js. */
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas,
+          "DejaVu Sans Mono", "Liberation Mono", "Courier New", monospace;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
 
+html {
+  -webkit-text-size-adjust: 100%;   /* no surprise reflow on rotate */
+}
+
 html, body {
   margin: 0;
-  height: 100%;
   background: var(--bg);
   color: var(--fg);
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  overflow-wrap: break-word;
 }
+
+/* 100dvh tracks mobile browser chrome as it hides/shows; the vh line is the
+   fallback for browsers without dvh. */
+body { min-height: 100vh; min-height: 100dvh; }
+
+a { color: var(--fg); text-decoration: underline; text-underline-offset: 3px;
+    text-decoration-color: var(--line); }
+a:hover { color: var(--hi); text-decoration-color: var(--dim); }
+
+code { color: var(--hi); }
+.dim { color: var(--dim); }
+.ok  { color: #9ec37a; }
+.bad { color: #d78787; }
+.grow { flex: 1; }
+
+::selection { background: #333; color: var(--hi); }
+
+* { scrollbar-color: #333 var(--bg); scrollbar-width: thin; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: #333; }
+
+/* ------------------------------------------------------------------ buttons */
+
+button {
+  font: inherit;
+  font-size: 14px;
+  color: var(--fg);
+  background: none;
+  border: 1px solid var(--line);
+  padding: 8px 14px;
+  min-height: 40px;             /* comfortable touch target */
+  cursor: pointer;
+  white-space: nowrap;
+}
+button:hover:not(:disabled) { color: var(--hi); border-color: var(--dim); }
+button:active:not(:disabled) { background: #141414; }
+button:disabled { color: #3d3d3d; border-color: #191919; cursor: default; }
+button.primary { border-color: var(--dim); color: var(--hi); }
+button.primary:hover:not(:disabled) { background: #161616; }
+
+.row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* =========================================================================
+   Home
+   ========================================================================= */
+
+#home {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 56px 20px 64px;
+}
+
+#home h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--hi);
+  letter-spacing: 1px;
+}
+
+#home .intro {
+  margin: 10px 0 36px;
+  color: var(--dim);
+}
+
+#tools { display: flex; flex-direction: column; gap: 10px; }
+
+.tool {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  border: 1px solid var(--line);
+  padding: 16px 18px;
+  text-decoration: none;
+  color: var(--fg);
+}
+.tool:hover, .tool:focus-visible { border-color: var(--dim); background: #0b0b0b; outline: none; }
+.tool b { color: var(--hi); font-weight: 700; }
+.tool span { color: var(--dim); }
+
+@media (max-width: 480px) {
+  #home { padding: 36px 16px 48px; }
+  .tool { flex-direction: column; gap: 4px; padding: 14px 16px; }
+}
+
+/* =========================================================================
+   App shell (present, compile, instructions)
+   ========================================================================= */
 
 #app {
-  height: 100%;
   display: flex;
   flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
 }
-
-/* ---------------------------------------------------------------- top bar */
 
 #bar {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
   overflow: hidden;
+  flex: none;
+}
+.brand { color: var(--hi); font-weight: 700; text-decoration: none; }
+.brand:hover { text-decoration: underline; text-underline-offset: 3px; }
+#bar .ellipsis { overflow: hidden; text-overflow: ellipsis; }
+
+/* =========================================================================
+   Compile
+   ========================================================================= */
+
+#compile-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
-#bar .brand { color: var(--hi); font-weight: 700; }
-#bar .grow { flex: 1; }
+#tools-row {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+  flex: none;
+}
 
-.dim { color: var(--dim); }
-
-#open {
-  font: inherit;
+#source {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  margin: 0;
+  padding: 12px 14px;
+  font-family: var(--mono);
+  font-size: 16px;              /* 16px keeps iOS from zooming on focus */
+  line-height: 1.5;
   color: var(--fg);
-  background: none;
+  background: var(--bg);
   border: 0;
-  padding: 0;
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  text-decoration-color: var(--line);
+  outline: none;
+  resize: none;
+  white-space: pre;
+  overflow: auto;
+  tab-size: 2;
 }
-#open:hover { color: var(--hi); text-decoration-color: var(--dim); }
+#source::placeholder { color: #4a4a4a; }
 
-#note { overflow: hidden; text-overflow: ellipsis; }
+#result {
+  flex: none;
+  border-top: 1px solid var(--line);
+  padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+}
+#status { white-space: pre-wrap; margin-bottom: 10px; }
+#stats { margin-bottom: 10px; }
+#result .row { gap: 8px; }
 
-/* ------------------------------------------------------------------ stage */
+@media (max-width: 700px) {
+  #tools-row, #result { padding-left: 12px; padding-right: 12px; }
+  #result .row button { flex: 1 1 auto; }
+  /* Wrap instead of scrolling sideways — a phone has no room for long JSON. */
+  #source { white-space: pre-wrap; word-break: break-word; }
+}
+
+/* =========================================================================
+   Present
+   ========================================================================= */
 
 #stage {
   flex: 1;
@@ -71,6 +211,8 @@ html, body {
   place-items: center;
   padding: 12px;
   overflow: hidden;
+  cursor: pointer;
+  touch-action: manipulation;
 }
 
 .metrics {
@@ -81,56 +223,97 @@ html, body {
   tab-size: 8;
 }
 
+/* The grid is a canvas: each cell is drawn at an exact origin, so alignment
+   never depends on the device resolving a truly monospaced font. */
 #screen {
-  color: var(--fg);
-  cursor: pointer;          /* left/right halves step the deck */
+  display: block;
+  cursor: pointer;
   user-select: none;
+  touch-action: manipulation;   /* no 300ms tap delay when stepping slides */
 }
 
-#screen .msg { color: var(--dim); }
-#screen .msg b { color: var(--hi); font-weight: 700; }
-
-#probe {
-  position: absolute;
-  visibility: hidden;
-  pointer-events: none;
-  top: -9999px;
-  left: -9999px;
-  font-size: 100px;
-}
-
-/* ------------------------------------------------------------- bottom bar */
+#msg { color: var(--dim); cursor: default; }
+#msg b { color: var(--hi); font-weight: 700; }
 
 #foot {
+  flex: none;
   border-top: 1px solid var(--line);
-  padding: 6px 10px 8px;
+  padding: 8px 14px calc(10px + env(safe-area-inset-bottom));
 }
 
-#framebar {
-  display: flex;
-  gap: 1px;
-  height: 4px;
-  margin-bottom: 7px;
-}
-
-#framebar i {
-  flex: 1 1 0;
-  min-width: 1px;
-  background: var(--line);
-  cursor: pointer;
-}
+#framebar { display: flex; gap: 1px; height: 4px; margin-bottom: 8px; }
+#framebar i { flex: 1 1 0; min-width: 1px; background: var(--line); cursor: pointer; }
 #framebar i.region  { background: #444; }
 #framebar i.current { background: var(--hi); }
 
+#hint { color: var(--dim); font-size: 12px; }
 #hint b { color: var(--fg); font-weight: 400; }
+@media (max-width: 560px) { #hint .wide { display: none; } }
 
-/* ------------------------------------------------------------- fullscreen */
-
-body.bare #bar,
-body.bare #foot { display: none; }
+body.bare #bar, body.bare #foot { display: none; }
 body.bare #stage { padding: 0; }
 
-/* ------------------------------------------------------- drag-drop target */
+/* The present page's deck-name button reads as a link, not a button. Scoped to
+   #bar so it cannot leak onto the compile page's own #open button. */
+#bar #open {
+  font: inherit;
+  color: var(--fg);
+  background: none;
+  border: 0;
+  padding: 0;
+  min-height: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--line);
+}
+#bar #open:hover { color: var(--hi); }
+
+/* =========================================================================
+   Instructions
+   ========================================================================= */
+
+#doc-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+#intro {
+  flex: none;
+  padding: 16px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--dim);
+}
+#intro p { margin: 0 0 12px; max-width: 70ch; }
+#intro .row { margin-top: 4px; }
+#intro .skill { margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--line); }
+#intro .skill p { margin-bottom: 10px; }
+
+/* A link that reads as a button (used for file downloads, where <a download>
+   is the only thing a sandboxed page can offer). */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  padding: 8px 14px;
+  min-height: 40px;
+  color: var(--fg);
+  text-decoration: none;
+}
+.btn:hover { color: var(--hi); border-color: var(--dim); }
+
+#doc {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 16px 14px calc(40px + env(safe-area-inset-bottom));
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ------------------------------------------------------------ drag & drop */
 
 #drop {
   position: fixed;
@@ -139,216 +322,7 @@ body.bare #stage { padding: 0; }
   place-items: center;
   background: rgba(0, 0, 0, .85);
   color: var(--hi);
+  z-index: 10;
 }
-#drop span {
-  border: 1px dashed var(--dim);
-  padding: 24px 32px;
-}
+#drop span { border: 1px dashed var(--dim); padding: 24px 32px; }
 body.dragging #drop { display: grid; }
-
-/* =========================================================================
-   Shared chrome for the multi-page site (home, compile, instructions)
-   ========================================================================= */
-
-.brand {
-  color: var(--hi);
-  font-weight: 700;
-  text-decoration: none;
-}
-.brand:hover { text-decoration: underline; text-underline-offset: 3px; }
-
-.ok  { color: #9ec37a; }
-.bad { color: #d78787; }
-
-.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-
-button {
-  font: inherit;
-  color: var(--fg);
-  background: none;
-  border: 1px solid var(--line);
-  padding: 3px 10px;
-  cursor: pointer;
-}
-button:hover:not(:disabled) { color: var(--hi); border-color: var(--dim); }
-button:disabled { color: #444; border-color: #1c1c1c; cursor: default; }
-button.primary { border-color: var(--dim); color: var(--hi); }
-button.primary:hover:not(:disabled) { background: #161616; }
-
-a { color: var(--fg); text-decoration: underline; text-underline-offset: 3px;
-    text-decoration-color: var(--line); }
-a:hover { color: var(--hi); text-decoration-color: var(--dim); }
-
-code { color: var(--hi); }
-
-/* ------------------------------------------------------------------- home */
-
-body.page { overflow-y: auto; }
-
-#home {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 48px 20px 64px;
-}
-
-.logo {
-  margin: 0;
-  font-family: var(--mono);
-  font-size: 11px;
-  line-height: 1.05;
-  color: var(--hi);
-  white-space: pre;
-  overflow-x: auto;
-}
-
-.tagline { color: var(--dim); margin: 18px 0 0; line-height: 1.7; }
-
-#tools {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 12px;
-  margin: 40px 0;
-}
-
-.tool {
-  display: block;
-  border: 1px solid var(--line);
-  padding: 16px 18px 18px;
-  text-decoration: none;
-  color: var(--fg);
-}
-.tool:hover { border-color: var(--dim); background: #0b0b0b; }
-.tool .k { color: var(--dim); }
-.tool:hover .k { color: var(--hi); }
-.tool h2 {
-  margin: 6px 0 10px;
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--hi);
-}
-.tool p { margin: 0 0 14px; color: var(--dim); line-height: 1.7; }
-.tool em { color: var(--fg); font-style: normal; }
-.tool .go { color: var(--dim); }
-.tool:hover .go { color: var(--fg); }
-
-#flow h3 {
-  margin: 0 0 12px;
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--dim);
-}
-.pipe {
-  margin: 0;
-  font-family: var(--mono);
-  color: var(--dim);
-  line-height: 1.7;
-  overflow-x: auto;
-  padding-bottom: 6px;
-}
-.pipe a { color: var(--fg); }
-
-#home-foot {
-  margin-top: 48px;
-  padding-top: 20px;
-  border-top: 1px solid var(--line);
-  color: var(--dim);
-  line-height: 1.8;
-}
-#home-foot p { margin: 0 0 6px; }
-
-/* ---------------------------------------------------------------- compile */
-
-#two-pane {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1px;
-  background: var(--line);   /* the 1px gap becomes the divider */
-}
-@media (max-width: 800px) {
-  #two-pane { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
-}
-
-.pane {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  min-width: 0;
-  background: var(--bg);
-}
-
-.pane-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--line);
-  color: var(--dim);
-}
-.pane-head .grow { flex: 1; }
-
-#source, #output {
-  flex: 1;
-  min-height: 0;
-  margin: 0;
-  padding: 10px;
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--fg);
-  background: var(--bg);
-  border: 0;
-  overflow: auto;
-  white-space: pre;
-  tab-size: 2;
-}
-#source { resize: none; outline: none; }
-#source::placeholder { color: #4a4a4a; }
-#output { color: var(--dim); }
-
-#foot .row { margin-top: 8px; }
-#status { white-space: pre-wrap; line-height: 1.6; }
-
-/* ----------------------------------------------------------- instructions */
-
-#doc-pane {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-#intro {
-  padding: 18px 20px;
-  border-bottom: 1px solid var(--line);   /* spans the page… */
-  color: var(--dim);
-  line-height: 1.7;
-}
-#intro > * { max-width: 820px; }          /* …while the prose stays readable */
-#intro p { margin: 0 0 14px; }
-#intro strong { color: var(--fg); font-weight: 400; }
-.steps { margin: 0 0 16px; padding-left: 20px; }
-.steps li { margin-bottom: 4px; }
-.steps b { color: var(--fg); font-weight: 400; }
-
-#doc {
-  flex: 1;
-  min-height: 0;
-  margin: 0;
-  padding: 16px 20px 40px;
-  overflow: auto;
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--fg);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-/* --------------------------------------------------- scrollbars (dark) --- */
-
-* { scrollbar-color: #333 var(--bg); scrollbar-width: thin; }
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: #333; }
-::-webkit-scrollbar-thumb:hover { background: #4a4a4a; }

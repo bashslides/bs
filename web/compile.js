@@ -7,7 +7,7 @@ import { compile, loadCompiler, wasmSupported } from './wasm.js';
 
 const el = (id) => document.getElementById(id);
 const ui = {
-  source: el('source'), output: el('output'), status: el('status'), stats: el('stats'),
+  source: el('source'), status: el('status'), stats: el('stats'),
   compile: el('compile'), download: el('download'), present: el('present'),
   sample: el('sample'), open: el('open'), clear: el('clear'),
   file: el('file'), engine: el('engine'),
@@ -18,24 +18,29 @@ const HANDOFF_KEY = 'bs:deck';
 
 let compiled = null;
 
+function say(text, cls = 'dim') {
+  ui.status.textContent = text;
+  ui.status.className = cls;
+}
+
 // --------------------------------------------------------------- engine boot
 
 // Report the engine's state up front: a compile button that silently does
 // nothing is worse than one that says why.
 (async () => {
   if (!wasmSupported()) {
-    ui.engine.textContent = 'WebAssembly unavailable';
-    ui.engine.className = 'bad';
+    ui.engine.textContent = 'no WebAssembly';
+    ui.engine.className = 'bad ellipsis';
     fallback('This browser cannot run WebAssembly, so compiling here is not possible.');
     return;
   }
   try {
     await loadCompiler();
     ui.engine.textContent = 'engine ready';
-    ui.engine.className = 'dim ok';
+    ui.engine.className = 'dim ellipsis ok';
   } catch (err) {
-    ui.engine.textContent = 'engine failed to load';
-    ui.engine.className = 'bad';
+    ui.engine.textContent = 'engine failed';
+    ui.engine.className = 'bad ellipsis';
     fallback(`Could not load the compiler: ${err.message}`);
   }
 })();
@@ -46,28 +51,21 @@ function fallback(reason) {
   say(`${reason}\n\nYou can still compile locally:\n  bs compile source.json out.json`, 'bad');
 }
 
-// ------------------------------------------------------------------- actions
-
-function say(text, cls = 'dim') {
-  ui.status.textContent = text;
-  ui.status.className = cls;
-}
+// ------------------------------------------------------------------ compile
 
 async function run() {
   const src = ui.source.value.trim();
-  if (!src) { say('Nothing to compile — paste a source deck first.', 'bad'); return; }
+  if (!src) { say('Nothing to compile — paste or open a source deck first.', 'bad'); return; }
 
   ui.compile.disabled = true;
   say('compiling…');
   try {
     const out = await compile(src);
     compiled = out;
-    ui.output.textContent = out;
     ui.download.disabled = false;
     ui.present.disabled = false;
 
     const deck = JSON.parse(out);
-    const { width, height } = deck.contract;
     const extras = [
       deck.loops?.length && `${deck.loops.length} loop`,
       deck.animations?.length && `${deck.animations.length} animation`,
@@ -75,12 +73,11 @@ async function run() {
       deck.commands?.length && `${deck.commands.length} command`,
     ].filter(Boolean);
     ui.stats.textContent =
-      `${deck.frames.length} frames · ${width}×${height} · ${fmtBytes(out.length)}` +
-      (extras.length ? ` · ${extras.join(', ')}` : '');
+      `${deck.frames.length} frames · ${deck.contract.width}×${deck.contract.height}` +
+      ` · ${fmtBytes(out.length)}` + (extras.length ? ` · ${extras.join(', ')}` : '');
     say('compiled', 'ok');
   } catch (err) {
     compiled = null;
-    ui.output.textContent = '';
     ui.download.disabled = true;
     ui.present.disabled = true;
     ui.stats.textContent = '';
@@ -101,30 +98,57 @@ ui.source.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run(); }
 });
 
+// ------------------------------------------------------------- hand to present
+
+/**
+ * Stash the compiled deck where present.html can pick it up.
+ *
+ * Tries sessionStorage, then localStorage: which of the two is available varies
+ * with browser privacy settings, and on a `file://` page both can throw. The
+ * caller must be told when neither worked — a "present →" button that navigates
+ * to an empty viewer is the worst outcome.
+ */
+function stash(text) {
+  for (const store of [
+    () => sessionStorage,
+    () => localStorage,
+  ]) {
+    try {
+      const s = store();
+      s.setItem(HANDOFF_KEY, text);
+      if (s.getItem(HANDOFF_KEY) === text) return true;   // confirm it stuck
+    } catch { /* unavailable or over quota — try the next one */ }
+  }
+  return false;
+}
+
+ui.present.addEventListener('click', () => {
+  if (!compiled) return;
+  if (stash(compiled)) {
+    location.href = 'present.html?deck=session';
+  } else {
+    say('This browser will not let the page store the deck (private mode, or the '
+      + 'page was opened from a file:// path).\nUse [download], then open the file '
+      + 'on the present page.', 'bad');
+  }
+});
+
 ui.download.addEventListener('click', () => {
   if (!compiled) return;
   const url = URL.createObjectURL(new Blob([compiled], { type: 'application/json' }));
   const a = document.createElement('a');
   a.href = url;
   a.download = 'presentation.json';
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 
-ui.present.addEventListener('click', () => {
-  if (!compiled) return;
-  try {
-    sessionStorage.setItem(HANDOFF_KEY, compiled);
-    location.href = 'present.html?deck=session';
-  } catch {
-    // Private-mode storage limits: fall back to a download.
-    say('Could not hand the deck over (storage blocked) — use [download] instead.', 'bad');
-  }
-});
+// -------------------------------------------------------------- input sources
 
 ui.clear.addEventListener('click', () => {
   ui.source.value = '';
-  ui.output.textContent = '';
   ui.stats.textContent = '';
   compiled = null;
   ui.download.disabled = ui.present.disabled = true;
@@ -148,12 +172,19 @@ ui.open.addEventListener('click', () => ui.file.click());
 ui.file.addEventListener('change', () => {
   const f = ui.file.files && ui.file.files[0];
   if (f) readFile(f);
-  ui.file.value = '';
+  ui.file.value = '';       // so re-picking the same file fires change again
 });
 
 function readFile(file) {
   const r = new FileReader();
-  r.onload = () => { ui.source.value = String(r.result); say(`loaded ${file.name}`); };
+  r.onload = () => {
+    ui.source.value = String(r.result);
+    ui.stats.textContent = '';
+    compiled = null;
+    ui.download.disabled = ui.present.disabled = true;
+    say(`loaded ${file.name} — press compile`);
+  };
+  r.onerror = () => say(`Could not read ${file.name}`, 'bad');
   r.readAsText(file);
 }
 
