@@ -77,49 +77,6 @@ button.primary:hover:not(:disabled) { background: #161616; }
 .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 /* =========================================================================
-   Home
-   ========================================================================= */
-
-#home {
-  max-width: 640px;
-  margin: 0 auto;
-  padding: 56px 20px 64px;
-}
-
-#home h1 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--hi);
-  letter-spacing: 1px;
-}
-
-#home .intro {
-  margin: 10px 0 36px;
-  color: var(--dim);
-}
-
-#tools { display: flex; flex-direction: column; gap: 10px; }
-
-.tool {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  border: 1px solid var(--line);
-  padding: 16px 18px;
-  text-decoration: none;
-  color: var(--fg);
-}
-.tool:hover, .tool:focus-visible { border-color: var(--dim); background: #0b0b0b; outline: none; }
-.tool b { color: var(--hi); font-weight: 700; }
-.tool span { color: var(--dim); }
-
-@media (max-width: 480px) {
-  #home { padding: 36px 16px 48px; }
-  .tool { flex-direction: column; gap: 4px; padding: 14px 16px; }
-}
-
-/* =========================================================================
    App shell (present, compile, instructions)
    ========================================================================= */
 
@@ -143,6 +100,32 @@ button.primary:hover:not(:disabled) { background: #161616; }
 .brand { color: var(--hi); font-weight: 700; text-decoration: none; }
 .brand:hover { text-decoration: underline; text-underline-offset: 3px; }
 #bar .ellipsis { overflow: hidden; text-overflow: ellipsis; }
+
+#tabs { display: flex; gap: 4px; margin-left: 4px; }
+
+.tab {
+  border: 1px solid transparent;
+  border-bottom-color: var(--line);
+  color: var(--dim);
+  padding: 6px 10px;
+  min-height: 36px;
+}
+.tab:hover:not(.active) { color: var(--fg); }
+.tab.active {
+  color: var(--hi);
+  border-color: var(--line);
+  border-bottom-color: var(--bg);
+  background: #0b0b0b;
+}
+
+/* Each view fills what is left under the bar. */
+.view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.view[hidden] { display: none; }
+
+@media (max-width: 430px) {
+  #bar { padding: 8px 10px; gap: 6px; }
+  .tab { padding: 6px 7px; }
+}
 
 /* =========================================================================
    Compile
@@ -204,7 +187,21 @@ button.primary:hover:not(:disabled) { background: #161616; }
    Present
    ========================================================================= */
 
+#deck-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+}
+#deck-bar button { padding: 6px 10px; min-height: 34px; }
+#btn-library.active { color: var(--hi); border-color: var(--dim); background: #161616; }
+
 #stage {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: grid;
@@ -214,6 +211,49 @@ button.primary:hover:not(:disabled) { background: #161616; }
   cursor: pointer;
   touch-action: manipulation;
 }
+
+/* The library sits over the stage rather than beside it: on a phone there is
+   no room for both, and it is a transient chooser, not a permanent panel. */
+#library {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  cursor: default;
+}
+#library[hidden] { display: none; }
+
+.library-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.library-head b { color: var(--hi); }
+.library-head button { padding: 6px 10px; min-height: 34px; }
+
+#library-list { flex: 1; min-height: 0; overflow: auto; padding: 8px 12px 16px; }
+#library-list .empty { margin: 12px 2px; }
+
+.deck { display: flex; gap: 6px; margin-bottom: 6px; }
+
+.deck-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  padding: 10px 12px;
+}
+.deck-open b { color: var(--hi); font-weight: 700; }
+.deck-open span { font-size: 12px; }
+.deck-del { min-width: 44px; color: var(--dim); }
+.deck-del:hover { color: #d78787; border-color: #d78787; }
 
 .metrics {
   margin: 0;

@@ -4,21 +4,118 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>bs</title>
-<meta name="description" content="Write, compile and present terminal ASCII-art decks in the browser.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23000'/%3E%3Ctext x='2' y='12' font-family='monospace' font-size='11' fill='%23e0e0e0'%3Ebs%3C/text%3E%3C/svg%3E">
+<meta name="description" content="Write, compile and present terminal ASCII-art decks — in the browser, offline.">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="bs">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <main id="home">
-    <h1>bs</h1>
-    <p class="intro">A terminal-native presentation engine: decks are ASCII-art
-      animations you write as JSON, compile, and play — in a terminal or here.</p>
+  <div id="app">
+    <header id="bar">
+      <span class="brand">bs</span>
+      <nav id="tabs" role="tablist">
+        <button id="tab-instructions" class="tab" type="button" role="tab" aria-selected="false">instructions</button>
+        <button id="tab-compile"      class="tab" type="button" role="tab" aria-selected="false">compile</button>
+        <button id="tab-present"      class="tab" type="button" role="tab" aria-selected="true">present</button>
+      </nav>
+    </header>
 
-    <nav id="tools">
-      <a class="tool" href="present.html"><b>present</b> <span>play a compiled deck</span></a>
-      <a class="tool" href="compile.html"><b>compile</b> <span>turn a source deck into a playable one</span></a>
-      <a class="tool" href="instructions.html"><b>instructions</b> <span>the format, ready to paste into an LLM</span></a>
-    </nav>
-  </main>
+    <!-- ─────────────────────────────────────────────── instructions ── -->
+    <section id="view-instructions" class="view" role="tabpanel" hidden>
+      <div id="intro">
+        <p>The complete source-format reference. Copy it into an assistant and
+           describe the deck you want, then <b>compile</b> what it writes and
+           <b>present</b> the result.</p>
+        <div class="row">
+          <button id="i-copy" type="button" class="primary">copy all</button>
+          <button id="i-download" type="button">download .md</button>
+          <span id="i-meta" class="dim"></span>
+          <span id="i-note" class="dim"></span>
+        </div>
+        <div class="skill">
+          <p>Using Claude Code? Install the packaged skill instead — save it as
+             <code>.claude/skills/bs-deck/SKILL.md</code> and it loads itself
+             whenever you ask for a deck.</p>
+          <div class="row">
+            <a class="btn" href="bs-deck-skill.md" download="SKILL.md">download SKILL.md</a>
+          </div>
+        </div>
+      </div>
+      <pre id="doc" class="metrics">loading…</pre>
+    </section>
+
+    <!-- ───────────────────────────────────────────────────── compile ── -->
+    <section id="view-compile" class="view" role="tabpanel" hidden>
+      <div id="tools-row">
+        <button id="c-open" type="button">open file</button>
+        <button id="c-sample" type="button">sample</button>
+        <button id="c-clear" type="button">clear</button>
+        <button id="c-compile" type="button" class="primary">compile</button>
+        <button id="c-present" type="button" disabled>present &rarr;</button>
+        <button id="c-download" type="button" disabled>download</button>
+        <span id="c-engine" class="dim ellipsis">loading engine…</span>
+      </div>
+      <textarea id="source" spellcheck="false" autocomplete="off" autocapitalize="off"
+        autocorrect="off" placeholder="Paste a source deck here — or press [open file], which compiles it straight away."></textarea>
+      <div id="result">
+        <div id="c-status" class="dim">Paste a source deck, then compile.</div>
+        <div id="c-stats" class="dim"></div>
+      </div>
+    </section>
+
+    <!-- ───────────────────────────────────────────────────── present ── -->
+    <section id="view-present" class="view" role="tabpanel">
+      <div id="deck-bar">
+        <span id="deck-name" class="ellipsis dim">no deck</span>
+        <span class="grow"></span>
+        <span id="note" class="dim ellipsis"></span>
+        <button id="btn-library" type="button">library</button>
+        <button id="btn-open" type="button">open</button>
+      </div>
+
+      <main id="stage">
+        <canvas id="screen" role="img" aria-label="presentation canvas"></canvas>
+        <pre id="msg" class="metrics" hidden></pre>
+
+        <aside id="library" hidden>
+          <div class="library-head">
+            <b>saved decks</b>
+            <span id="library-count" class="dim"></span>
+            <span class="grow"></span>
+            <button id="library-clear" type="button">delete all</button>
+            <button id="library-close" type="button">close</button>
+          </div>
+          <div id="library-list"></div>
+        </aside>
+      </main>
+
+      <footer id="foot">
+        <div id="framebar" aria-hidden="true"></div>
+        <!-- Every control is a real button: a phone has no keyboard, so anything
+             that is only a key hint would be unreachable. -->
+        <div id="controls">
+          <button id="btn-prev"  type="button" title="previous frame (←)" aria-label="previous frame">←</button>
+          <button id="btn-next"  type="button" title="next frame (→)" aria-label="next frame">→</button>
+          <button id="btn-first" type="button" title="first frame (home)" aria-label="first frame">⇤</button>
+          <button id="btn-last"  type="button" title="last frame (end)" aria-label="last frame">⇥</button>
+          <button id="btn-full"  type="button" title="fullscreen (f)">full</button>
+          <span id="counter" class="dim">--/--</span>
+        </div>
+      </footer>
+    </section>
+  </div>
+
+  <button id="exit-full" type="button" title="leave fullscreen (esc)">✕ full</button>
+  <input id="c-file" type="file" accept=".json,application/json,text/plain" hidden>
+  <input id="p-file" type="file" accept=".json,application/json" hidden>
+  <div id="drop"><span>drop a deck</span></div>
+
+  <script type="module" src="app.js"></script>
 </body>
 </html>

@@ -3,16 +3,48 @@
 A dependency-free static site: no framework, no bundler, no npm. Four pages,
 plain HTML/CSS/JS, plus the engine compiled to WebAssembly.
 
+**One page, three views** — instructions → compile → present, in that order —
+so the WebAssembly engine, the loaded deck and the saved-deck library are shared
+state: compiling and then presenting reloads nothing.
+
 ```
 web/
-  index.html                     home — a sentence and three links, nothing else
-  present.html      + app.js     play a compiled deck
-  compile.html      + compile.js source deck → playable deck (wasm)
-  instructions.html + instructions.js   the format reference, copy-all
-  wasm.js                        loader/glue for the compiler module
-  style.css                      shared terminal styling, mobile-first
-  presentation.json              the deck present.html loads by default
+  index.html            the shell: tab bar + the three views
+  app.js                routing, the deck library UI, drag-drop, SW registration
+  instructions.js       the format reference, copy-all
+  compile.js            source deck → playable deck (wasm)
+  viewer.js             canvas playback (a port of the player's pure logic)
+  store.js              the deck library, in localStorage
+  wasm.js               loader/glue for the compiler module
+  style.css             terminal styling, mobile-first
+  sw.js                 service worker: offline + installable
+  manifest.webmanifest  PWA metadata
+  icon-*.png            app icons (generated, checked in)
+  presentation.json     the deck present loads by default
 ```
+
+## Installing it
+
+The site is a PWA: `manifest.webmanifest` plus `sw.js`, which caches the shell,
+`bs.wasm` and the reference docs, so the whole thing — **including compiling** —
+works with no network. Browsers offer "Install"/"Add to Home Screen" once it has
+been served over HTTPS (GitHub Pages qualifies) or from `localhost`.
+
+`start_url` and `scope` are relative (`.`), and the worker is registered by
+relative path, so it installs correctly under a project subpath (`…/bs/`) as
+well as at a domain root. `scripts/build-web.sh` stamps `sw.js` with a hash of
+the built files, so each deploy installs a fresh cache and evicts the old one —
+no manual version bumping, and no stale app after an update.
+
+## The deck library
+
+Compiled and imported decks are kept in `localStorage` (`store.js`) so they
+survive a reload, a restart and being offline. It is a *recents* list, not an
+archive: the 20 newest are kept, a save that runs out of quota evicts the oldest
+and retries, and same-name saves replace rather than accumulate. The **library**
+button in the present view lists them with their frame count, size and age, and
+offers per-deck delete plus delete-all. Storage being unavailable (private mode,
+`file://`) is reported in the panel rather than failing silently.
 
 Every page is single-column and works on a phone: `100dvh` shells that track
 mobile browser chrome, 16px form controls (below that iOS zooms on focus),
@@ -100,15 +132,13 @@ crisp on high-DPI screens.
 
 Being a port, it *can* drift — change the player and mirror it here.
 
-Loading a deck, in priority order: `?deck=<url>`; `?deck=session` (the hand-off
-from the compile page); `presentation.json` next to the page; or drag-drop /
-<kbd>o</kbd>.
+A deck reaches the present view from the compile view's **present →**, from the
+**library**, from **open** (a compiled `.json` on the device), or by dropping a
+file anywhere in the app — a compiled deck plays, a source deck is routed to
+compile instead.
 
-The hand-off writes the compiled deck to `sessionStorage`, falling back to
-`localStorage` — which of the two is writable varies with privacy settings, and
-on a `file://` page both can throw. The compile page **verifies the write stuck**
-before navigating, and says so instead of sending you to an empty viewer if it
-did not. `present.html` reads whichever store holds it.
+Compiling hands the deck straight to the present view in memory — no storage
+round-trip, no navigation — and saves a copy to the library on the way past.
 
 | Key | Action |
 |-----|--------|
@@ -119,10 +149,15 @@ did not. `present.html` reads whichever store holds it.
 | <kbd>f</kbd> | fullscreen; <kbd>Esc</kbd> leaves |
 | <kbd>o</kbd> | open a compiled `.json` |
 
+`→` on an auto-play animation lands on the animation's **own last frame** — its
+finished state — rather than stepping past it; pressing it again continues. (The
+terminal player still jumps one frame further, to the first slide after the
+span.)
+
 **Nothing is keyboard-only.** A phone has no keyboard, so every action also has a
-tap target: the footer carries real buttons (`←` `→` `⇤` `⇥` `open` `full`),
-tapping the canvas steps (left third back, the rest forward), and the frame bar
-jumps to any frame. Fullscreen hides both bars, so it gets its own way out — a
+tap target: the footer carries real buttons (`←` `→` `⇤` `⇥` `full`), the deck
+bar carries `library` and `open`, tapping the canvas steps (left third back, the
+rest forward), and the frame bar jumps to any frame. Fullscreen hides both bars, so it gets its own way out — a
 dim `✕ full` button pinned to the top-right corner, the only route back on a
 device with no <kbd>Esc</kbd>.
 

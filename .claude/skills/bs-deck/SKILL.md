@@ -23,7 +23,7 @@ source.json  --compile-->  playable.json  --play-->  terminal output
 The `bs` binary is not available here. Never claim to have compiled, validated,
 rendered or previewed a deck, and never guess at rendered output as if it were
 authoritative. Correctness comes from the rules below plus the self-check in
-section 10, and the user confirms layout with `bs edit source.json`, whose
+section 14, and the user confirms layout with `bs edit source.json`, whose
 preview runs the full engine.
 
 Commands the user runs afterwards (mention only if useful, do not pad every
@@ -487,7 +487,110 @@ Do not hand-derive precise centering or complex column math and present it as
 exact. Give the layout sane margins and tell the user to confirm in `bs edit`,
 whose preview is the same engine that compiles and plays.
 
-## 10. Self-check before delivering
+## 10. Narrative pacing
+
+- **One new concept or diagram actor per frame.** When a scene has several
+  actors (a source, a middlebox, a consumer), introduce them in separate
+  frames, each with its own one-line caption, before any of them interact.
+- **Slide text carries claims and punchlines only.** Never write narration
+  that describes visible motion ("the chain grows...", "X flows into Y") — the
+  presenter says that and the animation shows it. If a caption restates what
+  the frame visibly does, delete it.
+- **Explain before use.** Any named mechanism (a hash commitment, a filter, a
+  proof) gets its own build-up beats before it appears inside an animation.
+  Any visual actor (an attacker, a gauge) gets its role stated in the scene
+  where it appears; never rely on the audience inferring what a glyph means.
+- **Mark speculation.** Distinguish shipped fact from future idea explicitly in
+  the text ("future idea · not built yet: ...") whenever content is not real.
+- **Budget 8-10 frames per spoken minute** for animation-heavy decks: a
+  15-minute talk lands near 120-150 frames. Progressive builds and multi-phase
+  animations consume frames quickly — count beats before writing JSON.
+
+## 11. Animation patterns
+
+- **Stepped state sequences, not positional slides, for anything that must
+  enter or leave the screen.** Coordinates clamp at 0, so an object cannot
+  slide off the left edge. Render motion of a *structure* (a growing chain, a
+  conveyor) as per-frame `art` states with shifted content, advanced by one
+  `auto_advance` over the whole span (500-700 ms).
+- **Phase every cycle of a repeating sequence.** For a conveyor: shift (gap
+  opens), fill (new item appears), then payload motion — each its own frame.
+  Never collapse phases into one frame.
+- **Moving glyphs need at least 3 frames and inset endpoints.** A 2-frame
+  animated coordinate shows only start and end, which reads as teleporting.
+  Use a 3-frame span minimum so a midpoint renders, and keep `from`/`to` a few
+  cells inside the ends of the line being travelled, never at its tips.
+- **Loops are for idle decoration on hold slides only** (title, closing). Never
+  loop a one-shot content sequence — restart or bounce reads as glitching. Use
+  `auto_advance` for one-shot sequences.
+- **Everything visible during a loop or `auto_advance` span must cover the
+  whole span.** An object whose range starts or ends inside the span blinks on
+  every pass. Reveal text before the span or after it, never during.
+- **Text stays readable during motion.** Nothing new appears mid-span. If a
+  sequence needs per-step labels (verdicts, counters), each label covers its
+  full step and sits in a stable position.
+- **Morphs.** `dissolve` only for same-shape string swaps where intermediate
+  noise is acceptable (a word changing, a value corrupting). Never dissolve
+  structured diagrams (trees, boxes) — reveal those layer by layer as separate
+  objects. Never morph mixed content (a bar plus its caption): morph the glyph
+  run, and swap the caption as separate labels at the boundary frame. A morph
+  is invisible as animation unless an `auto_advance` drives its span; add one
+  (300-450 ms) when it should play rather than be stepped.
+- **Manual vs automatic.** Sequences the presenter talks over point by point
+  (economic simulations, payout cycles) are stepped manually: no
+  `auto_advance`, and `auto_play: false` on their animations. Ambient
+  mechanical sequences (conveyors, packet relays) auto-advance at 600-700 ms.
+
+## 12. Layout and collision
+
+- **Moving glyphs get exclusive lanes.** No static text on any row a packet
+  traverses, over the columns it crosses, for the frames it moves.
+- **Data markers inside a structure live in that structure's `art` string**,
+  never as an overlay label — overlays with padding spaces corrupt
+  box-drawing borders.
+- **Check right-edge extent.** Never let a label's bounding width reach into
+  another object's columns, including persistent side panels (peer lists,
+  gauges) that share its rows.
+- **Fixed zones on 80x24:** `y1` section label, `y2` rule, `y5-15` diagram and
+  scene content, `y17-21` captions, bottom rows free. Captions replace each
+  other at the same position with disjoint ranges rather than stacking.
+
+## 13. Style guide (defaults)
+
+These are defaults for when the user has not specified styling. **A single
+sentence from the user overrules any of them** — follow the instruction, not
+this list.
+
+- **Monochrome by default:** terminal foreground on default background for all
+  content.
+- **Exactly one accent colour per deck.** Default accent: `{"r":0,"g":255,"b":65}`
+  ("nerd green"). Never use a named ANSI colour for the accent — palettes render
+  them inconsistently, and ANSI green often reads olive.
+- **The accent marks the single most important element of a slide**, and many
+  slides have none. Never accent furniture: not section labels, not rules, not
+  boxes, not slide titles.
+- **Adversarial or dramatic changes** (a corrupted balance, a vanished entry)
+  render accent + `bold` in the scene where the change first appears, then
+  revert to default in later frames.
+- **No `bold`, no `dim`, no ALL CAPS in body text.** Emphasis exists only as the
+  accent. Proper nouns and acronyms keep their natural casing.
+- **`dim` is reserved for furniture:** section labels, rules, small annotations
+  under art ("the chain", axis labels), decorative ASCII art.
+- **Section labels:** lowercase, numbered, dim, top-left at `y1`, above a dim
+  `h_line` at `y2`, persisting for the whole section.
+
+  ```json
+  { "type": "label", "text": "01 · the problem",
+    "position": { "x": { "fixed": 2 }, "y": { "fixed": 1 } },
+    "style": { "dim": true }, "frames": { "start": 0, "end": 12 } }
+  ```
+
+- **Big `header` objects only on the title and closing slides**, in the accent
+  colour.
+- **Idle bouncing-glyph loops on title and closing slides are encouraged.** Keep
+  the glyph thematic (a packet, a π).
+
+## 14. Self-check before delivering
 
 Re-read the JSON against this list. These are the failure modes that either
 break compilation or waste the user's review pass.
@@ -514,7 +617,24 @@ break compilation or waste the user's review pass.
     `2 * diameter` wide, `framed` labels add a cell on each side).
 12. `position.x` and `position.y` are coordinate objects, not bare numbers.
 
-## 11. Output
+Then the authoring pass — these do not break compilation, they waste the
+user's review round:
+
+13. No caption anywhere restates motion that is visible on the same frames.
+14. No animated coordinate has a span shorter than 3 frames.
+15. No animated `from`/`to` sits at the extreme end of the line it travels.
+16. No object's range starts or ends strictly inside a loop or `auto_advance`
+    span it overlaps.
+17. No label overlays another object's cells — check bounding widths, including
+    padding spaces.
+18. No `dissolve` morph on structured or box-drawing content, and no morph
+    mixing a glyph run with prose.
+19. Colour audit: at most one accent colour in the whole file, zero named ANSI
+    colours on content, `dim` only on furniture, `bold` only together with the
+    accent.
+20. Caps audit: no ALL CAPS words in body text.
+
+## 15. Output
 
 Write the deck to a `.json` file and present it, so the user can download it and
 run `bs edit` on it directly. Name it after the topic, for example
@@ -527,7 +647,7 @@ the user can check the narrative without reading JSON, plus any assumptions
 made about canvas size and any layout worth eyeballing in the editor. Keep that
 prose short; the deck is the deliverable.
 
-## 12. Minimal complete example
+## 16. Minimal complete example
 
 A 3-frame deck: a persistent title, a numbered list on frames 1 and 2, and a
 star that slides across on the same frames.

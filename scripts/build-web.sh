@@ -12,7 +12,9 @@
 #   3. PRESENTATION_FORMAT.md   copied from the repo root, so the instructions
 #                               page can never drift from the reference
 #   4. .claude/skills/…/SKILL.md the packaged Claude skill, offered for download
-#   5. examples/demo.json       the sample source deck the compile page loads
+#   5. examples/demo.json       the sample source deck the compile view loads
+#
+# It also stamps sw.js with a build hash so the PWA cache invalidates on deploy.
 #
 # The same script runs in CI (.github/workflows/pages.yml), so a green local
 # build is the thing that gets deployed.
@@ -66,6 +68,13 @@ cp PRESENTATION_FORMAT.md "$OUT/presentation-format.md"
 cp .claude/skills/bs-deck/SKILL.md "$OUT/bs-deck-skill.md"
 cp examples/demo.json "$OUT/demo.json"
 touch "$OUT/.nojekyll"
+
+# Stamp the service worker's cache name with a hash of what we just built, so a
+# deploy always installs a fresh cache instead of serving a stale app.
+BUILD=$(cat "$OUT"/*.js "$OUT"/*.css "$OUT"/*.html "$OUT/bs.wasm" 2>/dev/null \
+  | sha256sum | cut -c1-12)
+sed -i "s/__BUILD__/$BUILD/" "$OUT/sw.js"
+say "Service worker cache: bs-$BUILD"
 
 # --- 3. report ----------------------------------------------------------------
 wasm_bytes=$(wc -c < "$OUT/bs.wasm")
