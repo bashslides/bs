@@ -1,8 +1,9 @@
 # Publishes the static web viewer in `web/` to GitHub Pages.
 #
-# One-time setup in the repository: Settings → Pages → Build and deployment →
-# Source: "GitHub Actions". No build step is needed — `web/` is plain static
-# HTML/CSS/JS, uploaded as-is.
+# The `enablement: true` input below creates the Pages site over the API on the
+# first run, so no Settings → Pages click is needed. If you prefer to set it by
+# hand: Settings → Pages → Build and deployment → Source: "GitHub Actions".
+# No build step is needed — `web/` is plain static HTML/CSS/JS, uploaded as-is.
 name: Deploy web viewer
 
 on:
@@ -30,8 +31,13 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/configure-pages@v5
+        with:
+          # Create the Pages site over the API if it does not exist yet, so the
+          # first deploy does not depend on the Settings → Pages UI having been
+          # saved. Needs the `pages: write` permission declared above.
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web

@@ -72,5 +72,8 @@ command in the status bar instead of executing it.
 ## Deployment
 
 `.github/workflows/pages.yml` uploads this directory to GitHub Pages on every
-push to `main` that touches `web/`. Enable it once under
-**Settings → Pages → Build and deployment → Source: GitHub Actions**.
+push to `main` that touches `web/` (or the workflow file itself). It passes
+`enablement: true` to `actions/configure-pages`, which creates the Pages site
+over the API on the first run — so the deploy does not depend on
+**Settings → Pages → Build and deployment → Source: GitHub Actions** having been
+saved by hand. Setting it in the UI works too, and is equivalent.
