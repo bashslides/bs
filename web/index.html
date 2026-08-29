@@ -3,39 +3,70 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>bs — presentation viewer</title>
-<meta name="description" content="Renders a compiled bs presentation in the browser.">
+<title>bs — terminal presentation engine</title>
+<meta name="description" content="Write, compile and present terminal ASCII-art decks — in the browser.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23000'/%3E%3Ctext x='2' y='12' font-family='monospace' font-size='11' fill='%23e0e0e0'%3Ebs%3C/text%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 </head>
-<body>
-  <div id="app">
-    <header id="bar">
-      <span class="brand">bs</span>
-      <span class="dim">/</span>
-      <button id="open" type="button" title="Open a compiled presentation (o)"><span id="deck-name">no deck</span></button>
-      <span class="grow"></span>
-      <span id="note" class="dim"></span>
-      <span id="counter" class="dim">--/--</span>
+<body class="page">
+  <main id="home">
+    <header id="home-head">
+      <pre class="logo" aria-label="bs">██████  ███████
+██   ██ ██
+██████  ███████
+██   ██      ██
+██████  ███████</pre>
+      <p class="tagline">A terminal-native presentation engine.<br>
+        Decks are ASCII-art animations that render in a terminal — or here.</p>
     </header>
 
-    <main id="stage">
-      <pre id="screen" class="metrics"></pre>
-    </main>
+    <nav id="tools">
+      <a class="tool" href="present.html" data-key="1">
+        <span class="k">[1]</span>
+        <h2>present</h2>
+        <p>Play a <em>compiled</em> deck. Arrow keys, loops, auto-play animations
+           and fullscreen — the terminal player's behaviour, in the browser.</p>
+        <span class="go">open &rarr;</span>
+      </a>
 
-    <footer id="foot">
-      <div id="framebar" aria-hidden="true"></div>
-      <div id="hint" class="dim">
-        <b>←</b>/<b>→</b> step &nbsp;·&nbsp; <b>shift</b>+<b>←</b>/<b>→</b> ±10 &nbsp;·&nbsp;
-        <b>home</b>/<b>end</b> &nbsp;·&nbsp; <b>f</b> fullscreen &nbsp;·&nbsp; <b>o</b> open
-      </div>
+      <a class="tool" href="compile.html" data-key="2">
+        <span class="k">[2]</span>
+        <h2>compile</h2>
+        <p>Turn a <em>source</em> deck into a playable one. Runs the real engine —
+           the same Rust <code>bs compile</code> uses, built to WebAssembly.</p>
+        <span class="go">open &rarr;</span>
+      </a>
+
+      <a class="tool" href="instructions.html" data-key="3">
+        <span class="k">[3]</span>
+        <h2>instructions</h2>
+        <p>The authoring format in full, ready to copy into an LLM so it can
+           write a deck for you. One button, one paste.</p>
+        <span class="go">open &rarr;</span>
+      </a>
+    </nav>
+
+    <section id="flow">
+      <h3>the loop</h3>
+      <pre class="pipe">  <a href="instructions.html">instructions</a>  →  source.json  →  <a href="compile.html">compile</a>  →  playable.json  →  <a href="present.html">present</a>
+       copy for            an LLM         WebAssembly                        in this
+       your LLM           writes it       (real engine)                      browser</pre>
+    </section>
+
+    <footer id="home-foot">
+      <p>Everything here runs locally in your browser — no deck is uploaded anywhere.</p>
+      <p>Prefer a terminal? <code>bs compile source.json out.json &amp;&amp; bs play out.json</code>
+         — <a href="https://github.com/bashslides/bs">github.com/bashslides/bs</a></p>
     </footer>
-  </div>
+  </main>
 
-  <pre id="probe" class="metrics" aria-hidden="true"></pre>
-  <div id="drop"><span>drop a compiled presentation</span></div>
-  <input id="file" type="file" accept=".json,application/json" hidden>
-
-  <script src="app.js"></script>
+  <script>
+    // Terminal habit: the bracketed digit actually works.
+    document.addEventListener('keydown', (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const hit = document.querySelector(`.tool[data-key="${e.key}"]`);
+      if (hit) { e.preventDefault(); location.href = hit.getAttribute('href'); }
+    });
+  </script>
 </body>
 </html>

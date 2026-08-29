@@ -3,6 +3,7 @@
 //! number-or-object coordinate deserializer.
 
 use bs::engine::source::{AnimId, AnimSpans, Coordinate, FrameRange, Label};
+use bs::types::{Color, NamedColor};
 
 /// A one-entry span table: animation `id` covers `[start, end_excl)`.
 fn span(id: AnimId, start: usize, end_excl: usize) -> AnimSpans {
@@ -109,4 +110,26 @@ fn omitted_optional_width_defaults_to_zero() {
     )
     .expect("label without width should parse");
     assert_eq!(l.width.evaluate(0, &AnimSpans::default()), 0);
+}
+
+/// `Color` is an untagged enum, so its RGB variant deserializes from a map of
+/// `r`/`g`/`b` — not from an `{"rgb": [...]}` array. The docs claimed the array
+/// form for a long time; this pins the shape the engine actually accepts so the
+/// claim cannot drift back.
+#[test]
+fn color_accepts_named_strings_and_rgb_maps() {
+    let named: Color = serde_json::from_str(r#""red""#).expect("named colour parses");
+    assert_eq!(named, Color::Named(NamedColor::Red));
+
+    let rgb: Color = serde_json::from_str(r#"{"r":20,"g":20,"b":40}"#).expect("rgb map parses");
+    assert_eq!(rgb, Color::Rgb { r: 20, g: 20, b: 40 });
+
+    // Round-trips through the same shape it accepts.
+    assert_eq!(serde_json::to_string(&rgb).unwrap(), r#"{"r":20,"g":20,"b":40}"#);
+}
+
+#[test]
+fn color_rejects_the_rgb_array_form() {
+    let bad = serde_json::from_str::<Color>(r#"{"rgb":[20,20,40]}"#);
+    assert!(bad.is_err(), "the {{\"rgb\": [..]}} array form is not accepted");
 }

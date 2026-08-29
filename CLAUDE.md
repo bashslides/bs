@@ -207,6 +207,7 @@ auto groups (their members shift instead).
 | `src/main.rs` | CLI entry point (`compile`/`edit`/`play`/`migrate`) |
 | `src/lib.rs` | Crate root — declares the public modules so integration tests and `examples/hello.rs` drive the pipeline as a library |
 | `src/menubar.rs` | Shared `print_menu_item` helper (bolds the `[k]` shortcut inside a dim menu string) used by both the player and `src/editor/menubar.rs` |
+| `src/compile.rs` | **The single compile path** — `compile(&SourcePresentation) -> PlayablePresentation` (validate loops → `Engine::compile` → `Renderer::render` → attach the `Command`/`Loop`/`Animation`/`AutoAdvance` sidecars) plus the string-in/string-out `compile_json`. Both `bs compile` (`src/main.rs`) and the browser's WebAssembly compiler (`wasm/src/lib.rs`) call it, so the two cannot drift. Free of I/O and of anything `wasm32-unknown-unknown` lacks — no fs, clock, env, threads or terminal |
 | `src/migrate.rs` | One-shot upgrade of old-format source JSON to the current animation model — works on the raw `serde_json::Value` (the current structs can't parse the old shape), assigns `id`s to `animation` objects, rewrites `{"animated":{…,start_frame,end_frame}}` coords to `{from,to,anim}` by span match (synthesizing a sidecar for orphan spans). Idempotent; self-verifies through `SourcePresentation` before writing in place (`<file>.bak` backup) |
 | `src/types.rs` | Shared types: `Color`, `Style`, `Cell`, `DrawOp`, `Frame`, `PlayablePresentation`, `CommandRegion`, `LoopRegion`, `AnimationRegion`, `AutoAdvanceRegion` |
 | `src/engine/source.rs` | `SourcePresentation` (+ `command_regions()`, `loop_regions()`, `animation_regions()`, `auto_advance_regions()`, `validate_loops()`, `link_siblings()`, and a `links` sidecar — editor-only families of object indices for *linked* paste, ignored by the engine), `SceneObject` (including the canonical `type_name()` display names), `Coordinate` (Fixed / Animated{from,to,anim}), `AnimId` + `AnimSpans` (the id→span table; `Coordinate::evaluate(frame, &AnimSpans)` looks a coordinate's span up there), `FrameRange` |
@@ -381,7 +382,9 @@ Mode::EditProperties {
 - `style` is optional (omit for defaults)
 - `frames.end` is exclusive
 - Color values: named strings (`"black"`, `"red"`, `"green"`, `"yellow"`, `"blue"`,
-  `"magenta"`, `"cyan"`, `"white"` — the 8 `NamedColor`s only) or `{ "rgb": [r, g, b] }`
+  `"magenta"`, `"cyan"`, `"white"` — the 8 `NamedColor`s only) or an RGB object
+  `{ "r": 20, "g": 20, "b": 40 }` (`Color` is an untagged enum, so the RGB form is
+  a map of `r`/`g`/`b` — **not** `{"rgb": [...]}`, which fails to deserialize)
 - Many numeric fields (widths, heights, `hline` endpoints) accept either a bare
   number or a `Coordinate` object, via `deserialize_coord_compat`
 - A `loop` object has no geometry — just a range plus playback options
@@ -479,7 +482,7 @@ animation outside the block);
 "editing a span never duplicates the animation" regression;
 `editor/timeline.rs` — `pick_indices`/`abbreviated_indices` (first-3 / current
 window / last-3 selection, dedup near the edges, and edge-group shrink on a
-narrow row)). The suite totals 263 tests (122 integration + 141 inline);
+narrow row)). The suite totals 268 tests (124 integration + 144 inline);
 `TESTS.md` is the authoritative per-test list, and `tests/docs.rs` fails the
 build if this count line or `TESTS.md` drifts from the code.
 
@@ -501,27 +504,59 @@ every core module. Each failure message names the doc and line to fix. The
 rules it can't check remain manual: if you change behavior, update the
 matching doc (and `AGENTS.md`'s hard rules if those change) in the same edit.
 
-## Web viewer (`web/`, deployed to GitHub Pages)
+## Web tools (`web/` → GitHub Pages)
 
-A dependency-free static page (`web/index.html` + `style.css` + `app.js`, no
-build step) that plays a **compiled** `PlayablePresentation` in the browser. The
-chrome is deliberately black-and-white terminal style; the deck's own cell
-colours render as compiled. `.github/workflows/pages.yml` uploads `web/` to
-GitHub Pages on pushes to `main` that touch it. A deck is loaded from
-`?deck=<url>`, else `web/presentation.json` (the committed sample), else a
-drag-drop / `o` file pick.
+A dependency-free static site — no framework, no bundler, no npm — with a home
+page (`web/index.html`) offering three tools:
 
-**It is a port, so it can drift.** `web/app.js` re-implements the player's
-*pure* logic in JS — `PlayablePresentation::grid_at` → `gridAt`,
+| Page | Does |
+|------|------|
+| `web/present.html` + `web/app.js` | Plays a **compiled** deck. A JS port of the player's pure logic (see the drift warning below) |
+| `web/compile.html` + `web/compile.js` + `web/wasm.js` | Turns a **source** deck into a playable one by running the real engine, built to WebAssembly |
+| `web/instructions.html` + `web/instructions.js` | Serves `PRESENTATION_FORMAT.md` verbatim with a copy-all button, for handing to an LLM |
+
+**Build and test it locally — never hand-assemble the site:**
+
+```bash
+./scripts/build-web.sh --serve   # engine → wasm, assemble _site/, serve on :8000
+./scripts/test-web.sh            # headless end-to-end check (needs firefox)
+```
+
+`scripts/build-web.sh` produces `_site/` (gitignored): `web/` plus the built
+`bs.wasm`, `PRESENTATION_FORMAT.md` (as `presentation-format.md`) and
+`examples/demo.json` (as `demo.json`, the compile page's sample). CI runs the
+**same script**, so a green local build is what deploys.
+
+**The compile tool cannot drift — by construction.** `wasm/src/lib.rs` is a
+~90-line `extern "C"` shim (no wasm-bindgen, no wasm-pack, no Node) over
+`bs::compile::compile_json` — the same function `bs compile` calls. Its ABI is
+raw pointers into the module's exported `memory`; the JS side (`web/wasm.js`)
+re-reads `exports.memory.buffer` after every call because allocation can grow
+and detach it. `scripts/test-web.sh` compiles one deck both ways in a headless
+browser and asserts the outputs are **byte-identical**, which is what catches an
+ABI or glue mistake (an engine change moves both sides together, so the
+deck-shape assertions in that script cover engine regressions).
+
+**The present tool *is* a port, so it can drift.** `web/app.js` re-implements
+the player's *pure* logic in JS — `PlayablePresentation::grid_at` → `gridAt`,
 `player::loop_next` → `loopNext`, and `Player::{auto_advance_delay,
 animation_cluster, frame_auto_advance_delay, effective_auto_delay}` → the
-same-named camelCase functions — plus the player's arrow-key semantics
-(animation/loop skip, Shift+arrows = ±10). **If you change any of those in
-`src/player/mod.rs`, mirror it in `web/app.js` in the same edit**; `cargo test`
-cannot catch this drift. `Command` objects are the one runtime feature the
-browser cannot provide (they run a local binary): the compiler has already baked
-their placeholder box into the static frames, so the slide still renders and the
-viewer names the command in the status bar instead of executing it.
+same-named camelCase functions — plus the arrow-key semantics (animation/loop
+skip, Shift+arrows = ±10). **If you change any of those in `src/player/mod.rs`,
+mirror it in `web/app.js` in the same edit**; `cargo test` cannot catch this.
+
+`Command` objects are the one runtime feature the browser cannot provide (they
+run a local binary): the compiler has already baked their placeholder box into
+the static frames, so the slide still renders and the viewer names the command
+in the status bar instead of executing it.
+
+**Feature gating.** `crossterm` is optional, behind the default-on `tui`
+feature; `src/lib.rs` gates `editor`/`player`/`menubar` on it and the `bs`
+binary declares `required-features = ["tui"]`. That is what lets
+`--no-default-features` build the engine for `wasm32-unknown-unknown`. Keep
+`src/compile.rs`, `src/engine/`, `src/renderer/` and `src/types.rs` free of
+`std::fs`/`std::env`/`std::time`/threads/`crossterm` — verify with
+`cargo build --no-default-features`.
 
 ## Shared helpers (extend these; don't fork a parallel copy)
 

@@ -531,6 +531,34 @@ if (window.ResizeObserver) new ResizeObserver(fit).observe(el.stage);
 async function boot() {
   measure();
   const src = new URLSearchParams(location.search).get('deck') || 'presentation.json';
+
+  // `?deck=session` is the hand-off from the compile page, which stashes the
+  // freshly compiled deck in sessionStorage rather than round-tripping a file.
+  if (src === 'session') {
+    let stashed = null;
+    try {
+      stashed = sessionStorage.getItem('bs:deck');
+    } catch {
+      // storage blocked (private mode) — fall through to the empty state
+    }
+    if (stashed) {
+      try {
+        load(JSON.parse(stashed), 'compiled deck');
+        return;
+      } catch (err) {
+        message([`  the handed-over deck could not be parsed`, '', `  ${esc(String(err.message))}`]);
+        return;
+      }
+    }
+    message([
+      '  nothing handed over',
+      '',
+      '  compile a deck first, then press <b>present →</b>',
+      '  (or drop a compiled presentation here / press <b>o</b>)',
+    ]);
+    return;
+  }
+
   message([`  loading ${esc(src)} …`]);
   try {
     const res = await fetch(src, { cache: 'no-cache' });

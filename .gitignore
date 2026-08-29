@@ -13,3 +13,6 @@ service-account*.json
 .secrets/
 
 /target
+
+# Assembled web site (scripts/build-web.sh output)
+/_site
