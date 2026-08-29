@@ -54,6 +54,26 @@ SourcePresentation (JSON)
 The interactive editor runs the same Engine + Renderer pipeline live for a
 WYSIWYG preview. See `CLAUDE.md` for the full architecture and module map.
 
+## Web viewer (GitHub Pages)
+
+`web/` is a dependency-free static page that plays a **compiled** presentation
+in the browser — black-and-white terminal chrome, the deck's own colours intact.
+It is a port of the player's pure logic (frame replay, loops, auto-play
+animations, auto-advance markers), so playback matches the terminal; the one
+thing it cannot do is run `Command` objects, whose placeholder box the compiler
+has already baked into the frames.
+
+```bash
+cargo run -- compile my-talk.json web/presentation.json   # the deck it serves
+python3 -m http.server -d web 8000                        # http://localhost:8000
+```
+
+A deck can also be dropped onto the page, opened with `o`, or passed as
+`?deck=<url>`. `.github/workflows/pages.yml` publishes `web/` to GitHub Pages on
+every push to `main` that touches it — enable it once under **Settings → Pages →
+Build and deployment → Source: GitHub Actions**. See `web/README.md` for the
+keys and the Rust→JS mapping.
+
 ## For AI coding agents
 
 Start with `AGENTS.md` — the vendor-neutral quickstart (hard rules, exact
