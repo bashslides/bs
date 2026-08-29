@@ -53,7 +53,6 @@ function bindElements() {
     screen: id('screen'),
     msg: id('msg'),
     stage: id('stage'),
-    name: id('deck-name'),
     counter: id('counter'),
     note: id('note'),
     framebar: id('framebar'),
@@ -641,7 +640,10 @@ export function load(data, name) {
   cache = { frame: -1, grid: null };
   tickStarts = [];
   barTotal = -1;
-  el.name.textContent = name;
+  // No on-screen deck title — the user asked for that bar gone. The document
+  // title still carries it, which is what a browser tab and an installed app's
+  // switcher entry show.
+  document.title = name ? `${name} — bs` : 'bs';
   showCanvas();
   layout();
   render();
@@ -651,6 +653,7 @@ export function load(data, name) {
 
 /** Replace the canvas with a message (empty state, errors). */
 export function message(lines) {
+  document.title = 'bs';
   el.screen.hidden = true;
   el.msg.hidden = false;
   el.msg.innerHTML = lines.join('\n');

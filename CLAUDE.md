@@ -508,9 +508,18 @@ matching doc (and `AGENTS.md`'s hard rules if those change) in the same edit.
 ## Web tools (`web/` → GitHub Pages)
 
 A dependency-free installable web app — no framework, no bundler, no npm. **One
-page (`web/index.html`) with three views in order: instructions → compile →
-present**, so the WebAssembly engine, the loaded deck and the library are shared
-state and compiling then presenting reloads nothing.
+page (`web/index.html`) with a title view plus three tool views in order:
+instructions → compile → present**, so the WebAssembly engine, the loaded deck
+and the library are shared state and compiling then presenting reloads nothing.
+The `bs` wordmark is the title page's tab (`#tab-home`) — a single paragraph
+saying what the tool is and how to use it, with the view names as inline links.
+
+The topmost bar carries the wordmark, the tabs and the present view's own
+**library** / **open** actions (`#bar-actions`, hidden on the other views).
+There is deliberately no second bar showing the deck name — the document title
+carries it instead. Because everything lives in that one bar, it is tight on a
+phone: the labels shorten to `lib` / `open` under 430px and the type tightens
+under 400px, sized so the bar still fits a 320px viewport without clipping.
 
 | Module | Does |
 |--------|------|

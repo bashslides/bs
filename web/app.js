@@ -12,7 +12,8 @@ import * as compileView from './compile.js';
 import * as instructionsView from './instructions.js';
 import * as store from './store.js';
 
-const VIEWS = ['instructions', 'compile', 'present'];
+// `home` is the title page; the other three are the tools, in working order.
+const VIEWS = ['home', 'instructions', 'compile', 'present'];
 let current = null;
 let showInstructions = null;
 let compileApi = null;
@@ -22,7 +23,7 @@ const id = (n) => document.getElementById(n);
 // ---------------------------------------------------------------- view routing
 
 function show(view, { replace = false } = {}) {
-  if (!VIEWS.includes(view)) view = 'present';
+  if (!VIEWS.includes(view)) view = 'home';
   if (view === current) return;
 
   if (current === 'present') viewer.suspend();
@@ -30,9 +31,13 @@ function show(view, { replace = false } = {}) {
 
   for (const v of VIEWS) {
     id(`view-${v}`).hidden = v !== view;
-    id(`tab-${v}`).classList.toggle('active', v === view);
-    id(`tab-${v}`).setAttribute('aria-selected', String(v === view));
+    const tab = id(`tab-${v}`);
+    tab.classList.toggle('active', v === view);
+    if (tab.getAttribute('role') === 'tab') tab.setAttribute('aria-selected', String(v === view));
   }
+
+  // library/open act on the present view, so they travel with it.
+  id('bar-actions').hidden = view !== 'present';
 
   const hash = `#${view}`;
   if (location.hash !== hash) {
@@ -161,7 +166,11 @@ function boot() {
   showInstructions = instructionsView.init();
 
   for (const v of VIEWS) id(`tab-${v}`).addEventListener('click', () => show(v));
-  window.addEventListener('popstate', () => show(location.hash.slice(1) || 'present', { replace: true }));
+  // In-paragraph links on the title page jump to the view they name.
+  for (const b of document.querySelectorAll('#home [data-go]')) {
+    b.addEventListener('click', () => show(b.dataset.go));
+  }
+  window.addEventListener('popstate', () => show(location.hash.slice(1) || 'home', { replace: true }));
 
   id('btn-library').addEventListener('click', () => setLibraryOpen(id('library').hidden));
   id('library-close').addEventListener('click', () => setLibraryOpen(false));
@@ -208,7 +217,7 @@ function boot() {
   emptyState();
   const start = location.hash.slice(1);
   current = null;
-  show(VIEWS.includes(start) ? start : 'present', { replace: true });
+  show(VIEWS.includes(start) ? start : 'home', { replace: true });
   renderLibrary();
 }
 
