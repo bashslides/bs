@@ -507,14 +507,19 @@ matching doc (and `AGENTS.md`'s hard rules if those change) in the same edit.
 
 ## Web tools (`web/` → GitHub Pages)
 
-A dependency-free static site — no framework, no bundler, no npm — with a home
-page (`web/index.html`) offering three tools:
+A dependency-free installable web app — no framework, no bundler, no npm. **One
+page (`web/index.html`) with three views in order: instructions → compile →
+present**, so the WebAssembly engine, the loaded deck and the library are shared
+state and compiling then presenting reloads nothing.
 
-| Page | Does |
-|------|------|
-| `web/present.html` + `web/app.js` | Plays a **compiled** deck on a `<canvas>`. A JS port of the player's pure logic (see the drift warning below) |
-| `web/compile.html` + `web/compile.js` + `web/wasm.js` | Turns a **source** deck into a playable one by running the real engine, built to WebAssembly |
-| `web/instructions.html` + `web/instructions.js` | Serves `PRESENTATION_FORMAT.md` verbatim with a copy-all button, for handing to an LLM; also offers the packaged Claude skill as a download |
+| Module | Does |
+|--------|------|
+| `web/app.js` | The shell: view routing (hash), the deck-library UI, drag-drop routing, service-worker registration |
+| `web/instructions.js` | Serves `PRESENTATION_FORMAT.md` verbatim with a copy-all button; also offers the packaged Claude skill as a download |
+| `web/compile.js` + `web/wasm.js` | Turns a **source** deck into a playable one by running the real engine, built to WebAssembly. Opening a file compiles it immediately; the compiled JSON is never displayed |
+| `web/viewer.js` | Plays a **compiled** deck on a `<canvas>`. A JS port of the player's pure logic (see the drift warning below) |
+| `web/store.js` | The deck library in `localStorage` — 20 most recent, quota-aware, same-name replaces |
+| `web/sw.js` + `web/manifest.webmanifest` | PWA: installable, and fully usable offline including compiling. `scripts/build-web.sh` stamps the cache name with a build hash so a deploy never serves a stale app |
 
 **Build and test it locally — never hand-assemble the site:**
 
@@ -582,7 +587,13 @@ bar jumps. Fullscreen hides both bars, so it carries its own dim `✕ full` butt
 for non-video elements, so `toggleFullscreen` treats the bars-hidden state and
 real browser fullscreen as separate concerns and always leaves a way back.
 
-**The present tool *is* a port, so it can drift.** `web/app.js` re-implements
+**`→` on an animation stops on the animation's own last frame** (`cluster[1] - 1`),
+its finished state, rather than the first frame past the span; already there, it
+falls through to a normal step so the span cannot trap the deck. This is a
+deliberate divergence from `src/player/mod.rs`, which still jumps to
+`hi.min(last)`.
+
+**The present tool *is* a port, so it can drift.** `web/viewer.js` re-implements
 the player's *pure* logic in JS — `PlayablePresentation::grid_at` → `gridAt`,
 `player::loop_next` → `loopNext`, and `Player::{auto_advance_delay,
 animation_cluster, frame_auto_advance_delay, effective_auto_delay}` → the

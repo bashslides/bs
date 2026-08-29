@@ -57,17 +57,22 @@ WYSIWYG preview. See `CLAUDE.md` for the full architecture and module map.
 
 ## Web tools (GitHub Pages)
 
-`web/` is a dependency-free static site — black-and-white terminal styling, no
-framework, no npm — with three tools behind a home page:
+`web/` is a dependency-free, installable web app — black-and-white terminal
+styling, no framework, no npm. One page, three views:
 
-- **present** — play a *compiled* deck in the browser. Arrow keys, loops,
-  auto-play animations, fullscreen: the terminal player's behaviour.
-- **compile** — turn a *source* deck into a playable one. This runs the **real
-  engine**, built to WebAssembly, so the browser and `bs compile` produce
-  byte-identical output.
 - **instructions** — the full source-format reference with a copy-all button,
   for pasting into an LLM that will write a deck for you, plus a download of the
   packaged Claude skill.
+- **compile** — turn a *source* deck into a playable one. This runs the **real
+  engine**, built to WebAssembly, so the browser and `bs compile` produce
+  byte-identical output. Opening a file compiles it straight away.
+- **present** — play the result. Arrow keys, loops, auto-play animations,
+  fullscreen; every action also has a tap target for phones.
+
+It is a **PWA**: installable from the browser, and fully usable offline —
+including compiling, since the engine is cached as WebAssembly. Compiled and
+imported decks are kept in a local library (`localStorage`) you can reopen and
+delete from the present view.
 
 ```bash
 ./scripts/build-web.sh --serve   # engine → wasm, assemble _site/, serve :8000
