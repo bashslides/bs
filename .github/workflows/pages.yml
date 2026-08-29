@@ -1,16 +1,27 @@
-# Publishes the static web viewer in `web/` to GitHub Pages.
+# Publishes the bs web tools (home / present / compile / instructions) to
+# GitHub Pages.
 #
-# The `enablement: true` input below creates the Pages site over the API on the
-# first run, so no Settings → Pages click is needed. If you prefer to set it by
-# hand: Settings → Pages → Build and deployment → Source: "GitHub Actions".
-# No build step is needed — `web/` is plain static HTML/CSS/JS, uploaded as-is.
-name: Deploy web viewer
+# The site is assembled by scripts/build-web.sh — the same script used locally —
+# so what CI deploys is what a local `./scripts/build-web.sh --serve` shows. The
+# build compiles the engine to WebAssembly; if that fails the job fails before
+# the upload step, and Pages keeps serving the previous version.
+#
+# `enablement: true` below creates the Pages site over the API on the first run,
+# so no Settings → Pages click is needed.
+name: Deploy web tools
 
 on:
   push:
     branches: [main]
     paths:
       - 'web/**'
+      - 'wasm/**'
+      - 'src/**'
+      - 'examples/demo.json'
+      - 'PRESENTATION_FORMAT.md'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/build-web.sh'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -32,14 +43,33 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
+
+      - name: Install the wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-wasm-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-wasm-
+
+      - name: Build the site (engine → WebAssembly, then assemble)
+        run: ./scripts/build-web.sh
+
       - uses: actions/configure-pages@v5
         with:
           # Create the Pages site over the API if it does not exist yet, so the
           # first deploy does not depend on the Settings → Pages UI having been
           # saved. Needs the `pages: write` permission declared above.
           enablement: true
+
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: web
+          path: _site
+
       - id: deployment
         uses: actions/deploy-pages@v4

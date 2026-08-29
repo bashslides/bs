@@ -55,7 +55,15 @@ cargo test          # full suite; also builds examples/hello.rs
 
 On a normal machine with `cargo` + `build-essential` on `PATH`, plain
 `cargo build` / `cargo test` is enough. To (re)create the toolchain, run
-`./scripts/install-toolchain.sh` (see [`README.md`](README.md)).
+`./scripts/install-toolchain.sh` (see [`README.md`](README.md)) — it also adds
+the `wasm32-unknown-unknown` target used by the browser tools.
+
+Web tools (`web/`, deployed to GitHub Pages):
+
+```bash
+./scripts/build-web.sh --serve   # engine → wasm, assemble _site/, serve :8000
+./scripts/test-web.sh            # headless end-to-end check (needs firefox)
+```
 
 CLI:
 
@@ -80,6 +88,13 @@ SourcePresentation (JSON)
 
 Rust `edition = "2024"`. `src/lib.rs` exposes the crate; `src/main.rs` is the CLI.
 
+`src/compile.rs` holds the **one** compile path (`SourcePresentation` →
+`PlayablePresentation`). Both `bs compile` and the browser's WebAssembly
+compiler (`wasm/`) call it, so they cannot disagree. The terminal UI
+(`editor`, `player`, `menubar`) sits behind the default-on `tui` feature, which
+`--no-default-features` drops so the engine builds for `wasm32-unknown-unknown`
+(`crossterm` cannot).
+
 ## Where to look
 
 | I want to… | Go to |
@@ -91,6 +106,7 @@ Rust `edition = "2024"`. `src/lib.rs` exposes the crate; `src/main.rs` is the CL
 | See what each test covers before adding one | **[`TESTS.md`](TESTS.md)** (authoritative per-test list, enforced by `tests/docs.rs`) |
 | Check the docs haven't drifted from the code | `cargo test --test docs` (`tests/docs.rs` — runs in the full suite too) |
 | Build/run/install | **[`README.md`](README.md)** |
+| The browser tools (home / present / compile / instructions) | **[`web/README.md`](web/README.md)** |
 
 ## Conventions & landmines
 
@@ -117,6 +133,11 @@ Rust `edition = "2024"`. `src/lib.rs` exposes the crate; `src/main.rs` is the CL
   reconstructed char grid (`tests/common/mod.rs` helpers). The editor/player
   run-loops stay manually tested; their pure step functions have inline unit
   tests (e.g. `player::loop_next`).
+- **Keep the engine wasm-clean.** `src/{compile,engine,renderer,types}.rs` must
+  stay free of `std::fs`, `std::env`, `std::time`, threads and `crossterm` —
+  they compile to `wasm32-unknown-unknown` for the browser compiler. Anything
+  terminal-shaped belongs behind the `tui` feature. Check with
+  `cargo build --no-default-features`.
 - **Prefer the shared helper over a new one:** word-wrap (`engine::objects::wrap`),
   frame replay (`PlayablePresentation::grid_at`), text carets
   (`panel.rs::draw_caret_line`), object properties (the `Editable` trait). See

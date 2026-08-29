@@ -130,7 +130,7 @@ expressed as explicit endpoints instead — see those types).
 foreground, no background, not bold).
 
 ```json
-"style": { "fg": "red", "bg": { "rgb": [20, 20, 40] }, "bold": true, "dim": false }
+"style": { "fg": "red", "bg": { "r": 20, "g": 20, "b": 40 }, "bold": true, "dim": false }
 ```
 
 | Field | Type | Default |
@@ -144,7 +144,9 @@ foreground, no background, not bold).
 
 - Named (the only 8 valid names): `"black"`, `"red"`, `"green"`, `"yellow"`,
   `"blue"`, `"magenta"`, `"cyan"`, `"white"`.
-- RGB: `{ "rgb": [r, g, b] }` with each channel 0–255.
+- RGB: `{ "r": 20, "g": 20, "b": 40 }` with each channel 0–255. Note the shape:
+  three named keys, **not** an `{"rgb": [...]}` array — the latter is rejected by
+  the deserializer.
 
 > **Background = opacity.** Many text/art objects treat spaces as *transparent*
 > unless a `bg` is set. Setting a `bg` fills the object's whole bounding box with
@@ -677,7 +679,7 @@ of the two. The presenter can still navigate manually at any time.
   (not `hline`) and `auto_advance`. Others: `label`, `list`, `header`, `rect`,
   `arrow`, `table`, `art`, `circle`, `morph`, `group`, `command`, `loop`,
   `animation`.
-- **Only 8 named colors** exist; anything else must be `{ "rgb": [r,g,b] }`.
+- **Only 8 named colors** exist; anything else must be `{ "r":…, "g":…, "b":… }`.
 - **Spaces are transparent** in `art`/`morph`/`label` (no `bg`). Set a `bg` to
   make an object an opaque block for layering.
 - **`group.members` and `links` are array indices** — fragile under reordering.

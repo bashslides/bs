@@ -1,0 +1,12 @@
+[package]
+name = "bs-wasm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Engine only — no terminal UI, so crossterm never enters the wasm build.
+bs = { path = "..", default-features = false }

@@ -1,8 +1,8 @@
 # Test overview
 
 A list of the test cases in this repository, grouped by area. The suite has
-263 tests: 122 integration tests under `tests/` and
-141 inline unit tests in `src/`.
+268 tests: 124 integration tests under `tests/` and
+144 inline unit tests in `src/`.
 
 This file is not maintained on trust: `tests/docs.rs` fails `cargo test` when a
 test exists that is not listed here, when a listed test does not exist, or when
@@ -27,6 +27,8 @@ reconstructed character grid (some also assert on cell styles).
 | `frame_range_end_is_exclusive` | `FrameRange` end is exclusive |
 | `coordinate_field_accepts_bare_number_or_object` | A coordinate field accepts a bare number or an object form |
 | `omitted_optional_width_defaults_to_zero` | An omitted optional width defaults to zero |
+| `color_accepts_named_strings_and_rgb_maps` | `Color` parses a named string and an RGB **map** (`{"r","g","b"}`), and round-trips to the same shape |
+| `color_rejects_the_rgb_array_form` | The `{"rgb": [r,g,b]}` array form is rejected — pins the syntax the docs promise |
 
 ### Compile → render → diff pipeline — `tests/pipeline.rs`
 
@@ -243,6 +245,14 @@ agents; these tests turn their sync rules into build failures.
 | `claude_md_module_map_covers_every_core_module` | Every `.rs` file in `src/`, `src/editor/`, `src/engine/`, `src/renderer/`, `src/player/` is mentioned in CLAUDE.md (per-object files under `src/engine/objects/` are exempt) |
 
 ## Inline unit tests (`src/`)
+
+### Compile pipeline — `src/compile.rs`
+
+| Test | Verifies |
+|------|----------|
+| `compile_json_round_trips_a_deck_into_playable_json` | Source JSON in → playable JSON out: the result parses as a `PlayablePresentation` with the deck's contract and one frame per `frame_count` |
+| `compile_json_reports_a_parse_error_rather_than_panicking` | Malformed JSON surfaces an error message instead of panicking — the wasm module depends on this (a panic there is an unrecoverable trap) |
+| `compile_rejects_overlapping_loops` | `validate_loops` runs as a hard gate before compiling, and its failure is reported as `invalid loops` |
 
 ### Old-format migration — `src/migrate.rs`
 

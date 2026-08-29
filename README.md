@@ -11,7 +11,8 @@ when you have root, otherwise a self-contained gcc unpacked into `~/toolchain`
 with no root required):
 
 ```bash
-./scripts/install-toolchain.sh
+./scripts/install-toolchain.sh          # Rust + wasm target + a C linker
+./scripts/install-toolchain.sh --no-wasm  # skip the WebAssembly target
 ```
 
 If it set up the local (no-root) toolchain, load it into your shell before
@@ -54,25 +55,33 @@ SourcePresentation (JSON)
 The interactive editor runs the same Engine + Renderer pipeline live for a
 WYSIWYG preview. See `CLAUDE.md` for the full architecture and module map.
 
-## Web viewer (GitHub Pages)
+## Web tools (GitHub Pages)
 
-`web/` is a dependency-free static page that plays a **compiled** presentation
-in the browser — black-and-white terminal chrome, the deck's own colours intact.
-It is a port of the player's pure logic (frame replay, loops, auto-play
-animations, auto-advance markers), so playback matches the terminal; the one
-thing it cannot do is run `Command` objects, whose placeholder box the compiler
-has already baked into the frames.
+`web/` is a dependency-free static site — black-and-white terminal styling, no
+framework, no npm — with three tools behind a home page:
+
+- **present** — play a *compiled* deck in the browser. Arrow keys, loops,
+  auto-play animations, fullscreen: the terminal player's behaviour.
+- **compile** — turn a *source* deck into a playable one. This runs the **real
+  engine**, built to WebAssembly, so the browser and `bs compile` produce
+  byte-identical output.
+- **instructions** — the full source-format reference with a copy-all button,
+  for pasting into an LLM that will write a deck for you.
 
 ```bash
-cargo run -- compile my-talk.json web/presentation.json   # the deck it serves
-python3 -m http.server -d web 8000                        # http://localhost:8000
+./scripts/build-web.sh --serve   # engine → wasm, assemble _site/, serve :8000
+./scripts/test-web.sh            # headless end-to-end check (needs firefox)
 ```
 
-A deck can also be dropped onto the page, opened with `o`, or passed as
-`?deck=<url>`. `.github/workflows/pages.yml` publishes `web/` to GitHub Pages on
-every push to `main` that touches it; it creates the Pages site itself
-(`configure-pages` with `enablement: true`), so no Settings click is needed. See
-`web/README.md` for the keys and the Rust→JS mapping.
+`scripts/build-web.sh` writes `_site/`; CI runs the same script, so a green
+local build is what deploys. `.github/workflows/pages.yml` publishes it on every
+push to `main` that touches the engine, `web/`, `wasm/` or the format reference,
+and it creates the Pages site itself (`configure-pages` with `enablement: true`)
+so no Settings click is needed. See `web/README.md` for the details.
+
+The one runtime feature the browser cannot provide is the `Command` object,
+which runs a local binary; its placeholder box is already baked into the
+compiled frames, so decks using it still render.
 
 ## For AI coding agents
 
@@ -112,7 +121,7 @@ build/test commands, architecture, and a "where to look" map). It points on to
   `PRESENTATION_FORMAT.md` for the full format.
 - `style` is optional; `frames.end` is exclusive
 - Colors: named (`black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`,
-  `white`) or `{ "rgb": [r, g, b] }`
+  `white`) or an RGB object `{ "r": 20, "g": 20, "b": 40 }`
 
 ### ASCII-art pieces
 

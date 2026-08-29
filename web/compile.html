@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bs — compile</title>
+<meta name="description" content="Compile a bs source deck into a playable presentation, in the browser.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23000'/%3E%3Ctext x='2' y='12' font-family='monospace' font-size='11' fill='%23e0e0e0'%3Ebs%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header id="bar">
+      <a class="brand" href="./">bs</a>
+      <span class="dim">/</span>
+      <span>compile</span>
+      <span class="grow"></span>
+      <span id="engine" class="dim">loading engine…</span>
+    </header>
+
+    <main id="two-pane">
+      <section class="pane">
+        <div class="pane-head">
+          <span>source.json</span>
+          <span class="grow"></span>
+          <button id="sample" type="button">sample</button>
+          <button id="open" type="button">open</button>
+          <button id="clear" type="button">clear</button>
+        </div>
+        <textarea id="source" spellcheck="false" autocomplete="off" autocapitalize="off"
+          placeholder="Paste a bs source deck here, or press [sample].
+
+Need the format? The instructions page has the full spec,
+ready to hand to an LLM."></textarea>
+      </section>
+
+      <section class="pane">
+        <div class="pane-head">
+          <span>playable.json</span>
+          <span class="grow"></span>
+          <button id="download" type="button" disabled>download</button>
+          <button id="present" type="button" disabled>present &rarr;</button>
+        </div>
+        <pre id="output" class="metrics"></pre>
+      </section>
+    </main>
+
+    <footer id="foot">
+      <div id="status" class="dim">Paste a source deck and press <b>compile</b>.</div>
+      <div class="row">
+        <button id="compile" type="button" class="primary">compile</button>
+        <span id="stats" class="dim"></span>
+      </div>
+    </footer>
+  </div>
+
+  <input id="file" type="file" accept=".json,application/json" hidden>
+  <div id="drop"><span>drop a source deck</span></div>
+
+  <script type="module" src="compile.js"></script>
+</body>
+</html>

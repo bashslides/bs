@@ -3,11 +3,8 @@ use std::{fs, process};
 use anyhow::{bail, Context, Result};
 
 use bs::{
-    editor::Editor,
-    engine::{source::SourcePresentation, Engine},
-    player::Player,
-    renderer::Renderer,
-    types::{PlayablePresentation, TerminalContract},
+    editor::Editor, engine::source::SourcePresentation, player::Player,
+    types::PlayablePresentation,
 };
 
 fn main() {
@@ -58,21 +55,10 @@ fn compile(source_path: &str, output_path: &str) -> Result<()> {
     let source: SourcePresentation = serde_json::from_str(&source_json)
         .with_context(|| format!("Failed to parse {source_path}"))?;
 
-    // Hard gate: loop ranges must be well-formed and non-overlapping.
-    if let Err(e) = source.validate_loops() {
-        bail!("Invalid loops in {source_path}: {e}");
-    }
-
-    let scenes = Engine::compile(&source);
-    let contract = TerminalContract {
-        width: source.width,
-        height: source.height,
-    };
-    let mut presentation = Renderer::render(&scenes, contract);
-    presentation.commands = source.command_regions();
-    presentation.loops = source.loop_regions();
-    presentation.animations = source.animation_regions();
-    presentation.auto_advances = source.auto_advance_regions();
+    // The pipeline itself lives in `bs::compile` so the CLI and the browser's
+    // WebAssembly compiler run the same code (see `wasm/src/lib.rs`).
+    let presentation =
+        bs::compile::compile(&source).with_context(|| format!("Invalid deck {source_path}"))?;
 
     let output_json = serde_json::to_string_pretty(&presentation)?;
     fs::write(output_path, &output_json)

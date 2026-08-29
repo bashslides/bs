@@ -1,59 +1,73 @@
-# `web/` — the browser viewer
+# `web/` — the browser tools
 
-A dependency-free static page that renders a **compiled** presentation — the
-output of `bs compile source.json out.json` — in the browser. No build step, no
-framework: `index.html` + `style.css` + `app.js`, served as-is.
+A dependency-free static site: no framework, no bundler, no npm. Four pages,
+plain HTML/CSS/JS, plus the engine compiled to WebAssembly.
 
 ```
 web/
-  index.html        markup
-  style.css         black-and-white terminal chrome
-  app.js            frame replay + playback (a port of the player's pure logic)
-  presentation.json the deck loaded by default
-  .nojekyll         tell GitHub Pages to serve files starting with `_` as-is
+  index.html                     home — pick a tool
+  present.html      + app.js     play a compiled deck
+  compile.html      + compile.js source deck → playable deck (wasm)
+  instructions.html + instructions.js   the format reference, copy-all
+  wasm.js                        loader/glue for the compiler module
+  style.css                      shared black-and-white terminal chrome
+  presentation.json              the deck present.html loads by default
 ```
 
-## Run it locally
+## Build and run it
 
-Any static server works (the page `fetch`es the deck, so `file://` will not do):
+Never open `web/` directly — the site needs three files assembled into it (the
+`.wasm`, the format reference, the sample deck). Use the build script, which is
+the same one CI runs:
 
 ```bash
-python3 -m http.server -d web 8000    # then open http://localhost:8000
+./scripts/build-web.sh --serve          # build _site/ and serve on :8000
+./scripts/build-web.sh --serve --port=9000
+./scripts/build-web.sh                  # build only
 ```
 
-## Loading a deck
+It writes `_site/` (gitignored) containing `web/` plus:
 
-In priority order:
+| Added file | From | Why |
+|------------|------|-----|
+| `bs.wasm` | `cargo build -p bs-wasm --target wasm32-unknown-unknown --profile wasm-release` | the compile tool's engine |
+| `presentation-format.md` | `PRESENTATION_FORMAT.md` | so the instructions page can't drift from the repo's reference |
+| `demo.json` | `examples/demo.json` | the compile page's `sample` button |
 
-1. `?deck=<url>` — e.g. `index.html?deck=decks/talk.json` (same-origin, or a
-   CORS-enabled URL).
-2. `presentation.json` next to `index.html` (the default).
-3. Drag a compiled `.json` onto the page, or press <kbd>o</kbd> to pick one.
+Needs the `wasm32-unknown-unknown` target — `./scripts/install-toolchain.sh`
+installs it.
 
-To publish your own deck, compile it over the default:
+## Test it
 
 ```bash
-cargo run -- compile my-talk.json web/presentation.json
+./scripts/test-web.sh        # headless, exits non-zero on failure (needs firefox)
 ```
 
-## Keys
+This drives a real browser against the built site and checks the claim that
+justifies the WebAssembly approach: **the browser compiler and `bs compile`
+produce byte-identical output.** It also verifies the deck shape, that malformed
+input yields a message rather than a wasm trap, and that the module stays usable
+after an error. The verdict travels out of the browser as a request to a magic
+URL that lands in the static server's log, so the script has a real exit code —
+no screenshots to eyeball. `KEEP=1` preserves the browser/server logs.
 
-| Key | Action |
-|-----|--------|
-| <kbd>→</kbd> / <kbd>Space</kbd> / <kbd>Enter</kbd> | next frame (skips a whole loop or auto-play animation, like the terminal player) |
-| <kbd>←</kbd> | previous frame (same skipping) |
-| <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd> | jump ±10 frames |
-| <kbd>Home</kbd> / <kbd>End</kbd> | first / last frame |
-| <kbd>f</kbd> | fullscreen (bars hidden); <kbd>Esc</kbd> leaves |
-| <kbd>o</kbd> | open a compiled `.json` |
+## The compile tool
 
-Clicking the canvas steps too (left third back, the rest forward), and the frame
-bar is clickable.
+`wasm/src/lib.rs` is a thin `extern "C"` shim over `bs::compile::compile_json`,
+the same function the CLI calls — deliberately raw pointers over linear memory
+instead of wasm-bindgen, so the build is a plain `cargo build` with no
+`wasm-pack`, Node or npm anywhere. About 110 KB gzipped.
 
-## What it does and does not do
+Browser support is universal in practice: WebAssembly has shipped everywhere
+since 2017, and on iOS every browser is WebKit, so Safari's support covers the
+platform. The module is single-threaded, which matters — threads would need
+`SharedArrayBuffer` and COOP/COEP headers that GitHub Pages cannot set. If the
+module fails to load at all (iOS Lockdown Mode disables WebAssembly), the page
+says so and points at the CLI rather than silently doing nothing.
 
-`app.js` is a direct port of the terminal player's *pure* parts, so playback
-matches the terminal:
+## The present tool
+
+`app.js` is a port of the terminal player's *pure* parts, so playback matches:
 
 | Rust | JS |
 |------|----|
@@ -64,16 +78,28 @@ matches the terminal:
 | `Player::frame_auto_advance_delay` | `frameAutoAdvanceDelay` |
 | `Player::effective_auto_delay` | `effectiveAutoDelay` |
 
-The one runtime feature a browser cannot provide is the `Command` object: it
-runs a local binary. The compiler already bakes its placeholder box into the
-static frames, so the slide still renders correctly — the viewer names the
-command in the status bar instead of executing it.
+Being a port, it *can* drift — change the player and mirror it here.
+
+Loading a deck, in priority order: `?deck=<url>`; `?deck=session` (the hand-off
+from the compile page, via `sessionStorage`); `presentation.json` next to the
+page; or drag-drop / <kbd>o</kbd>.
+
+| Key | Action |
+|-----|--------|
+| <kbd>→</kbd> / <kbd>Space</kbd> / <kbd>Enter</kbd> | next frame (skips a whole loop or auto-play animation) |
+| <kbd>←</kbd> | previous frame (same skipping) |
+| <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd> | jump ±10 frames |
+| <kbd>Home</kbd> / <kbd>End</kbd> | first / last frame |
+| <kbd>f</kbd> | fullscreen; <kbd>Esc</kbd> leaves |
+| <kbd>o</kbd> | open a compiled `.json` |
+
+`Command` objects cannot run in a browser. The compiler bakes their placeholder
+box into the static frames, so the slide renders correctly — the viewer names
+the command in the status bar instead of executing it.
 
 ## Deployment
 
-`.github/workflows/pages.yml` uploads this directory to GitHub Pages on every
-push to `main` that touches `web/` (or the workflow file itself). It passes
-`enablement: true` to `actions/configure-pages`, which creates the Pages site
-over the API on the first run — so the deploy does not depend on
-**Settings → Pages → Build and deployment → Source: GitHub Actions** having been
-saved by hand. Setting it in the UI works too, and is equivalent.
+`.github/workflows/pages.yml` runs `scripts/build-web.sh` and uploads `_site/`
+on every push to `main` touching the engine, `web/`, `wasm/`, the format
+reference or the workflow. The wasm build runs *before* the upload, so a broken
+build fails the deploy and Pages keeps serving the previous version.

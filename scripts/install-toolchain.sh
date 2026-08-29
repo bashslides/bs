@@ -2,10 +2,14 @@
 #
 # Set up everything needed to build and test `bs`:
 #   1. Rust (rustc + cargo) via rustup, if cargo is missing.
-#   2. A C linker — Rust links with the system `cc`. Uses, in order:
+#   2. The wasm32-unknown-unknown target, used to build the browser compiler
+#      (`wasm/`). Skipped with --no-wasm, or when rustup is unavailable.
+#   3. A C linker — Rust links with the system `cc`. Uses, in order:
 #        a. an existing system `cc`               (nothing to do)
 #        b. apt `build-essential`                 (when you have root)
 #        c. a self-contained gcc under ~/toolchain (no root needed)
+#
+# The wasm target needs no C linker: rustc links wasm with its own LLD.
 #
 # For case (c) the script also writes ~/toolchain/env.sh; source it before
 # building:  source ~/toolchain/env.sh && cargo test
@@ -19,6 +23,18 @@ GCC_VER=13
 TRIPLE=x86_64-linux-gnu              # gcc multiarch triple (package/dir names)
 RUST_TARGET=x86_64-unknown-linux-gnu # Rust target triple (cargo env var)
 
+WASM_TARGET=wasm32-unknown-unknown
+WANT_WASM=1
+for arg in "$@"; do
+  case "$arg" in
+    --no-wasm) WANT_WASM=0 ;;
+    -h|--help)
+      sed -n '2,/^set -euo/p' "$0" | sed 's/^# \{0,1\}//;$d'
+      exit 0 ;;
+    *) echo "error: unknown option $arg (try --help)" >&2; exit 1 ;;
+  esac
+done
+
 have() { command -v "$1" >/dev/null 2>&1; }
 say()  { printf '==> %s\n' "$*"; }
 
@@ -31,7 +47,23 @@ fi
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 say "Rust: $(rustc --version 2>/dev/null || echo 'on PATH after restarting your shell')"
 
-# --- 2. C linker --------------------------------------------------------------
+# --- 2. wasm target -----------------------------------------------------------
+# `wasm/` builds the engine to WebAssembly so the browser compiler runs the same
+# code as `bs compile`. Pure Rust + LLD, so this needs no C toolchain.
+if [ "$WANT_WASM" = 1 ]; then
+  if have rustup; then
+    if rustup target list --installed 2>/dev/null | grep -qx "$WASM_TARGET"; then
+      say "wasm target $WASM_TARGET already installed"
+    else
+      say "Adding Rust target $WASM_TARGET"
+      rustup target add "$WASM_TARGET"
+    fi
+  else
+    say "rustup not found — skipping $WASM_TARGET (the CLI still builds; \`wasm/\` will not)"
+  fi
+fi
+
+# --- 3. C linker --------------------------------------------------------------
 if have cc; then
   say "System C linker present ($(command -v cc)) — done."
   exit 0
@@ -45,7 +77,7 @@ if have apt-get && { [ "$(id -u)" = 0 ] || have sudo; }; then
   exit 0
 fi
 
-# --- 2c. No root: unpack a local gcc -----------------------------------------
+# --- 3c. No root: unpack a local gcc -----------------------------------------
 say "No system linker and no root — unpacking a local gcc into $PREFIX"
 have apt-get || { echo "error: apt-get is required for the no-root path" >&2; exit 1; }
 have dpkg-deb || { echo "error: dpkg-deb is required for the no-root path" >&2; exit 1; }
