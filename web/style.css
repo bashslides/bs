@@ -346,7 +346,9 @@ button.primary:hover:not(:disabled) { background: #161616; }
 #framebar i.region  { background: #444; }
 #framebar i.current { background: var(--hi); }
 
-body.bare #bar, body.bare #foot { display: none; }
+/* Fullscreen is the deck and nothing else: no bars, no deck name, no status
+   note, no library panel — only the tiny x below. */
+body.bare #bar, body.bare #foot, body.bare #library { display: none; }
 body.bare #stage { padding: 0; }
 
 /* ------------------------------------------------------ present controls */
@@ -381,21 +383,27 @@ body.bare #stage { padding: 0; }
   font-variant-numeric: tabular-nums;   /* no width jitter as frames advance */
 }
 
-/* The only way out of fullscreen on a device with no keyboard. Dim enough to
-   stay out of the deck's way, solid enough to find. */
+/* The only way out of fullscreen on a device with no keyboard: a bare x in the
+   corner. Small and faint so it never competes with the slide; the padding —
+   invisible, since the button has no box — keeps it a comfortable tap target
+   without the glyph growing. */
 #exit-full {
   position: fixed;
-  top: max(10px, env(safe-area-inset-top));
-  right: max(10px, env(safe-area-inset-right));
+  top: max(2px, env(safe-area-inset-top));
+  right: max(2px, env(safe-area-inset-right));
   z-index: 5;
   display: none;
-  opacity: .5;
-  background: rgba(0, 0, 0, .6);
-  font-size: 12px;
-  min-height: 36px;
-  padding: 6px 10px;
+  opacity: .3;
+  border: 0;
+  background: none;
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 12px 14px;
 }
-#exit-full:hover, #exit-full:active { opacity: 1; }
+#exit-full:hover, #exit-full:active, #exit-full:focus-visible { opacity: 1; }
 body.bare #exit-full { display: inline-flex; align-items: center; }
 
 /* =========================================================================

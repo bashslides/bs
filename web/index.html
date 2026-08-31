@@ -128,7 +128,8 @@
     </section>
   </div>
 
-  <button id="exit-full" type="button" title="leave fullscreen (esc)">✕ full</button>
+  <!-- The only chrome fullscreen keeps: a tiny x, so nothing competes with the deck. -->
+  <button id="exit-full" type="button" title="leave fullscreen (esc)" aria-label="leave fullscreen">✕</button>
   <input id="c-file" type="file" accept=".json,application/json,text/plain" hidden>
   <input id="p-file" type="file" accept=".json,application/json" hidden>
   <div id="drop"><span>drop a deck</span></div>

@@ -165,9 +165,13 @@ span.)
 **Nothing is keyboard-only.** A phone has no keyboard, so every action also has a
 tap target: the footer carries real buttons (`←` `→` `⇤` `⇥` `full`), the top
 bar carries `library` and `open`, tapping the canvas steps (left third back, the
-rest forward), and the frame bar jumps to any frame. Fullscreen hides both bars, so it gets its own way out — a
-dim `✕ full` button pinned to the top-right corner, the only route back on a
-device with no <kbd>Esc</kbd>.
+rest forward), and the frame bar jumps to any frame.
+
+Fullscreen shows the deck and nothing else: both bars go, and with them the deck
+name, the `animating` / `loop` status note, the counter, the frame bar and the
+library panel. All that is left is a tiny, faint `✕` in the top-right corner —
+the only route back on a device with no <kbd>Esc</kbd>. It is deliberately small
+and dim, with generous padding so it stays a comfortable tap target.
 
 On iPhone, `requestFullscreen` is refused for non-video elements, so `full`
 hides the bars without entering browser fullscreen. That is the useful half, and
