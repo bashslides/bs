@@ -591,8 +591,12 @@ maths is wrong.
 **Nothing in the viewer is keyboard-only.** Every key has a tap target, because
 a phone has none: the footer holds real buttons (prev/next/first/last/open/
 fullscreen) plus a small slide counter, tapping the canvas steps, and the frame
-bar jumps. Fullscreen hides both bars, so it carries its own dim `✕ full` button
-(`#exit-full`, shown by `body.bare`) — on iPhone `requestFullscreen` is refused
+bar jumps. Fullscreen (`body.bare`) hides **everything** — both bars, and with
+them the deck name, the status note and the library panel — because any of it
+overlaying a slide is a distraction while presenting; the deck name lives only in
+the document title from there on. The single piece of chrome that survives is a
+tiny, faint `✕` pinned top-right (`#exit-full`), padded to a real tap target
+without the glyph growing — on iPhone `requestFullscreen` is refused
 for non-video elements, so `toggleFullscreen` treats the bars-hidden state and
 real browser fullscreen as separate concerns and always leaves a way back.
 
