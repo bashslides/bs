@@ -349,7 +349,10 @@ button.primary:hover:not(:disabled) { background: #161616; }
 /* Fullscreen is the deck and nothing else: no bars, no deck name, no status
    note, no library panel — only the tiny x below. */
 body.bare #bar, body.bare #foot, body.bare #library { display: none; }
-body.bare #stage { padding: 0; }
+/* A little breathing room top and bottom so the deck never touches the screen
+   edge (and the x has somewhere to sit); `layout()` reads this padding back,
+   so the canvas is fitted to what is left. */
+body.bare #stage { padding: 15px 0 5px; }
 
 /* ------------------------------------------------------ present controls */
 
