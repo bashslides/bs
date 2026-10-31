@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn object_type_registry_is_complete() {
         // Types created through editor sub-menus, not the Add-Object menu. Their
-        // absence from `OBJECT_TYPES` is intentional (see CLAUDE.md's runtime
+        // absence from `OBJECT_TYPES` is intentional (see AGENTS.md's runtime
         // exceptions); listing them here documents *why* they're excluded.
         const SUBMENU_ONLY: &[&str] = &["Animation", "AutoAdvance"];
 

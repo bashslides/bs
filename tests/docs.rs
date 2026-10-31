@@ -1,23 +1,24 @@
 //! Docs ↔ code sync checks.
 //!
-//! The markdown docs in this repo (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
-//! `TESTS.md`, `PRESENTATION_FORMAT.md`, `docs/AI_MAINTAINABILITY.md`) are
-//! load-bearing: AI agents act on what they say. These tests mechanically
-//! enforce the sync rules the docs used to state only as prose, so drift shows
-//! up as a `cargo test` failure at the edit that caused it instead of as a
-//! misled future agent. Every assertion message says exactly which doc to fix.
+//! The markdown docs in this repo (`AGENTS.md`, which `CLAUDE.md` and
+//! `GEMINI.md` import; `README.md`, `TESTS.md`, `PRESENTATION_FORMAT.md` and
+//! the bs-deck skill) are load-bearing: AI agents act on what they say. These
+//! tests mechanically enforce the sync rules the docs used to state only as
+//! prose, so drift shows up as a `cargo test` failure at the edit that caused
+//! it instead of as a misled future agent. Every assertion message says exactly which doc to fix.
 //!
 //! What is enforced:
 //! - every test function is listed in `TESTS.md`, and `TESTS.md` names no
 //!   test that does not exist;
-//! - the test totals stated in `TESTS.md` and `CLAUDE.md` match the code;
+//! - the test totals stated in `TESTS.md` and `AGENTS.md` match the code;
 //! - repo paths mentioned in the docs exist;
 //! - the object-type lists in `AGENTS.md`, `PRESENTATION_FORMAT.md`, and
-//!   `CLAUDE.md` match the `SceneObject` enum;
+//!   the bs-deck skill match the `SceneObject` enum;
 //! - every complete JSON example in the docs parses (and, for full decks,
 //!   compiles) with the current serde structs;
-//! - the copy-paste build commands are identical across the agent docs;
-//! - `CLAUDE.md`'s module map covers every core module file;
+//! - `CLAUDE.md` and `GEMINI.md` are bare `@AGENTS.md` imports, so the agent
+//!   guide has exactly one copy;
+//! - `AGENTS.md`'s module map covers every core module file;
 //! - every `§N` and `#anchor` reference in `PRESENTATION_FORMAT.md` names an
 //!   existing heading.
 
@@ -34,21 +35,19 @@ use bs::types::TerminalContract;
 
 /// All markdown docs that make claims about the code.
 const DOCS: &[&str] = &[
-    "CLAUDE.md",
     "AGENTS.md",
-    "GEMINI.md",
     "README.md",
     "TESTS.md",
     "PRESENTATION_FORMAT.md",
-    "docs/AI_MAINTAINABILITY.md",
     // The packaged Claude skill for authoring decks. It restates the source
     // format, so it rots exactly like the rest of the docs — hold it to the
     // same machine-checked standard.
     ".claude/skills/bs-deck/SKILL.md",
 ];
 
-/// The docs that must carry identical copy-paste build/test commands.
-const AGENT_DOCS_WITH_BUILD_COMMANDS: &[&str] = &["CLAUDE.md", "AGENTS.md", "GEMINI.md"];
+/// Tool-specific entry points that must only import `AGENTS.md` (Claude Code
+/// and Gemini CLI both expand an `@path` line), never carry their own copy.
+const AGENT_DOC_STUBS: &[&str] = &["CLAUDE.md", "GEMINI.md"];
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -295,13 +294,13 @@ fn documented_test_counts_match_the_code() {
          to contain:\n  {expected_tests_md:?}"
     );
 
-    let claude_md = read_repo_file("CLAUDE.md");
-    let expected_claude_md =
+    let agents_md = read_repo_file("AGENTS.md");
+    let expected_agents_md =
         format!("totals {total} tests ({integration} integration + {inline} inline");
     assert!(
-        claude_md.contains(&expected_claude_md),
-        "CLAUDE.md's test-count sentence (in the Tests section) is stale — update it to \
-         contain:\n  {expected_claude_md:?}"
+        agents_md.contains(&expected_agents_md),
+        "AGENTS.md's test-count sentence (in the Tests section) is stale — update it to \
+         contain:\n  {expected_agents_md:?}"
     );
 }
 
@@ -371,17 +370,16 @@ fn object_type_docs_match_the_scene_object_enum() {
         );
     }
 
-    let claude_md = read_repo_file("CLAUDE.md");
     let count_claim = format!("The {n} `SceneObject` types");
     assert!(
-        claude_md.contains(&count_claim),
-        "CLAUDE.md's module-map row for src/engine/objects/ is stale — update it to say \
+        agents_md.contains(&count_claim),
+        "AGENTS.md's module-map row for src/engine/objects/ is stale — update it to say \
          {count_claim:?}"
     );
     for v in &variants {
         assert!(
-            claude_md.contains(&format!("`{v}`")),
-            "CLAUDE.md never mentions the `{v}` object type — update the module map's \
+            agents_md.contains(&format!("`{v}`")),
+            "AGENTS.md never mentions the `{v}` object type — update the module map's \
              src/engine/objects/ row"
         );
     }
@@ -469,7 +467,7 @@ fn doc_json_examples_parse_and_compile() {
     }
     // Guard against this check going vacuous if the block extraction breaks:
     // PRESENTATION_FORMAT.md alone has an example per object type, and both it
-    // and CLAUDE.md carry at least one full deck.
+    // and AGENTS.md carry at least one full deck.
     assert!(
         objects_checked >= 10 && decks_checked >= 2,
         "only {objects_checked} example objects and {decks_checked} example decks were \
@@ -478,27 +476,20 @@ fn doc_json_examples_parse_and_compile() {
 }
 
 #[test]
-fn build_commands_are_identical_across_agent_docs() {
-    let lines = [
-        r#"source "$HOME/.cargo/env""#,
-        r#"export PATH="$HOME/toolchain/bin:$PATH""#,
-        r#"export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="$HOME/toolchain/bin/cc""#,
-    ];
-    for doc in AGENT_DOCS_WITH_BUILD_COMMANDS {
-        let text = read_repo_file(doc);
-        for line in lines {
-            assert!(
-                text.contains(line),
-                "{doc} is missing the build-setup line {line:?} — the copy-paste build \
-                 commands must stay identical across {AGENT_DOCS_WITH_BUILD_COMMANDS:?}"
-            );
-        }
+fn agent_doc_stubs_only_import_agents_md() {
+    for doc in AGENT_DOC_STUBS {
+        assert_eq!(
+            read_repo_file(doc).trim(),
+            "@AGENTS.md",
+            "{doc} must stay a bare `@AGENTS.md` import — move its extra content into \
+             AGENTS.md, the single agent guide, so the two cannot drift apart"
+        );
     }
 }
 
 #[test]
-fn claude_md_module_map_covers_every_core_module() {
-    let claude_md = read_repo_file("CLAUDE.md");
+fn agents_md_module_map_covers_every_core_module() {
+    let agents_md = read_repo_file("AGENTS.md");
     let root = repo_root();
     let mut missing = Vec::new();
     for dir in ["src", "src/editor", "src/engine", "src/renderer", "src/player"] {
@@ -508,7 +499,7 @@ fn claude_md_module_map_covers_every_core_module() {
                 continue;
             }
             let rel = path.strip_prefix(&root).unwrap().to_string_lossy().into_owned();
-            if !claude_md.contains(&rel) {
+            if !agents_md.contains(&rel) {
                 missing.push(rel);
             }
         }
@@ -519,7 +510,7 @@ fn claude_md_module_map_covers_every_core_module() {
     missing.sort();
     assert!(
         missing.is_empty(),
-        "these modules are absent from CLAUDE.md (add a Module Map row or mention the \
+        "these modules are absent from AGENTS.md (add a Module Map row or mention the \
          path where the module is described):\n  {}",
         missing.join("\n  ")
     );

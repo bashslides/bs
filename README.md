@@ -61,7 +61,7 @@ compile's limits); anything that plays or exports a deck goes through
 `bs::compile::compile`.
 
 The interactive editor runs the same Engine + Renderer pipeline live for a
-WYSIWYG preview. See `CLAUDE.md` for the full architecture and module map.
+WYSIWYG preview. See `AGENTS.md` for the full architecture and module map.
 
 ## Web tools (GitHub Pages)
 
@@ -80,8 +80,8 @@ three views —
 
 It is a **PWA**: installable from the browser, and fully usable offline —
 including compiling, since the engine is cached as WebAssembly. Compiled and
-imported decks are kept in a local library (`localStorage`) you can reopen and
-delete from the present view.
+imported decks are kept, compressed, in a local library (IndexedDB) you can
+reopen and delete from the present view.
 
 ```bash
 ./scripts/build-web.sh --serve   # engine → wasm, assemble _site/, serve :8000
@@ -112,11 +112,11 @@ Two ways, both kept in sync with the engine by `tests/docs.rs`:
 
 ## For AI coding agents
 
-Start with `AGENTS.md` — the vendor-neutral quickstart (hard rules, exact
-build/test commands, architecture, and a "where to look" map). It points on to
-`docs/AI_MAINTAINABILITY.md` (compact architecture + invariants), `CLAUDE.md`
-(the full reference), and `PRESENTATION_FORMAT.md` (source-format spec). Gemini
-/ Vertex agents are routed to the same content via `GEMINI.md`.
+`AGENTS.md` is the single guide for every agent: hard rules, exact build/test
+commands, invariants, change playbooks, and the full module-by-module
+reference. `CLAUDE.md` and `GEMINI.md` are one-line `@AGENTS.md` imports so
+Claude Code and Gemini CLI load the same text. The source-format spec is
+`PRESENTATION_FORMAT.md`.
 
 ## Source format
 

@@ -260,20 +260,20 @@ reconstructed character grid (some also assert on cell styles).
 
 ### Docs ↔ code sync — `tests/docs.rs`
 
-The markdown docs (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `TESTS.md`,
-`PRESENTATION_FORMAT.md`, `docs/AI_MAINTAINABILITY.md`) are load-bearing for AI
-agents; these tests turn their sync rules into build failures.
+The markdown docs (`AGENTS.md`, which `CLAUDE.md` and `GEMINI.md` import;
+`README.md`, `TESTS.md`, `PRESENTATION_FORMAT.md`, the bs-deck skill) are
+load-bearing for AI agents; these tests turn their sync rules into build failures.
 
 | Test | Verifies |
 |------|----------|
 | `every_test_function_is_listed_in_tests_md` | Every test function in `tests/` and `src/` has a row in this file |
 | `tests_md_names_no_test_that_does_not_exist` | This file names no phantom test (rows survive renames/deletes) |
-| `documented_test_counts_match_the_code` | The totals at the top of this file and CLAUDE.md's count sentence match the code |
+| `documented_test_counts_match_the_code` | The totals at the top of this file and AGENTS.md's count sentence match the code |
 | `doc_referenced_repo_paths_exist` | Every backticked `src/…`/`tests/…`/`docs/…`/`examples/…`/`scripts/…` path in the docs exists |
-| `object_type_docs_match_the_scene_object_enum` | The object-type lists/counts in AGENTS.md, PRESENTATION_FORMAT.md's catalog, CLAUDE.md, and the bs-deck skill (§3 catalog row, a section per tag, §14 self-check tag list) match the `SceneObject` enum (serde snake_case tags) |
+| `object_type_docs_match_the_scene_object_enum` | The object-type lists/counts in AGENTS.md (conventions list and module map), PRESENTATION_FORMAT.md's catalog, and the bs-deck skill (§3 catalog row, a section per tag, §14 self-check tag list) match the `SceneObject` enum (serde snake_case tags) |
 | `doc_json_examples_parse_and_compile` | Every complete JSON example in the docs parses with the current serde structs; full decks also validate, compile, and render |
-| `build_commands_are_identical_across_agent_docs` | The copy-paste build-setup lines are present verbatim in CLAUDE.md, AGENTS.md, and GEMINI.md |
-| `claude_md_module_map_covers_every_core_module` | Every `.rs` file in `src/`, `src/editor/`, `src/engine/`, `src/renderer/`, `src/player/` is mentioned in CLAUDE.md (per-object files under `src/engine/objects/` are exempt) |
+| `agent_doc_stubs_only_import_agents_md` | CLAUDE.md and GEMINI.md are bare `@AGENTS.md` imports, so the agent guide exists in exactly one copy |
+| `agents_md_module_map_covers_every_core_module` | Every `.rs` file in `src/`, `src/editor/`, `src/engine/`, `src/renderer/`, `src/player/` is mentioned in AGENTS.md (per-object files under `src/engine/objects/` are exempt) |
 | `presentation_format_section_references_resolve` | Every `§N` and `#anchor` reference in `PRESENTATION_FORMAT.md` names an existing heading |
 
 ## Inline unit tests (`src/`)

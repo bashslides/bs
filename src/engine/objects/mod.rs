@@ -31,8 +31,8 @@
 //!    types that edit through the `Editable` trait need nothing here.
 //! 8. **Docs + tests** — add the type to `PRESENTATION_FORMAT.md` (the §4
 //!    catalog row, its own field-table section, and the §10 tag list), the
-//!    object-type list in `AGENTS.md`, the `src/engine/objects/` row of
-//!    `CLAUDE.md`'s module map, the packaged skill
+//!    object-type list in `AGENTS.md` and the `src/engine/objects/` row of
+//!    its module map, the packaged skill
 //!    `.claude/skills/bs-deck/SKILL.md` (the §3 catalog row, a field-table
 //!    section headed by the tag, and the §14 self-check tag list), and
 //!    `README.md`'s catalog if the user-facing list changes; write a
