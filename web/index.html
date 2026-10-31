@@ -28,7 +28,7 @@
       <!-- Only meaningful while presenting, so shown with that view. -->
       <div id="bar-actions">
         <button id="btn-library" type="button" aria-label="saved decks"><span class="lbl">library</span><span class="ico">lib</span></button>
-        <button id="btn-open" type="button" aria-label="open a compiled deck"><span class="lbl">open</span><span class="ico">open</span></button>
+        <button id="btn-open" type="button" aria-label="open a deck (source or compiled)"><span class="lbl">open</span><span class="ico">open</span></button>
       </div>
     </header>
 
@@ -115,7 +115,8 @@
         <div id="framebar" aria-hidden="true"></div>
         <!-- Every control is a real button: a phone has no keyboard, so anything
              that is only a key hint would be unreachable. The single steps sit
-             at the right edge, under a right thumb; first/last on the left. -->
+             at the right edge on a desktop; on a phone style.css moves them
+             next to `full`, under the thumb. -->
         <div id="controls">
           <button id="btn-first" type="button" title="first frame (home)" aria-label="first frame">⇤</button>
           <button id="btn-last"  type="button" title="last frame (end)" aria-label="last frame">⇥</button>

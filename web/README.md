@@ -123,8 +123,10 @@ that a playable missing a field the viewer relies on (a cell, a delay) is
 rejected with a message instead of being saved to the library, that the library
 is stored compressed, adopts an old `localStorage` library and keeps a deck far
 past the old 1.5M-character budget, that an animation is one frame-bar tick and
-`←` inside one lands on the slide before it, and that the footer keeps `←` `→`
-at the right edge, 48px tall, on one row at a 320px phone width. The verdict travels out of the browser as a request to a magic
+`←` inside one lands on the slide before it, that **open** compiles a source
+deck on the fly and presents it, and that the footer keeps `←` `→` at the right
+edge on a desktop and right after `full` on a phone, 48px tall, on one row at a
+320px phone width. The verdict travels out of the browser as a request to a magic
 URL that lands in the static server's log, so the script has a real exit code —
 no screenshots to eyeball. `KEEP=1` preserves the browser/server logs.
 
@@ -184,7 +186,8 @@ or rows.
 Being a port, it *can* drift — change the player and mirror it here.
 
 A deck reaches the present view from the compile view's **present →**, from the
-**library**, from **open** (a compiled `.json` on the device), or by dropping a
+**library**, from **open** (a `.json` on the device — a source deck is compiled
+on the way), or by dropping a
 file anywhere in the app — a compiled deck plays, a source deck is routed to
 compile instead.
 
@@ -198,7 +201,7 @@ round-trip, no navigation — and saves a copy to the library on the way past.
 | <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd> | jump ±10 frames |
 | <kbd>Home</kbd> / <kbd>End</kbd> | first / last frame |
 | <kbd>f</kbd> | fullscreen; <kbd>Esc</kbd> leaves |
-| <kbd>o</kbd> | open a compiled `.json` |
+| <kbd>o</kbd> | open a deck — a compiled `.json` plays; a source deck is compiled on the fly and then plays (if it does not compile, the compile view shows the error) |
 
 `→` on an auto-play animation lands on the animation's **own last frame** — its
 finished state — rather than stepping past it; pressing it again continues. (The
@@ -211,8 +214,9 @@ the slide right before it (`motionRuns`/`runAt`); the terminal player does that
 only for auto-play animations and steps back one frame elsewhere.
 
 **Nothing is keyboard-only.** A phone has no keyboard, so every action also has a
-tap target: the footer carries real buttons — `⇤` `⇥` `full` at the left, the
-single steps `←` `→` at the right edge, under a right thumb — the top
+tap target: the footer carries real buttons — `⇤` `⇥` `full` at the left, and
+the single steps `←` `→` at the right edge on a desktop but right after `full`
+on a phone or touch screen, where that is under the thumb — the top
 bar carries `library` and `open`, tapping the canvas steps (left third back, the
 rest forward), and the frame bar jumps to any frame.
 
@@ -237,7 +241,8 @@ point each tick stands for a contiguous run of steps instead, so the bar always
 fits exactly and a 2000-frame deck renders at the same scale as a 15-frame one.
 Clicking still seeks; loops and animations are still marked.
 
-A small slide number (`12/15`) sits just left of `←` `→`. It disappears in
+A small slide number (`12/15`) sits just left of `←` `→` (at the end of the
+row on a phone). It disappears in
 fullscreen along with the rest of the chrome, which is the point — nothing but
 the deck.
 

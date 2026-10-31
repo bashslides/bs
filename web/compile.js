@@ -162,21 +162,28 @@ export async function readUtf8(file) {
   return text;
 }
 
-/** Opening a file compiles it straight away; only a failure needs the editor. */
-async function openFile(file) {
+/**
+ * Opening a file compiles it straight away; only a failure needs the editor.
+ * With `present`, a successful compile goes straight on to the present view
+ * (the present view's **open** of a source deck). Resolves to whether it
+ * compiled.
+ */
+async function openFile(file, { present = false } = {}) {
   let text;
-  try { text = await readUtf8(file); } catch (err) { say(err.message, 'bad'); return; }
+  try { text = await readUtf8(file); } catch (err) { say(err.message, 'bad'); return false; }
 
   const name = file.name.replace(/\.json$/i, '');
   say(`compiling ${file.name}…`);
   const ok = await run(name, text);
   if (ok) {
     el.source.value = '';           // nothing worth showing
+    if (present) onPresent(compiled.json, compiled.name);
   } else {
     el.source.value = text;         // show it so the error can be fixed
     named = { name, text: el.source.value };  // as the textarea normalised it
     el.source.focus();
   }
+  return ok;
 }
 
 /** Commands in a compiled deck. A command whose box is animated compiles to

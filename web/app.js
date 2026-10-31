@@ -121,11 +121,11 @@ function setLibraryOpen(open) {
 
 // ------------------------------------------------------------- opening a deck
 
-/** Load a compiled deck from text, remember it, and switch to present. */
+/** Show a deck the compile view just compiled (and already saved to the
+ *  library) in the present view. */
 function present(json, name) {
   try {
     viewer.load(JSON.parse(json), name);
-    store.save(name, json, 'compiled');
     show('present');
     setLibraryOpen(false);
   } catch (err) {
@@ -134,23 +134,36 @@ function present(json, name) {
   }
 }
 
-/** A compiled deck picked from disk in the present view. */
+/**
+ * A deck picked from disk in the present view. A compiled deck plays; anything
+ * else is taken for a source deck and compiled on the fly, then presented —
+ * or, if it does not compile, shown in the compile view with the error.
+ */
 async function importDeck(file) {
   let text;
   try { text = await compileView.readUtf8(file); } catch (err) { viewer.message([`  ${viewer.esc(err.message)}`]); return; }
   const name = file.name.replace(/\.json$/i, '');
+  let data = null;
+  try { data = JSON.parse(text); } catch { /* not JSON: the compiler reports it */ }
+  // A playable deck has a `contract`; a source deck has `frame_count`.
+  if (!data?.contract) {
+    setLibraryOpen(false);
+    viewer.message([`  compiling ${viewer.esc(file.name)}…`]);
+    if (!(await compileApi.openFile(file, { present: true }))) {
+      emptyState();
+      show('compile');
+    }
+    return;
+  }
   try {
-    const data = JSON.parse(text);
     viewer.load(data, name);
     store.save(name, text, 'imported');
     setLibraryOpen(false);
   } catch (err) {
     viewer.message([
-      `  ${viewer.esc(file.name)} is not a compiled presentation`,
+      `  ${viewer.esc(file.name)} could not be opened`,
       '',
       `  ${viewer.esc(err.message)}`,
-      '',
-      '  Source decks go through <b>compile</b> first.',
     ]);
   }
 }
@@ -162,7 +175,7 @@ function emptyState() {
     '  no deck loaded',
     '',
     '  <b>library</b> — open one you saved',
-    '  <b>open</b> — a compiled .json from this device',
+    '  <b>open</b> — a deck from this device (source or compiled)',
     '  <b>compile</b> — turn a source deck into one',
   ]);
 }

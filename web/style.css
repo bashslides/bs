@@ -386,9 +386,10 @@ body.bare #stage { padding: 15px 0 5px; }
   text-overflow: ellipsis;
 }
 
-/* The slide number: small, dim, just left of the step buttons — and gone in
-   fullscreen, since the whole footer is hidden there. `margin-left: auto`
-   keeps ←/→ at the right edge even when the note is hidden (narrow screens). */
+/* The slide number: small, dim, just left of the step buttons on a desktop
+   (at the end of the row on a phone) — and gone in fullscreen, since the
+   whole footer is hidden there. `margin-left: auto` pushes what follows it to
+   the right edge even when the note is hidden (narrow screens). */
 #counter {
   margin-left: auto;
   padding: 0 4px 0 8px;
@@ -397,7 +398,9 @@ body.bare #stage { padding: 15px 0 5px; }
 }
 
 /* Phones (and any touch screen): the footer controls 20% larger than on the
-   desktop — 48px instead of 40px — so they are easy to hit with a thumb. */
+   desktop — 48px instead of 40px — so they are easy to hit with a thumb, and
+   ←/→ right after `full` rather than at the far edge: the note and the
+   counter move to the end of the row instead. */
 @media (max-width: 560px), (pointer: coarse) {
   #controls button {
     font-size: 17px;
@@ -405,6 +408,8 @@ body.bare #stage { padding: 15px 0 5px; }
     min-width: 48px;
     min-height: 48px;
   }
+  #note { order: 1; }
+  #counter { order: 2; }
 }
 /* Measured at 320 CSS px: the five 48px buttons and a counter up to "120/120"
    fit on one row only with tighter spacing and "full" shown as a glyph. */

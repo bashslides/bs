@@ -782,8 +782,9 @@ maths is wrong.
 
 **Nothing in the viewer is keyboard-only.** Every key has a tap target, because
 a phone has none: the footer holds real buttons — first/last/fullscreen at the
-left, prev/next at the right edge under a right thumb, all 48px (20% over the
-desktop 40px) on phones and touch screens — plus a small slide counter, tapping
+left, prev/next at the right edge on a desktop and right after fullscreen on
+phones and touch screens (CSS `order` moves the note and counter to the end),
+all 48px there (20% over the desktop 40px) — plus a small slide counter, tapping
 the canvas steps, and the frame
 bar jumps. Fullscreen (`body.bare`) hides **everything** — both bars, and with
 them the deck name, the status note and the library panel — because any of it

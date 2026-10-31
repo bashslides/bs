@@ -18,8 +18,10 @@
 # adopts an old localStorage library and stays within its budget, that a deck
 # larger than the stage (or under a long status note) is scaled to fit rather
 # than clipped, that opened files are read as strict UTF-8, that an animation
-# is one frame-bar tick and ← inside one lands on the slide before it, and that
-# the footer controls keep ←/→ at the right and fit one row on a 320px phone.
+# is one frame-bar tick and ← inside one lands on the slide before it, that
+# the present view's open compiles a source deck on the fly and presents it,
+# and that the footer keeps ←/→ at the right on a desktop, right after `full`
+# on a 320px phone, and fits one row there.
 #
 # How the result gets out of the browser: the test page reports its verdict by
 # fetching a magic URL, which lands in the static server's request log. No
@@ -367,17 +369,25 @@ const report = (ok, detail) =>
     if (at() !== 5) throw new Error(`← while the run plays went to ${at()} (after 400 ms), not slide 5`);
     log('an animation or a quick auto-advance run is one tick; ← inside it goes to the slide before');
 
-    // (n) The footer: ←/→ at the right edge, first/last at the left, and at a
-    // 320px phone width every control on one row at 48px (20% over 40px).
+    // (n) The footer: on a desktop ←/→ at the right edge; at a 320px phone
+    // width right after `full` (the counter at the end), every control on one
+    // row at 48px (20% over 40px).
+    const order = ['btn-first', 'btn-last', 'btn-full', 'btn-prev', 'btn-next'];
+    const footRight = () => q('#foot').getBoundingClientRect().right;
+    const right = (n) => q(`#${n}`).getBoundingClientRect().right;
+    if (footRight() - right('btn-next') > 14) throw new Error('on a desktop → is not at the right edge');
     ifr.style.width = '320px';
     await new Promise((r) => setTimeout(r, 100));
-    const order = [...q('#controls').querySelectorAll('button')].map((b) => b.id);
-    if (order.join() !== 'btn-first,btn-last,btn-full,btn-prev,btn-next') throw new Error(`control order is ${order}`);
     const rects = order.map((n) => q(`#${n}`).getBoundingClientRect());
     if (rects.some((r) => Math.round(r.height) < 48)) throw new Error(`phone buttons are not 48px tall: ${rects.map((r) => r.height)}`);
     if (new Set(rects.map((r) => Math.round(r.top))).size !== 1) throw new Error(`the footer controls wrap onto two rows at 320px: ${JSON.stringify(rects.map((r) => [Math.round(r.left), Math.round(r.top), Math.round(r.width)]))} counter ${q('#counter').getBoundingClientRect().width} foot ${q('#foot').getBoundingClientRect().width}`);
-    const footRight = q('#foot').getBoundingClientRect().right;
-    if (rects[4].right > footRight || footRight - rects[4].right > 12) throw new Error('→ is not at the right edge');
+    for (let i = 1; i < rects.length; i++) {
+      if (rects[i].left < rects[i - 1].right || rects[i].left - rects[i - 1].right > 4) {
+        throw new Error(`on a phone ${order[i]} does not follow ${order[i - 1]}: ${JSON.stringify(rects.map((r) => Math.round(r.left)))}`);
+      }
+    }
+    const counterBox = q('#counter').getBoundingClientRect();
+    if (counterBox.left < rects[4].right || footRight() - counterBox.right > 12) throw new Error('on a phone the counter is not at the end of the row');
     if (doc.documentElement.scrollWidth > 320) throw new Error(`the page scrolls sideways at 320px (${doc.documentElement.scrollWidth})`);
     // A three-digit counter still fits the row.
     const long3 = { contract: { width: 4, height: 1 }, frames: [{ type: 'full', cells: [[{ ch: 'x' }]] },
@@ -387,7 +397,29 @@ const report = (ok, detail) =>
     if (q('#counter').textContent !== '120/120') throw new Error(`End shows ${q('#counter').textContent}`);
     const tops = order.map((n) => Math.round(q(`#${n}`).getBoundingClientRect().top));
     if (new Set(tops).size !== 1) throw new Error(`a three-digit counter wraps the footer at 320px: ${JSON.stringify(order.map((n) => q(`#${n}`).getBoundingClientRect().width))} counter ${q('#counter').getBoundingClientRect().width}`);
-    log('footer: steps at the right, first/last at the left, one row at 320px');
+    log('footer: steps at the right on a desktop, after full on a phone, one row at 320px');
+
+    // (o) open in the present view takes a source deck: it compiles on the fly
+    // and plays; one that does not compile lands in the compile view with
+    // the compiler's message.
+    ifr.style.width = '900px';
+    const openDeck = async (name, text) => {
+      const t = new ifr.contentWindow.DataTransfer();
+      t.items.add(new ifr.contentWindow.File([text], name));
+      q('#p-file').files = t.files;
+      q('#p-file').dispatchEvent(new ifr.contentWindow.Event('change'));
+      await new Promise((r) => setTimeout(r, 600));
+    };
+    q('#tab-present').click();
+    await openDeck('fresh-source.json', source);
+    if (q('#view-present').hidden || q('#screen').hidden) throw new Error('opening a source deck did not present it');
+    if (q('#counter').textContent !== '01/15') throw new Error(`a source deck opened in present shows ${q('#counter').textContent}`);
+    if (!(await storeMod.summaries()).some((d) => d.name === 'fresh-source')) throw new Error('a source deck opened in present was not saved');
+    q('#tab-present').click();
+    await openDeck('broken-source.json', '{"width": 8}');
+    if (q('#view-compile').hidden) throw new Error('a source deck that does not compile did not go to the compile view');
+    if (!q('#c-status').classList.contains('bad')) throw new Error('the compile error is not shown');
+    log('open compiles a source deck and presents it; a broken one goes to compile');
 
     log('\nALL CHECKS PASSED');
     report(true, 'all checks passed');
