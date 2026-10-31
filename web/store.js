@@ -104,7 +104,8 @@ let opening = null;
 /** The open database (created, and the old localStorage library adopted, on
  *  first use). Rejects when the browser will not store anything. */
 function db() {
-  opening ??= new Promise((resolve, reject) => {
+  if (opening) return opening;
+  opening = new Promise((resolve, reject) => {
     let req;
     try { req = indexedDB.open(DB_NAME, 1); } catch (err) { reject(err); return; }
     let created = false;
@@ -134,7 +135,10 @@ function db() {
     };
     req.onerror = () => reject(req.error);
   });
-  return opening;
+  // A failed open is not cached: the next call tries again.
+  const attempt = opening;
+  attempt.catch(() => { if (opening === attempt) opening = null; });
+  return attempt;
 }
 
 /** Run `body(stores)` in one transaction; resolves to its result once committed. */
@@ -144,8 +148,12 @@ async function tx(mode, body) {
     const t = d.transaction([META, DATA], mode);
     let result;
     t.oncomplete = () => resolve(result);
-    t.onerror = () => reject(t.error);
-    t.onabort = () => reject(t.error || new Error('transaction aborted'));
+    // A failed request (e.g. a put over quota) fires `error` before the
+    // transaction aborts, while `t.error` is still null; remember the
+    // request's own error and reject once the abort has happened.
+    let failure = null;
+    t.onerror = (e) => { failure ??= e.target?.error ?? null; };
+    t.onabort = () => reject(t.error || failure || new Error('transaction aborted'));
     try {
       result = body({ meta: t.objectStore(META), data: t.objectStore(DATA) }, (v) => { result = v; });
     } catch (err) {
