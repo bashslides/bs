@@ -347,3 +347,40 @@ fn col_pixel_range_is_content_only_without_borders() {
     assert_eq!(t.col_pixel_range(0, &AnimSpans::default(), 0), Some((0, 5)));
     assert_eq!(t.col_pixel_range(0, &AnimSpans::default(), 1), Some((5, 10)));
 }
+
+#[test]
+fn huge_row_count_renders_only_the_visible_rows() {
+    // `rows: 1e9` used to allocate per-row vectors for every row.
+    let p = render_json(
+        r#"{
+            "width": 8, "height": 4, "frame_count": 1,
+            "objects": [
+                { "type": "table",
+                  "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+                  "width": 6, "col_widths": [1.0], "rows": 1000000000,
+                  "cells": [[{ "content": "Hi" }]],
+                  "frames": { "start": 0, "end": 1 } }
+            ]
+        }"#,
+    );
+    let lines = frame_lines(&p, 0);
+    assert_eq!(lines[0].chars().next(), Some('┌'));
+    assert!(lines[1].starts_with("│Hi"), "row 1 = {:?}", lines[1]);
+    assert_eq!(lines[2].chars().next(), Some('├'), "a separator, not the bottom border");
+}
+
+#[test]
+fn cell_cursor_at_the_maximum_z_order_does_not_overflow() {
+    // The editor's cell-cursor overlay drew at `z_order + 100`, overflowing
+    // (a debug panic) for a table near i32::MAX.
+    let t = table_from_json(
+        r#"{ "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+             "width": 13, "col_widths": [0.5, 0.5], "rows": 1, "z_order": 2147483647,
+             "frames": { "start": 0, "end": 1 } }"#,
+    );
+    let anims = AnimSpans::default();
+    let ctx = bs::engine::objects::ResolveCtx { frame: 0, canvas_width: 20, canvas_height: 5, anims: &anims };
+    let mut ops = Vec::new();
+    t.resolve_with_editor_overlay(&ctx, None, &[], Some((0, 0)), false, None, &mut ops);
+    assert!(ops.iter().all(|op| op.z_order == i32::MAX));
+}

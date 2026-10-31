@@ -325,6 +325,8 @@ button.primary:hover:not(:disabled) { background: #161616; }
   user-select: none;
   touch-action: manipulation;   /* no 300ms tap delay when stepping slides */
 }
+/* `display` above beats the UA [hidden] rule; message() hides the canvas. */
+#screen[hidden] { display: none; }
 
 #msg { color: var(--dim); cursor: default; }
 #msg b { color: var(--hi); font-weight: 700; }
@@ -371,15 +373,21 @@ body.bare #stage { padding: 15px 0 5px; }
   text-align: center;
 }
 
-/* The slide number: small, dim, pinned right — and gone in fullscreen, since
-   the whole footer is hidden there. */
+/* One line whatever it says: a wrapping note would grow the footer and shrink
+   the stage under a canvas fitted to the taller one. */
 #note {
+  flex: 1 1 0;
   margin-left: auto;
   min-width: 0;
   font-size: 12px;
   text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
+/* The slide number: small, dim, pinned right — and gone in fullscreen, since
+   the whole footer is hidden there. */
 #counter {
   padding-left: 8px;
   font-size: 12px;

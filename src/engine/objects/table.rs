@@ -5,6 +5,13 @@ use crate::types::{Color, DrawOp, NamedColor, Style};
 use super::super::source::{AnimSpans, Coordinate, FrameRange, Position, deserialize_coord_compat};
 use super::{Resolve, ResolveCtx};
 
+/// Rows past this many can never be visible (each row is at least one cell
+/// tall, so row `u16::MAX` already starts beyond any canvas), so layout and
+/// rendering only consider this many — a huge `rows` stays cheap. Exact: such a
+/// table's natural height already exceeds any explicit `height`, so no row
+/// padding is redistributed by the cap.
+pub const MAX_ROWS: usize = u16::MAX as usize;
+
 // ---------------------------------------------------------------------------
 // Word-wrap helpers
 // ---------------------------------------------------------------------------
@@ -61,22 +68,38 @@ fn caret_block_style(st: &Style) -> Style {
 }
 
 /// Position (wrapped line, column) for a caret that has no glyph to invert —
-/// an empty cell, a caret on a newline, or the trailing append slot. Falls to
-/// just past the last character of the last wrapped row (or column 0 of a
-/// trailing empty row, i.e. a freshly opened line).
-fn caret_blank_pos(grid: &[Vec<Option<usize>>], _caret: usize, _len: usize) -> (usize, usize) {
-    if grid.is_empty() {
-        return (0, 0);
+/// an empty cell, a caret on a newline (the end of its line), the trailing
+/// append slot, or a space the wrap dropped. The caret marks the gap *before*
+/// its char (insert-before), so it sits just past the previous drawn char of
+/// its own logical line, or at column 0 of an empty line.
+fn caret_blank_pos(content: &str, w: usize, caret: usize) -> (usize, usize) {
+    let mut row0 = 0;
+    let mut base = 0;
+    for line in content.split('\n') {
+        let rows = if w == 0 { vec![Vec::new()] } else { super::wrap::wrap_line_indexed(base, line, w, 0) };
+        let end = base + line.chars().count();
+        if caret <= end && !rows.is_empty() {
+            // Just past the last drawn char before the caret on this line.
+            let mut at = (rows.len() - 1, None);
+            for (r, row) in rows.iter().enumerate() {
+                for (x, src) in row.iter().enumerate() {
+                    if src.is_some_and(|i| i < caret) {
+                        at = (r, Some(x));
+                    }
+                }
+            }
+            let (r, x) = at;
+            let len = rows[r].len();
+            let col = match x {
+                Some(x) if len > 0 => (x + 1).min(len - 1),
+                _ => 0,
+            };
+            return (row0 + r, col);
+        }
+        row0 += rows.len();
+        base = end + 1;
     }
-    let last = grid.len() - 1;
-    let row = &grid[last];
-    let filled = row.iter().filter(|c| c.is_some()).count();
-    let col = if row.is_empty() {
-        0
-    } else {
-        filled.min(row.len() - 1)
-    };
-    (last, col)
+    (0, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -134,8 +157,11 @@ impl Table {
         self.col_widths.len()
     }
 
-    /// Resize `cells` so it has exactly `rows` rows and `col_count()` columns.
+    /// Resize `cells` so it has exactly `rows` rows and `col_count()` columns
+    /// (clamping `rows` to [`MAX_ROWS`] first, so this never materialises an
+    /// absurd row count).
     pub fn normalize_cells(&mut self) {
+        self.rows = self.rows.min(MAX_ROWS);
         let ncols = self.col_widths.len();
         self.cells.resize_with(self.rows, Vec::new);
         for row in &mut self.cells {
@@ -197,16 +223,14 @@ impl Table {
     pub fn col_pixel_range(&self, frame: usize, anims: &AnimSpans, col_idx: usize) -> Option<(u16, u16)> {
         let total_w = self.width.evaluate(frame, anims) as usize;
         let (cws, starts) = self.layout(total_w);
-        let base_x = self.position.x.evaluate(frame, anims);
+        let base_x = usize::from(self.position.x.evaluate(frame, anims));
         let cw = *cws.get(col_idx)?;
-        let start = *starts.get(col_idx)?;
+        let start = base_x + *starts.get(col_idx)?;
         if self.borders {
             // `start` >= 1 with borders, so the left bar at `start - 1` is in range.
-            let left = base_x + start as u16 - 1;
-            let right_excl = base_x + start as u16 + cw as u16 + 1;
-            Some((left, right_excl))
+            Some((sat_u16(start - 1), sat_u16(start + cw + 1)))
         } else {
-            Some((base_x + start as u16, base_x + start as u16 + cw as u16))
+            Some((sat_u16(start), sat_u16(start + cw)))
         }
     }
 
@@ -216,14 +240,14 @@ impl Table {
         let total_w = self.width.evaluate(frame, anims) as usize;
         let (cws, _) = self.layout(total_w);
         let heights = self.row_heights(frame, anims, &cws);
-        let base_y = self.position.y.evaluate(frame, anims);
-        let mut y = if self.borders { base_y + 1 } else { base_y };
-        for r in 0..self.rows {
+        let base_y = usize::from(self.position.y.evaluate(frame, anims));
+        let mut y = base_y + usize::from(self.borders);
+        for r in 0..heights.len() {
             let rh = heights[r];
             if r == row_idx {
-                return Some((y, y + rh as u16));
+                return Some((sat_u16(y), sat_u16(y + rh)));
             }
-            y += rh as u16;
+            y += rh;
             if self.borders {
                 y += 1; // separator row
             }
@@ -259,13 +283,13 @@ impl Table {
     pub fn natural_height(&self, frame: usize, anims: &AnimSpans) -> u16 {
         let total_width = self.width.evaluate(frame, anims) as usize;
         let (cws, _) = self.layout(total_width);
-        let nrows = self.rows;
+        let nrows = self.rows.min(MAX_ROWS);
         if nrows == 0 {
             return 0;
         }
         let content: usize = (0..nrows).map(|r| self.row_height(r, &cws)).sum();
         let border_rows = if self.borders { 1 + nrows } else { 0 };
-        (content + border_rows) as u16
+        sat_u16(content + border_rows)
     }
 
     /// Per-row content heights for `frame`.
@@ -276,7 +300,7 @@ impl Table {
     /// the requested height. Rows whose content is taller than the budget are
     /// never clipped — an explicit height only pads, it never shrinks.
     fn row_heights(&self, frame: usize, anims: &AnimSpans, col_content_widths: &[usize]) -> Vec<usize> {
-        let nrows = self.rows;
+        let nrows = self.rows.min(MAX_ROWS);
         let mut heights = vec![1usize; nrows];
         for r in 0..nrows {
             heights[r] = self.row_height(r, col_content_widths);
@@ -310,7 +334,7 @@ impl Table {
 
 impl Resolve for Table {
     fn resolve(&self, ctx: &ResolveCtx, ops: &mut Vec<DrawOp>) {
-        self.resolve_internal(ctx.frame, ctx.anims, None, &[], false, false, None, ops);
+        self.resolve_internal(ctx, None, &[], false, false, None, ops);
     }
 }
 
@@ -324,8 +348,7 @@ impl Table {
     ///                       that character is drawn inverted (the block cursor).
     pub fn resolve_with_editor_overlay(
         &self,
-        frame: usize,
-        anims: &AnimSpans,
+        ctx: &ResolveCtx,
         highlighted_col: Option<usize>,
         selected_cells: &[(usize, usize)],
         cursor_cell: Option<(usize, usize)>,
@@ -337,8 +360,7 @@ impl Table {
         // Don't dim just because the navigation cursor is present.
         let cell_mode = !selected_cells.is_empty();
         self.resolve_internal(
-            frame,
-            anims,
+            ctx,
             highlighted_col,
             selected_cells,
             cell_mode,
@@ -349,7 +371,7 @@ impl Table {
         // Draw cursor outline on top if in cell-selection mode and not blink-hidden.
         if let Some((cr, cc)) = cursor_cell {
             if !blink_hidden {
-                self.draw_cursor_cell(frame, anims, cr, cc, ops);
+                self.draw_cursor_cell(ctx.frame, ctx.anims, cr, cc, ops);
             }
         }
     }
@@ -360,24 +382,24 @@ impl Table {
         }
         let total_w = self.width.evaluate(frame, anims) as usize;
         let (cws, starts) = self.layout(total_w);
-        let base_x = self.position.x.evaluate(frame, anims);
-        let base_y = self.position.y.evaluate(frame, anims);
+        let base_x = usize::from(self.position.x.evaluate(frame, anims));
+        let base_y = usize::from(self.position.y.evaluate(frame, anims));
         let ncols = self.col_widths.len();
 
-        if col >= cws.len() || row >= self.rows {
+        if col >= cws.len() || row >= self.rows.min(MAX_ROWS) {
             return;
         }
         let cw = cws[col];
         if cw == 0 {
             return;
         }
-        let cx = base_x + starts[col] as u16;
+        let cx = base_x + starts[col];
 
         // Walk down to find the y offset and height of this row.
         let heights = self.row_heights(frame, anims, &cws);
         let mut y = base_y + 1; // first content row (after top border)
         for r in 0..row {
-            y += heights[r] as u16 + 1; // +1 for the separator border row
+            y += heights[r] + 1; // +1 for the separator border row
         }
         let rh = heights[row];
 
@@ -387,13 +409,13 @@ impl Table {
             bold: true,
             dim: false,
         };
-        let z = self.z_order + 100;
+        let z = self.z_order.saturating_add(100);
 
         // Border positions surrounding this cell's content area.
         let top_y    = y - 1;
-        let bot_y    = y + rh as u16;
+        let bot_y    = y + rh;
         let left_x   = cx - 1; // safe: starts[col] >= 1 when borders=true
-        let right_x  = cx + cw as u16;
+        let right_x  = cx + cw;
 
         // Helper: pick the correct box-drawing corner character.
         // border_row / border_col are indices into the "corner grid" (0..=nrows, 0..=ncols).
@@ -416,7 +438,7 @@ impl Table {
             let ch = if bx == left_x  { corner(row,     col    ) }
                      else if bx == right_x { corner(row,     col + 1) }
                      else                  { '─' };
-            ops.push(DrawOp { x: bx, y: top_y, ch, style: cursor_style.clone(), z_order: z });
+            ops.extend(DrawOp::at(bx, top_y, ch, cursor_style.clone(), z));
         }
 
         // Bottom border row
@@ -424,20 +446,19 @@ impl Table {
             let ch = if bx == left_x  { corner(row + 1, col    ) }
                      else if bx == right_x { corner(row + 1, col + 1) }
                      else                  { '─' };
-            ops.push(DrawOp { x: bx, y: bot_y, ch, style: cursor_style.clone(), z_order: z });
+            ops.extend(DrawOp::at(bx, bot_y, ch, cursor_style.clone(), z));
         }
 
         // Left and right vertical bars
-        for by in y..y + rh as u16 {
-            ops.push(DrawOp { x: left_x,  y: by, ch: '│', style: cursor_style.clone(), z_order: z });
-            ops.push(DrawOp { x: right_x, y: by, ch: '│', style: cursor_style.clone(), z_order: z });
+        for by in y..y + rh {
+            ops.extend(DrawOp::at(left_x, by, '│', cursor_style.clone(), z));
+            ops.extend(DrawOp::at(right_x, by, '│', cursor_style.clone(), z));
         }
     }
 
     fn resolve_internal(
         &self,
-        frame: usize,
-        anims: &AnimSpans,
+        ctx: &ResolveCtx,
         highlighted_col: Option<usize>,
         selected_cells: &[(usize, usize)],
         cell_mode: bool,
@@ -445,14 +466,18 @@ impl Table {
         editing_caret: Option<(usize, usize, usize)>,
         ops: &mut Vec<DrawOp>,
     ) {
+        let (frame, anims) = (ctx.frame, ctx.anims);
         if !self.frames.contains(frame) {
             return;
         }
-        let base_x = self.position.x.evaluate(frame, anims);
-        let base_y = self.position.y.evaluate(frame, anims);
+        let base_x = usize::from(self.position.x.evaluate(frame, anims));
+        let base_y = usize::from(self.position.y.evaluate(frame, anims));
         let total_width = self.width.evaluate(frame, anims) as usize;
         let ncols = self.col_widths.len();
-        let nrows = self.rows;
+        let nrows = self.rows.min(MAX_ROWS);
+        // Exclusive canvas edges: work stops there (cells beyond are clipped).
+        let (vis_w, vis_h) = ctx.visible(base_x, base_y);
+        let (max_x, max_y) = (base_x + vis_w, base_y + vis_h);
 
         if total_width == 0 || ncols == 0 || nrows == 0 {
             return;
@@ -463,11 +488,11 @@ impl Table {
         // --- Per-row heights and y offsets ---
         let row_heights = self.row_heights(frame, anims, &col_widths);
 
-        let mut row_y_offsets = vec![0u16; nrows];
-        let mut cur_y = if self.borders { 1u16 } else { 0u16 };
+        let mut row_y_offsets = vec![0usize; nrows];
+        let mut cur_y = usize::from(self.borders);
         for row_idx in 0..nrows {
             row_y_offsets[row_idx] = cur_y;
-            cur_y += row_heights[row_idx] as u16;
+            cur_y += row_heights[row_idx];
             if self.borders {
                 cur_y += 1; // row-separator line
             }
@@ -548,8 +573,11 @@ impl Table {
                 let by = if border_row == 0 {
                     base_y
                 } else {
-                    base_y + row_y_offsets[border_row - 1] + row_heights[border_row - 1] as u16
+                    base_y + row_y_offsets[border_row - 1] + row_heights[border_row - 1]
                 };
+                if by >= max_y {
+                    break;
+                }
 
                 let mut bx = base_x;
                 for ci in 0..ncols {
@@ -561,16 +589,16 @@ impl Table {
                         if ci == 0 { '├' } else { '┼' }
                     };
                     let bs = border_style(Some(ci).filter(|_| ci > 0));
-                    ops.push(DrawOp { x: bx, y: by, ch: corner_ch, style: bs, z_order: z });
+                    ops.extend(DrawOp::at(bx, by, corner_ch, bs, z));
                     bx += 1;
 
                     // Horizontal dashes
                     let cw = col_widths[ci];
                     let dash_bs = border_style(Some(ci));
-                    for _ in 0..cw {
-                        ops.push(DrawOp { x: bx, y: by, ch: '─', style: dash_bs.clone(), z_order: z });
-                        bx += 1;
+                    for i in 0..cw.min(max_x.saturating_sub(bx)) {
+                        ops.extend(DrawOp::at(bx + i, by, '─', dash_bs.clone(), z));
                     }
+                    bx += cw;
                 }
                 // Rightmost corner
                 let last_corner = if border_row == 0 {
@@ -581,23 +609,23 @@ impl Table {
                     '┤'
                 };
                 let last_bs = border_style(Some(ncols - 1));
-                ops.push(DrawOp { x: bx, y: by, ch: last_corner, style: last_bs, z_order: z });
+                ops.extend(DrawOp::at(bx, by, last_corner, last_bs, z));
             }
 
             // Vertical bars for each content row
             for row_idx in 0..nrows {
                 let ry = base_y + row_y_offsets[row_idx];
-                for line in 0..row_heights[row_idx] as u16 {
+                for line in 0..row_heights[row_idx].min(max_y.saturating_sub(ry)) {
                     let ly = ry + line;
                     // Left outer border
                     let lbs = border_style(None);
-                    ops.push(DrawOp { x: base_x, y: ly, ch: '│', style: lbs, z_order: z });
+                    ops.extend(DrawOp::at(base_x, ly, '│', lbs, z));
                     // Column separators
                     for ci in 0..ncols {
-                        let bar_x = base_x + col_starts[ci] as u16 + col_widths[ci] as u16;
+                        let bar_x = base_x + col_starts[ci] + col_widths[ci];
                         // The separator belongs conceptually to the column to its left.
                         let bs = border_style(Some(ci));
-                        ops.push(DrawOp { x: bar_x, y: ly, ch: '│', style: bs, z_order: z });
+                        ops.extend(DrawOp::at(bar_x, ly, '│', bs, z));
                     }
                 }
             }
@@ -606,12 +634,15 @@ impl Table {
         // --- Cell content ---
         for row_idx in 0..nrows {
             let ry = base_y + row_y_offsets[row_idx];
+            if ry >= max_y {
+                break;
+            }
             for col_idx in 0..ncols {
                 let cw = col_widths[col_idx];
                 if cw == 0 {
                     continue;
                 }
-                let cx = base_x + col_starts[col_idx] as u16;
+                let cx = base_x + col_starts[col_idx];
                 let content = self
                     .cells
                     .get(row_idx)
@@ -633,68 +664,72 @@ impl Table {
                 });
 
                 if let Some(caret) = caret {
-                    let len = content.chars().count();
                     let chars: Vec<char> = content.chars().collect();
                     let idx_grid = wrap_cell_content_indexed(content, cw);
                     let mut drawn = false;
                     for (line_idx, row_src) in idx_grid.iter().enumerate() {
-                        let ly = ry + line_idx as u16;
+                        let ly = ry + line_idx;
                         for (xi, src) in row_src.iter().enumerate() {
                             let is_caret = *src == Some(caret);
                             let ch = src.map(|i| chars[i]).unwrap_or(' ');
                             if is_caret {
-                                ops.push(DrawOp {
-                                    x: cx + xi as u16,
-                                    y: ly,
+                                ops.extend(DrawOp::at(
+                                    cx + xi,
+                                    ly,
                                     ch,
-                                    style: caret_block_style(&st),
-                                    z_order: z,
-                                });
+                                    caret_block_style(&st),
+                                    z,
+                                ));
                                 drawn = true;
                             } else if ch != ' ' || st.bg.is_some() {
-                                ops.push(DrawOp {
-                                    x: cx + xi as u16,
-                                    y: ly,
+                                ops.extend(DrawOp::at(
+                                    cx + xi,
+                                    ly,
                                     ch,
-                                    style: st.clone(),
-                                    z_order: z,
-                                });
+                                    st.clone(),
+                                    z,
+                                ));
                             }
                         }
                     }
                     // No glyph at the caret (empty cell, a newline, or the trailing
                     // append slot): draw an inverted blank where typing continues.
                     if !drawn {
-                        let (bly, bxi) = caret_blank_pos(&idx_grid, caret, len);
-                        ops.push(DrawOp {
-                            x: cx + bxi as u16,
-                            y: ry + bly as u16,
-                            ch: ' ',
-                            style: caret_block_style(&st),
-                            z_order: z,
-                        });
+                        let (bly, bxi) = caret_blank_pos(content, cw, caret);
+                        ops.extend(DrawOp::at(
+                            cx + bxi,
+                            ry + bly,
+                            ' ',
+                            caret_block_style(&st),
+                            z,
+                        ));
                     }
                     continue;
                 }
 
                 let wrapped = wrap_cell_content(content, cw);
                 for (line_idx, row_chars) in wrapped.iter().enumerate() {
-                    let ly = ry + line_idx as u16;
+                    let ly = ry + line_idx;
                     for (xi, &ch) in row_chars.iter().enumerate() {
                         if ch != ' ' || st.bg.is_some() {
-                            ops.push(DrawOp {
-                                x: cx + xi as u16,
-                                y: ly,
+                            ops.extend(DrawOp::at(
+                                cx + xi,
+                                ly,
                                 ch,
-                                style: st.clone(),
-                                z_order: z,
-                            });
+                                st.clone(),
+                                z,
+                            ));
                         }
                     }
                 }
             }
         }
     }
+}
+
+/// `v` as a `u16`, saturating at `u16::MAX` (past the edge of any canvas).
+fn sat_u16(v: usize) -> u16 {
+    u16::try_from(v).unwrap_or(u16::MAX)
 }
 
 // ---------------------------------------------------------------------------
@@ -797,8 +832,17 @@ mod wrap_tests {
     #[test]
     fn caret_blank_pos_opens_a_new_line_after_trailing_newline() {
         let content = "abc\n";
-        let indexed = wrap_cell_content_indexed(content, 5);
         let len = content.chars().count();
-        assert_eq!(caret_blank_pos(&indexed, len, len), (1, 0));
+        assert_eq!(caret_blank_pos(content, 5, len), (1, 0));
+    }
+
+    // A caret on a mid-text newline is the end of *its* line (insert-before),
+    // and one on an empty line is that line's column 0 — not the last row.
+    #[test]
+    fn caret_blank_pos_on_a_newline_ends_its_own_line() {
+        let content = "ab\n\ncd"; // a0 b1 \n2 \n3 c4 d5
+        assert_eq!(caret_blank_pos(content, 5, 2), (0, 2)); // after "ab"
+        assert_eq!(caret_blank_pos(content, 5, 3), (1, 0)); // the empty line
+        assert_eq!(caret_blank_pos(content, 5, 6), (2, 2)); // append after "cd"
     }
 }

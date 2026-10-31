@@ -81,19 +81,27 @@ Engine+Renderer live for WYSIWYG preview):
 
 ```
 SourcePresentation (JSON)
-  → Engine::compile()   → Vec<ResolvedScene>   (DrawOps per frame)
-  → Renderer::render()  → PlayablePresentation (Frame::Full / Frame::Diff)
-  → Player::play()      → terminal output
+  → bs::compile::compile()  validate → Engine::scenes (DrawOps per frame)
+                            → Renderer::render_bounded (Frame::Full / Frame::Diff)
+                            → attach Command/Loop/Animation/AutoAdvance sidecars
+  → PlayablePresentation
+  → Player::play()          → terminal output
 ```
+
+`Engine::compile` + `Renderer::render` alone yield only the static frames — no
+play-time sidecars and no validation — which is all the tests need (the editor
+preview instead streams `Engine::scenes` through `compile::render_scenes`, under
+compile's limits); anything that plays or exports a deck goes through
+`bs::compile::compile`.
 
 Rust `edition = "2024"`. `src/lib.rs` exposes the crate; `src/main.rs` is the CLI.
 
 `src/compile.rs` holds the **one** compile path (`SourcePresentation` →
 `PlayablePresentation`). Both `bs compile` and the browser's WebAssembly
 compiler (`wasm/`) call it, so they cannot disagree. The terminal UI
-(`editor`, `player`, `menubar`) sits behind the default-on `tui` feature, which
-`--no-default-features` drops so the engine builds for `wasm32-unknown-unknown`
-(`crossterm` cannot).
+(`editor`, `player`, `menubar`, `term`) sits behind the default-on `tui`
+feature, which `--no-default-features` drops so the engine builds for
+`wasm32-unknown-unknown` (`crossterm` cannot).
 
 ## Where to look
 

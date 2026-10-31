@@ -15,10 +15,14 @@
 //! 1. Assign an `id` to every `animation` object and map its span → id.
 //! 2. Rewrite each old-style animated coordinate to `{from, to, anim: <id>}`,
 //!    looking the id up by span (synthesizing an `Animation` for any span with no
-//!    matching object — covers files predating the `Animation` sidecar).
+//!    matching object — covers files predating the `Animation` sidecar). A
+//!    synthesized animation has `auto_play: false`: the old player auto-advanced
+//!    only across `animation` objects, so the span keeps being stepped by hand.
 //!
-//! It is idempotent (already-migrated nodes are left alone) and self-verifying
-//! (the result is parsed through the real `SourcePresentation` before any write).
+//! It is idempotent (already-migrated nodes are left alone) and self-verifying:
+//! the result must parse through the real `SourcePresentation` and pass what
+//! `bs compile` checks first (`validate_contract`, `validate_loops` — a loop
+//! cutting a synthesized span in half fails here), else the file is left as is.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -51,24 +55,12 @@ impl Report {
 pub fn migrate_file(path: &str) -> Result<()> {
     let original =
         fs::read_to_string(path).with_context(|| format!("Failed to read {path}"))?;
-    let mut json: Value = serde_json::from_str(&original)
-        .with_context(|| format!("Failed to parse {path} as JSON"))?;
-
-    let report = migrate_value(&mut json)
-        .with_context(|| format!("Failed to migrate {path}"))?;
-
-    if report.unchanged() {
+    let Some((migrated, report)) =
+        migrate_text(&original).with_context(|| format!("Failed to migrate {path}"))?
+    else {
         eprintln!("{path} is already in the current format — nothing to do.");
         return Ok(());
-    }
-
-    let migrated = serde_json::to_string_pretty(&json)?;
-
-    // Self-verify: the result must parse through the real model. If it doesn't,
-    // leave the file untouched rather than write something still broken.
-    serde_json::from_str::<SourcePresentation>(&migrated).with_context(|| {
-        "migration produced JSON the engine still can't parse — left the file unchanged"
-    })?;
+    };
 
     let backup = format!("{path}.bak");
     fs::write(&backup, &original)
@@ -82,6 +74,33 @@ pub fn migrate_file(path: &str) -> Result<()> {
         report.synthesized, plural(report.synthesized),
     );
     Ok(())
+}
+
+/// Migrate the source text `original`: `None` when it is already current, else
+/// the migrated JSON and what changed. Self-verifies (see the module doc), so an
+/// error means nothing should be written.
+fn migrate_text(original: &str) -> Result<Option<(String, Report)>> {
+    let mut json: Value =
+        serde_json::from_str(original).context("Failed to parse the file as JSON")?;
+    let report = migrate_value(&mut json)?;
+    if report.unchanged() {
+        return Ok(None);
+    }
+    let migrated = serde_json::to_string_pretty(&json)?;
+
+    // Self-verify: the result must parse through the real model and pass the
+    // checks compile runs first. If it doesn't, leave the file untouched rather
+    // than write something that still won't compile.
+    let source = serde_json::from_str::<SourcePresentation>(&migrated).context(
+        "migration produced JSON the engine still can't parse — left the file unchanged",
+    )?;
+    if let Err(e) = source.validate_contract().and_then(|()| source.validate_loops()) {
+        anyhow::bail!(
+            "the migrated deck would not compile ({e}) — left the file unchanged; \
+             fix it by hand (e.g. move the loop off the animated frames) and migrate again"
+        );
+    }
+    Ok(Some((migrated, report)))
 }
 
 fn plural(n: usize) -> &'static str {
@@ -141,7 +160,8 @@ pub fn migrate_value(root: &mut Value) -> Result<Report> {
                 "type": "animation",
                 "id": id,
                 "frames": { "start": start, "end": end },
-                "auto_play": true,
+                // The old player auto-advanced only across `animation` objects.
+                "auto_play": false,
                 "delay_ms": 500,
             }));
         }
@@ -271,6 +291,29 @@ mod tests {
         assert_eq!(frame_span(anim.get("frames")), Some((1, 4)));
         let id = anim["id"].as_u64().unwrap();
         assert_eq!(objs[0]["position"]["x"]["animated"]["anim"].as_u64(), Some(id));
+        // Playback stays manual, as it was without the sidecar.
+        assert_eq!(anim["auto_play"].as_bool(), Some(false));
+    }
+
+    #[test]
+    fn a_migrated_deck_that_a_loop_would_cut_is_not_written() {
+        // An orphan span 2..6 (end_frame 5 inclusive), plus `extra` objects.
+        let deck = |extra: &str| {
+            format!(
+                r#"{{ "width": 4, "height": 4, "frame_count": 10, "objects": [
+                    {{ "type": "label", "text": "X",
+                       "position": {{ "x": {{ "fixed": 0 }},
+                         "y": {{ "animated": {{ "from": 0, "to": 3, "start_frame": 2, "end_frame": 5 }} }} }},
+                       "frames": {{ "start": 0, "end": 10 }} }}{extra}
+                ] }}"#
+            )
+        };
+        // A loop over 4..8 would cut the synthesized span in half.
+        let cut = deck(r#", { "type": "loop", "frames": { "start": 4, "end": 8 } }"#);
+        let err = format!("{:#}", migrate_text(&cut).unwrap_err());
+        assert!(err.contains("would not compile") && err.contains("left the file unchanged"), "got: {err}");
+        // Without the loop it migrates.
+        assert!(migrate_text(&deck("")).unwrap().is_some());
     }
 
     #[test]

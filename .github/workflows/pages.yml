@@ -19,6 +19,7 @@ on:
       - 'src/**'
       - 'examples/demo.json'
       - 'PRESENTATION_FORMAT.md'
+      - '.claude/skills/bs-deck/SKILL.md'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'scripts/build-web.sh'

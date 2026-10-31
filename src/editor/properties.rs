@@ -398,7 +398,7 @@ impl Editable for Command {
     fn properties(&self, _ctx: &PropContext) -> Vec<Property> {
         vec![
             Property { name: "command", value: self.command.clone(), kind: PropertyKind::Text },
-            Property { name: "args", value: self.args.join(" "), kind: PropertyKind::Text },
+            Property { name: "args", value: quote_args(&self.args), kind: PropertyKind::Text },
             Property { name: "x", value: format_coordinate(&self.position.x), kind: PropertyKind::Coordinate },
             Property { name: "y", value: format_coordinate(&self.position.y), kind: PropertyKind::Coordinate },
             Property { name: "width", value: format_coordinate(&self.width), kind: PropertyKind::Coordinate },
@@ -419,9 +419,7 @@ impl Editable for Command {
     fn set(&mut self, name: &str, value: &str) -> Result<()> {
         match name {
             "command" => self.command = value.to_string(),
-            "args" => {
-                self.args = value.split_whitespace().map(|s| s.to_string()).collect();
-            }
+            "args" => self.args = split_args(value)?,
             "x" => self.position.x = parse_coordinate(value)?,
             "y" => self.position.y = parse_coordinate(value)?,
             "width" => self.width = parse_coordinate(value)?,
@@ -1213,11 +1211,22 @@ impl Editable for Group {
             Property { name: "z_order",     value: self.z_order.to_string(), kind: PropertyKind::Number },
         ];
         if self.frames.is_some() {
-            props.push(Property {
-                name: "note",
-                value: "! explicit range overrides member frames (blank = auto)".into(),
-                kind: PropertyKind::Note,
-            });
+            // The override reaches only direct members that are neither groups
+            // nor animations (`SourcePresentation::member_overrides`).
+            let kinds: Vec<_> =
+                self.members.iter().filter_map(|&m| ctx.objects.get(m)).collect();
+            let nested = kinds.iter().any(|o| matches!(o, SceneObject::Group(_)));
+            let reaches = kinds
+                .iter()
+                .any(|o| !matches!(o, SceneObject::Group(_) | SceneObject::Animation(_)));
+            let value = match (reaches, nested) {
+                (false, _) => "! explicit range has no effect on what is drawn: no member it can gate (blank = auto)",
+                (true, true) => {
+                    "! explicit range overrides member frames, not nested groups or animations (blank = auto)"
+                }
+                (true, false) => "! explicit range overrides member frames, not animations (blank = auto)",
+            };
+            props.push(Property { name: "note", value: value.into(), kind: PropertyKind::Note });
         }
         for &member_idx in &self.members {
             props.push(Property {
@@ -1590,7 +1599,7 @@ pub fn get_properties(objects: &[SceneObject], object_index: usize) -> Vec<Prope
     for p in &mut props {
         if p.name == "first_frame" {
             if let Ok(start) = p.value.parse::<usize>() {
-                p.value = (start + 1).to_string();
+                p.value = start.saturating_add(1).to_string();
             }
         }
     }
@@ -1635,6 +1644,11 @@ fn is_bulk_editable_kind(kind: &PropertyKind) -> bool {
 }
 
 pub fn set_property(obj: &mut SceneObject, name: &str, value: &str) -> Result<()> {
+    // Typing a number over an animated coordinate would orphan its `Animation`
+    // and strand its gap copies; only the animate menu (`[x]`) may revert it.
+    if let Some(Coordinate::Animated { anim, .. }) = get_coord(obj, name) {
+        bail!("{name} is animated (anim {anim}); change it in the animate menu");
+    }
     if name == "first_frame" {
         // Translate the user's 1-based slide number back to the 0-based start.
         let one_based: usize = match value.trim().parse() {
@@ -1669,7 +1683,12 @@ pub fn format_coordinate(coord: &Coordinate) -> String {
 
 fn parse_coordinate(s: &str) -> Result<Coordinate> {
     if let Ok(v) = s.parse::<f64>() {
-        return Ok(Coordinate::Fixed(v.max(0.0)));
+        // `inf`/`1e999`/`nan` parse, but a non-finite value saves as `null` and
+        // the deck would no longer load. Clamp to the cell range the engine uses.
+        if !v.is_finite() {
+            bail!("Invalid coordinate: {s} (must be a finite number)");
+        }
+        return Ok(Coordinate::Fixed(v.clamp(0.0, u16::MAX as f64)));
     }
     bail!("Invalid coordinate: {s} (use a number for fixed position)")
 }
@@ -1711,7 +1730,9 @@ fn parse_opt_color(s: &str) -> Result<Option<Color>> {
         return Ok(None);
     }
     if let Some(hex) = s.strip_prefix('#') {
-        if hex.len() == 6 {
+        // Byte-slicing below is only safe on ASCII: a multi-byte char would
+        // put an offset off a char boundary and panic.
+        if hex.len() == 6 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
             let r = u8::from_str_radix(&hex[0..2], 16)?;
             let g = u8::from_str_radix(&hex[2..4], 16)?;
             let b = u8::from_str_radix(&hex[4..6], 16)?;
@@ -1731,6 +1752,78 @@ fn parse_opt_color(s: &str) -> Result<Option<Color>> {
         _ => bail!("Unknown color: {s}"),
     };
     Ok(Some(Color::Named(named)))
+}
+
+/// Show a `Command`'s args shell-style: an argument that is empty or holds
+/// whitespace, a quote or a backslash is single-quoted (a `'` inside becomes
+/// `'\''`), so [`split_args`] gives back exactly the same list.
+fn quote_args(args: &[String]) -> String {
+    let quote = |a: &String| {
+        let plain = !a.is_empty()
+            && !a.chars().any(|c| c.is_whitespace() || matches!(c, '\'' | '"' | '\\'));
+        if plain { a.clone() } else { format!("'{}'", a.replace('\'', r"'\''")) }
+    };
+    args.iter().map(quote).collect::<Vec<_>>().join(" ")
+}
+
+/// Split an args field like a shell: whitespace separates arguments, `'…'`
+/// keeps its text literally, `"…"` too except that a backslash escapes the next
+/// character, and a bare backslash escapes the next character. An unbalanced
+/// quote or a trailing backslash is an error (the args are left unchanged).
+fn split_args(s: &str) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_word = false;
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            c if c.is_whitespace() => {
+                if in_word {
+                    out.push(std::mem::take(&mut cur));
+                    in_word = false;
+                }
+            }
+            '\'' => {
+                in_word = true;
+                loop {
+                    match chars.next() {
+                        Some('\'') => break,
+                        Some(ch) => cur.push(ch),
+                        None => bail!("args: unbalanced ' quote"),
+                    }
+                }
+            }
+            '"' => {
+                in_word = true;
+                loop {
+                    match chars.next() {
+                        Some('"') => break,
+                        Some('\\') => match chars.next() {
+                            Some(ch) => cur.push(ch),
+                            None => bail!("args: unbalanced \" quote"),
+                        },
+                        Some(ch) => cur.push(ch),
+                        None => bail!("args: unbalanced \" quote"),
+                    }
+                }
+            }
+            '\\' => {
+                in_word = true;
+                match chars.next() {
+                    Some(ch) => cur.push(ch),
+                    None => bail!("args: trailing backslash"),
+                }
+            }
+            _ => {
+                in_word = true;
+                cur.push(c);
+            }
+        }
+    }
+    if in_word {
+        out.push(cur);
+    }
+    Ok(out)
 }
 
 fn parse_bool(s: &str) -> Result<bool> {
@@ -1822,7 +1915,48 @@ fn set_object_dim_y_f(obj: &mut SceneObject, v: f64) { as_editable_mut(obj).set_
 /// Move an object by (dx, dy) steps. Only Fixed coordinates are adjusted;
 /// Animated coordinates are left unchanged.
 pub fn move_object(obj: &mut SceneObject, dx: i32, dy: i32) {
+    let (dx, dy) = clamp_move(std::iter::once(&*obj), dx, dy);
     as_editable_mut(obj).move_by(dx, dy);
+}
+
+/// Move the objects at `indices` together by (dx, dy), clamped once for the
+/// whole set ([`clamp_move`]) so they stop at the canvas edge together and keep
+/// their relative layout.
+pub fn move_objects(objects: &mut [SceneObject], indices: &[usize], dx: i32, dy: i32) {
+    let (dx, dy) = clamp_move(indices.iter().filter_map(|&i| objects.get(i)), dx, dy);
+    for &i in indices {
+        if let Some(obj) = objects.get_mut(i) {
+            as_editable_mut(obj).move_by(dx, dy);
+        }
+    }
+}
+
+/// The smallest `Fixed` x and y among the coordinates `move_by` shifts on
+/// `obj` (`f64::INFINITY` for an axis with none — animated or no position).
+fn move_floor(obj: &SceneObject) -> (f64, f64) {
+    let fixed = |c: &Coordinate| match c {
+        Coordinate::Fixed(v) => *v,
+        Coordinate::Animated { .. } => f64::INFINITY,
+    };
+    match obj {
+        SceneObject::HLine(h) => (fixed(&h.x_start).min(fixed(&h.x_end)), fixed(&h.y)),
+        SceneObject::Arrow(a) => (fixed(&a.x1).min(fixed(&a.x2)), fixed(&a.y1).min(fixed(&a.y2))),
+        o => (
+            get_coord(o, "x").map_or(f64::INFINITY, |c| fixed(&c)),
+            get_coord(o, "y").map_or(f64::INFINITY, |c| fixed(&c)),
+        ),
+    }
+}
+
+/// Clamp a move step so no moved `Fixed` coordinate of `objs` would go below 0:
+/// the whole set stops at the left/top edge instead of each coordinate being
+/// clamped on its own (which shortened an `HLine`, reshaped an `Arrow` and
+/// collapsed a group). Right/down steps are unchanged.
+fn clamp_move<'a>(objs: impl Iterator<Item = &'a SceneObject>, dx: i32, dy: i32) -> (i32, i32) {
+    let (fx, fy) = objs.map(move_floor).fold((f64::INFINITY, f64::INFINITY), |(a, b), (x, y)| (a.min(x), b.min(y)));
+    // A step d keeps v + d >= 0 for every v >= floor iff d >= -floor(floor).
+    let limit = |d: i32, floor: f64| if d < 0 && floor.is_finite() { d.max(-(floor.max(0.0).floor().min(i32::MAX as f64) as i32)) } else { d };
+    (limit(dx, fx), limit(dy, fy))
 }
 
 /// Resize an object's width/height by growing the specified edge.
@@ -1839,14 +1973,39 @@ pub fn shrink_object(obj: &mut SceneObject, dw: i32, dh: i32) {
 // Group operations
 // ---------------------------------------------------------------------------
 
-/// Compute the bounding box of a group's members: (min_x, min_y, width, height).
-/// Width = rightmost edge − min_x; height = bottommost edge − min_y.
+/// The placed objects a group's `members` stand for: a nested group is expanded
+/// into its own members (cycle-safe), and objects with no position of their own
+/// (`Group`, `Animation`, `Loop`, `AutoAdvance`) are left out. So an outer group's
+/// bounds, move and resize cover all its leaf content, never a phantom (0,0).
+pub fn group_leaves(objects: &[SceneObject], members: &[usize]) -> Vec<usize> {
+    let mut seen = vec![false; objects.len()];
+    let mut out = Vec::new();
+    let mut stack: Vec<usize> = members.iter().rev().copied().collect();
+    while let Some(m) = stack.pop() {
+        if m >= objects.len() || std::mem::replace(&mut seen[m], true) {
+            continue;
+        }
+        match &objects[m] {
+            SceneObject::Group(g) => stack.extend(g.members.iter().rev().copied()),
+            SceneObject::Animation(_) | SceneObject::Loop(_) | SceneObject::AutoAdvance(_) => {}
+            _ => out.push(m),
+        }
+    }
+    out
+}
+
+/// The leaf members ([`group_leaves`]) of the group at `group_idx`.
+fn group_leaf_members(objects: &[SceneObject], group_idx: usize) -> Vec<usize> {
+    match &objects[group_idx] {
+        SceneObject::Group(g) => group_leaves(objects, &g.members),
+        _ => Vec::new(),
+    }
+}
+
+/// Compute the bounding box of a group's leaf members: (min_x, min_y, width,
+/// height). Width = rightmost edge − min_x; height = bottommost edge − min_y.
 pub fn group_bounds(objects: &[SceneObject], group_idx: usize) -> (f64, f64, f64, f64) {
-    let members = match &objects[group_idx] {
-        SceneObject::Group(g) => g.members.clone(),
-        _ => return (0.0, 0.0, 0.0, 0.0),
-    };
-    group_bounds_from_members(objects, &members)
+    group_bounds_from_members(objects, &group_leaf_members(objects, group_idx))
 }
 
 fn group_bounds_from_members(objects: &[SceneObject], members: &[usize]) -> (f64, f64, f64, f64) {
@@ -1863,20 +2022,15 @@ fn group_bounds_from_members(objects: &[SceneObject], members: &[usize]) -> (f64
     (min_x, min_y, width, height)
 }
 
-/// Move all members of a group by (dx, dy).
+/// Move all leaf members of a group (through nested groups) by (dx, dy),
+/// clamped once for all of them, so the group stops at the edge as a whole.
 pub fn move_group(objects: &mut Vec<SceneObject>, group_idx: usize, dx: i32, dy: i32) {
-    let members = match &objects[group_idx] {
-        SceneObject::Group(g) => g.members.clone(),
-        _ => return,
-    };
-    for &m in &members {
-        if m < objects.len() {
-            move_object(&mut objects[m], dx, dy);
-        }
-    }
+    let leaves = group_leaf_members(objects, group_idx);
+    move_objects(objects, &leaves, dx, dy);
 }
 
-/// Scale all members of a group so the bounding box changes by (dw, dh).
+/// Scale all leaf members of a group (through nested groups) so the bounding
+/// box changes by (dw, dh).
 /// Both member positions (relative to group origin) and member dimensions are scaled.
 ///
 /// `anchor_left` / `anchor_top` control which edge is held fixed:
@@ -1892,10 +2046,7 @@ pub fn resize_group(
     anchor_left: bool,
     anchor_top: bool,
 ) {
-    let members = match &objects[group_idx] {
-        SceneObject::Group(g) => g.members.clone(),
-        _ => return,
-    };
+    let members = group_leaf_members(objects, group_idx);
     if members.is_empty() {
         return;
     }
@@ -1967,6 +2118,21 @@ mod tests {
             let r = set_property(&mut objects[idx], p.name, &p.value);
             assert!(r.is_ok(), "set_property({:?}, {:?}) failed: {:?}", p.name, p.value, r.err());
         }
+    }
+
+    #[test]
+    fn coordinate_rejects_non_finite_values_and_clamps_to_the_cell_range() {
+        let mut o = obj(
+            r#"{"type":"label","text":"Hi","position":{"x":{"fixed":3},"y":{"fixed":1}},
+                "frames":{"start":0,"end":2}}"#,
+        );
+        for bad in ["inf", "1e999", "-inf", "nan"] {
+            assert!(set_property(&mut o, "x", bad).is_err(), "{bad} must be rejected");
+        }
+        set_property(&mut o, "x", "70000").unwrap();
+        assert!(matches!(get_coord(&o, "x"), Some(Coordinate::Fixed(v)) if v == u16::MAX as f64));
+        set_property(&mut o, "x", "2.5").unwrap();
+        assert!(matches!(get_coord(&o, "x"), Some(Coordinate::Fixed(v)) if v == 2.5));
     }
 
     #[test]
@@ -2154,6 +2320,26 @@ mod tests {
     }
 
     #[test]
+    fn explicit_group_note_says_nested_groups_are_not_overridden() {
+        // Outer group 2 holds inner group 1 (holding label 0): its explicit
+        // range gates nothing, and with the label added it names nested groups.
+        let mut o = vec![
+            obj(r#"{"type":"label","text":"Hi","position":{"x":{"fixed":0},"y":{"fixed":0}},
+                    "frames":{"start":0,"end":8}}"#),
+            obj(r#"{"type":"group","members":[0]}"#),
+            obj(r#"{"type":"group","members":[1],"frames":{"start":2,"end":3}}"#),
+        ];
+        let note = |o: &[SceneObject]| {
+            get_properties(o, 2).into_iter().find(|p| p.kind == PropertyKind::Note).unwrap().value
+        };
+        assert!(note(&o).contains("has no effect"), "{}", note(&o));
+        if let SceneObject::Group(g) = &mut o[2] {
+            g.members.push(0);
+        }
+        assert!(note(&o).contains("not nested groups"), "{}", note(&o));
+    }
+
+    #[test]
     fn auto_group_shows_blank_frames_and_no_note() {
         // A group with no `frames` field is auto: blank first/last frame, no note.
         let o = vec![
@@ -2197,6 +2383,44 @@ mod tests {
                 "frames":{"start":0,"end":2}}"#,
         )];
         assert_props_roundtrip(&mut o, 0);
+    }
+
+    fn command_args(o: &[SceneObject]) -> Vec<String> {
+        match &o[0] {
+            SceneObject::Command(c) => c.args.clone(),
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn command_args_round_trip_exactly_through_the_field() {
+        let args = ["-c", "a b | tr a-z A-Z", "", "it's", "x\\y\"z", "plain"];
+        let mut o = vec![obj(&format!(
+            r#"{{"type":"command","position":{{"x":{{"fixed":0}},"y":{{"fixed":0}}}},
+                "width":10,"height":4,"command":"sh","args":{},"frames":{{"start":0,"end":1}}}}"#,
+            serde_json::to_string(&args).unwrap()
+        ))];
+        let shown = get_properties(&o, 0).into_iter().find(|p| p.name == "args").unwrap().value;
+        assert_eq!(shown, r#"-c 'a b | tr a-z A-Z' '' 'it'\''s' 'x\y"z' plain"#);
+        set_property(&mut o[0], "args", &shown).unwrap();
+        assert_eq!(command_args(&o), args);
+        // Plain space-separated args split as before; quotes group as in a shell.
+        set_property(&mut o[0], "args", "  -l   -a ").unwrap();
+        assert_eq!(command_args(&o), ["-l", "-a"]);
+        set_property(&mut o[0], "args", r#"-c "echo \"hi\" there""#).unwrap();
+        assert_eq!(command_args(&o), ["-c", r#"echo "hi" there"#]);
+    }
+
+    #[test]
+    fn command_args_reject_an_unbalanced_quote_and_keep_the_args() {
+        let mut o = vec![obj(
+            r#"{"type":"command","position":{"x":{"fixed":0},"y":{"fixed":0}},
+                "width":10,"height":4,"command":"sh","args":["-c","ls"],"frames":{"start":0,"end":1}}"#,
+        )];
+        for bad in ["-c 'ls", r#"-c "ls"#, "-c ls\\"] {
+            assert!(set_property(&mut o[0], "args", bad).is_err(), "{bad:?}");
+            assert_eq!(command_args(&o), ["-c", "ls"]);
+        }
     }
 
     #[test]
@@ -2245,5 +2469,97 @@ mod tests {
         assert_eq!(object_origin_x_f(&o[0]), 0.0, "left-anchored member stays put");
         assert_eq!(object_origin_x_f(&o[1]), 1.5);
         assert_eq!(object_dim_x_f(&o[1]), 4.5);
+    }
+
+    /// The `Fixed` values of `obj`'s named coordinates (`None` if absent/animated).
+    fn fixed_coords(obj: &SceneObject, names: &[&str]) -> Vec<Option<f64>> {
+        names
+            .iter()
+            .map(|n| match get_coord(obj, n) {
+                Some(Coordinate::Fixed(v)) => Some(v),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn moving_an_hline_or_arrow_into_the_left_edge_keeps_its_shape() {
+        let mut h = obj(r#"{"type":"h_line","y":0,"x_start":0,"x_end":20,"frames":{"start":0,"end":1}}"#);
+        for _ in 0..5 {
+            move_object(&mut h, -1, -1);
+        }
+        assert_eq!(fixed_coords(&h, &["from_x", "to_x"]), vec![Some(0.0), Some(20.0)], "length kept");
+
+        let mut a = obj(r#"{"type":"arrow","x1":2,"y1":3,"x2":30,"y2":3,"frames":{"start":0,"end":1}}"#);
+        for _ in 0..5 {
+            move_object(&mut a, -1, 0);
+        }
+        let xy = fixed_coords(&a, &["x1", "y1", "x2", "y2"]);
+        assert_eq!(xy, vec![Some(0.0), Some(3.0), Some(28.0), Some(3.0)], "stops at the edge, shape kept");
+        // Right / down are not limited.
+        move_object(&mut a, 2, 1);
+        assert_eq!(fixed_coords(&a, &["x2"]), vec![Some(30.0)]);
+    }
+
+    #[test]
+    fn moving_a_group_into_the_left_edge_keeps_its_members_offsets() {
+        let mut o = vec![
+            obj(r#"{"type":"label","text":"A","position":{"x":{"fixed":0},"y":{"fixed":5}},"frames":{"start":0,"end":1}}"#),
+            obj(r#"{"type":"rect","position":{"x":{"fixed":12},"y":{"fixed":5}},"width":4,"height":2,"frames":{"start":0,"end":1}}"#),
+            obj(r#"{"type":"group","members":[0,1]}"#),
+        ];
+        for _ in 0..3 {
+            move_group(&mut o, 2, -1, -1);
+        }
+        let xs: Vec<f64> = [0, 1].iter().map(|&i| object_origin_x_f(&o[i])).collect();
+        assert_eq!(xs, [0.0, 12.0], "the gap stays 12");
+        assert_eq!(object_origin_y_f(&o[0]), 2.0, "y still moves freely");
+        // A set moved together (the paste ghost) stops as one too.
+        move_objects(&mut o, &[0, 1], -4, 0);
+        assert_eq!(object_origin_x_f(&o[1]), 12.0);
+    }
+
+    #[test]
+    fn nested_group_bounds_move_and_resize_cover_the_inner_members() {
+        let label = |x: i32, y: i32| {
+            obj(&format!(
+                r#"{{"type":"label","text":"A","position":{{"x":{{"fixed":{x}}},"y":{{"fixed":{y}}}}},
+                    "width":2,"height":1,"frames":{{"start":0,"end":1}}}}"#
+            ))
+        };
+        // 0,1 in inner group 2; outer group 4 = [2, 3, 5 (a loop)]; group 6
+        // lists itself (a cycle must not hang).
+        let mut o = vec![
+            label(40, 10),
+            label(50, 12),
+            obj(r#"{"type":"group","members":[0,1]}"#),
+            label(60, 15),
+            obj(r#"{"type":"group","members":[2,3,5]}"#),
+            obj(r#"{"type":"loop","frames":{"start":0,"end":1}}"#),
+            obj(r#"{"type":"group","members":[6,0]}"#),
+        ];
+        // Bounds span the leaves, not the origin a nested group / loop reports.
+        assert_eq!(group_bounds(&o, 4), (40.0, 10.0, 22.0, 6.0));
+        assert_eq!(group_bounds(&o, 6), (40.0, 10.0, 2.0, 1.0));
+
+        move_group(&mut o, 4, 10, 0);
+        let xs: Vec<f64> = [0, 1, 3].iter().map(|&i| object_origin_x_f(&o[i])).collect();
+        assert_eq!(xs, [50.0, 60.0, 70.0], "inner members move with the outer group");
+
+        // Doubling the width about the left edge (x=50) scales the inner members too.
+        resize_group(&mut o, 4, 22, 0, true, true);
+        let xs: Vec<f64> = [0, 1, 3].iter().map(|&i| object_origin_x_f(&o[i])).collect();
+        assert_eq!(xs, [50.0, 70.0, 90.0]);
+    }
+
+    #[test]
+    fn rgb_color_rejects_non_hex_without_panicking() {
+        // `#1é234` is six bytes, but `é` straddles a two-byte slice offset.
+        assert!(parse_opt_color("#1\u{e9}234").is_err());
+        assert!(parse_opt_color("#+f0000").is_err());
+        assert_eq!(
+            parse_opt_color("#0a10FF").unwrap(),
+            Some(Color::Rgb { r: 10, g: 16, b: 255 })
+        );
     }
 }

@@ -47,10 +47,18 @@ A three-stage pipeline with clean separation:
 
 ```
 SourcePresentation (JSON)
-  → Engine::compile()   → Vec<ResolvedScene>   (DrawOps per frame)
-  → Renderer::render()  → PlayablePresentation (Frame::Full / Frame::Diff)
-  → Player::play()      → terminal output
+  → bs::compile::compile()  validate → Engine::scenes (DrawOps per frame)
+                            → Renderer::render_bounded (Frame::Full / Frame::Diff)
+                            → attach Command/Loop/Animation/AutoAdvance sidecars
+  → PlayablePresentation
+  → Player::play()          → terminal output
 ```
+
+`Engine::compile` + `Renderer::render` alone yield only the static frames — no
+play-time sidecars and no validation — which is all the tests need (the editor
+preview instead streams `Engine::scenes` through `compile::render_scenes`, under
+compile's limits); anything that plays or exports a deck goes through
+`bs::compile::compile`.
 
 The interactive editor runs the same Engine + Renderer pipeline live for a
 WYSIWYG preview. See `CLAUDE.md` for the full architecture and module map.
@@ -82,8 +90,8 @@ delete from the present view.
 
 `scripts/build-web.sh` writes `_site/`; CI runs the same script, so a green
 local build is what deploys. `.github/workflows/pages.yml` publishes it on every
-push to `main` that touches the engine, `web/`, `wasm/` or the format reference,
-and it creates the Pages site itself (`configure-pages` with `enablement: true`)
+push to `main` that touches the engine, `web/`, `wasm/` or any file the build
+copies in (format reference, packaged skill, sample deck), and it creates the Pages site itself (`configure-pages` with `enablement: true`)
 so no Settings click is needed. See `web/README.md` for the details.
 
 The one runtime feature the browser cannot provide is the `Command` object,

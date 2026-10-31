@@ -10,10 +10,18 @@ detail in `CLAUDE.md`.
 
 ```text
 SourcePresentation JSON
-  -> Engine::compile()      Vec<ResolvedScene> with DrawOps per frame
-  -> Renderer::render()     PlayablePresentation with full/diff frames
+  -> bs::compile::compile() validate -> Engine::scenes (DrawOps per frame)
+                            -> Renderer::render_bounded (full/diff frames)
+                            -> attach Command/Loop/Animation/AutoAdvance sidecars
+  -> PlayablePresentation
   -> Player::play()         terminal playback
 ```
+
+`Engine::compile` + `Renderer::render` alone yield only the static frames — no
+play-time sidecars and no validation — which is all the tests need (the editor
+preview instead streams `Engine::scenes` through `compile::render_scenes`, under
+compile's limits); anything that plays or exports a deck goes through
+`bs::compile::compile`.
 
 The editor uses the same engine and renderer for live preview. If preview and
 compiled playback disagree, look first for a runtime sidecar object or duplicated
@@ -47,7 +55,8 @@ frame-replay logic.
 - Frame copy/paste and cross-deck paste must remap ranges, group members, and
   animation ids without creating dangling references.
 - Auto `Group.frames = None` means members keep their own ranges. Explicit group
-  frames override member ranges.
+  frames override direct non-group members' ranges (one level; a nested group's
+  members are gated by that group, not the outer one).
 - There must always be at least one frame after frame deletion.
 
 ## High-Risk Changes

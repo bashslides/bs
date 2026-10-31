@@ -7,13 +7,17 @@ edition = "2024"
 default = ["tui"]
 # The terminal UI (editor + player). Off for the wasm build, which needs only
 # the engine and cannot compile crossterm.
-tui = ["dep:crossterm"]
+tui = ["dep:crossterm", "dep:libc"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 crossterm = { version = "0.28", optional = true }
 anyhow = "1"
+
+[target.'cfg(unix)'.dependencies]
+# kill/waitid for the player's Command process groups (already pulled in by crossterm).
+libc = { version = "0.2", optional = true }
 
 [dev-dependencies]
 serde_json = "1"

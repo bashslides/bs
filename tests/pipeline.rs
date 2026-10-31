@@ -138,3 +138,33 @@ fn off_grid_object_is_clipped_not_panicked() {
     assert_eq!(lines.len(), 2);
     assert!(lines.iter().all(|l| l.trim().is_empty()));
 }
+
+#[test]
+fn objects_near_the_u16_edge_are_clipped_not_wrapped() {
+    // Positions saturate at 65535; each renderer's per-cell offsets used to add
+    // in u16 there — a debug panic, or in release a wrap back onto column 0.
+    let edge = r#""position": { "x": { "fixed": 100000 }, "y": { "fixed": 0 } },
+                  "frames": { "start": 0, "end": 1 }"#;
+    let low = r#""position": { "x": { "fixed": 0 }, "y": { "fixed": 100000 } },
+                  "frames": { "start": 0, "end": 1 }"#;
+    let json = format!(
+        r#"{{ "width": 4, "height": 3, "frame_count": 1, "objects": [
+            {{ "type": "label", "text": "AB", {edge} }},
+            {{ "type": "label", "text": "AB", "framed": true, "width": 3, {edge} }},
+            {{ "type": "label", "text": "AB", "framed": true, "width": 65534, {low} }},
+            {{ "type": "list", "text": "ab", {edge} }},
+            {{ "type": "art", "art": "AB", {edge} }},
+            {{ "type": "morph", "from": "AB", "to": "CD", {edge} }},
+            {{ "type": "circle", "diameter": 3, {edge} }},
+            {{ "type": "header", "text": "A", {edge} }},
+            {{ "type": "rect", "width": 4, "height": 3, "title": "T", {edge} }},
+            {{ "type": "table", "width": 6, "col_widths": [1.0], "rows": 1,
+               "cells": [[{{ "content": "Hi" }}]], {edge} }},
+            {{ "type": "command", "width": 4, "height": 3, "command": "true", {edge} }}
+        ] }}"#
+    );
+    let source = serde_json::from_str(&json).expect("test source JSON should parse");
+    let p = bs::compile::compile(&source).expect("compiles");
+    let lines = frame_lines(&p, 0);
+    assert!(lines.iter().all(|l| l.trim().is_empty()), "nothing wraps onto the canvas: {lines:?}");
+}

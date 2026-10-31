@@ -69,12 +69,17 @@ cp .claude/skills/bs-deck/SKILL.md "$OUT/bs-deck-skill.md"
 cp examples/demo.json "$OUT/demo.json"
 touch "$OUT/.nojekyll"
 
-# Stamp the service worker's cache name with a hash of what we just built, so a
-# deploy always installs a fresh cache instead of serving a stale app.
-BUILD=$(cat "$OUT"/*.js "$OUT"/*.css "$OUT"/*.html "$OUT/bs.wasm" 2>/dev/null \
-  | sha256sum | cut -c1-12)
-sed -i "s/__BUILD__/$BUILD/" "$OUT/sw.js"
-say "Service worker cache: bs-$BUILD"
+# Stamp the service worker's cache name with a hash of every file we just built
+# (names and contents, sw.js still unstamped), so any deploy — even a docs- or
+# sample-only one — installs a fresh cache instead of serving stale files.
+# Portable to BSD/macOS userlands: `shasum -a 256` where `sha256sum` is missing
+# (same output format, so the same hash), and no GNU-only in-place `sed -i`.
+if command -v sha256sum >/dev/null; then SHA256=(sha256sum); else SHA256=(shasum -a 256); fi
+BUILD=$(cd "$OUT" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 "${SHA256[@]}" \
+  | "${SHA256[@]}" | cut -c1-12)
+sed "s/__BUILD__/$BUILD/" "$OUT/sw.js" > "$OUT/sw.js.tmp"
+mv "$OUT/sw.js.tmp" "$OUT/sw.js"
+say "Service worker build: $BUILD"
 
 # --- 3. report ----------------------------------------------------------------
 wasm_bytes=$(wc -c < "$OUT/bs.wasm")

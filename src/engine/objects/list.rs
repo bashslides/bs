@@ -73,10 +73,14 @@ impl Resolve for List {
         if !self.frames.contains(frame) {
             return;
         }
-        let base_x = self.position.x.evaluate(frame, ctx.anims);
-        let base_y = self.position.y.evaluate(frame, ctx.anims);
+        let base_x = usize::from(self.position.x.evaluate(frame, ctx.anims));
+        let base_y = usize::from(self.position.y.evaluate(frame, ctx.anims));
         let w = self.width.evaluate(frame, ctx.anims) as usize;
         let h = self.height.evaluate(frame, ctx.anims) as usize;
+        // Rows past an explicit height or the canvas are never shown, so stop
+        // generating there (a huge `spacing` would otherwise hang).
+        let (vis_w, vis_h) = ctx.visible(base_x, base_y);
+        let cap = if h > 0 { h.min(vis_h) } else { vis_h };
         let has_bg = self.style.bg.is_some();
 
         // Each non-empty line is one item; blank lines are dropped so a stray
@@ -87,10 +91,12 @@ impl Resolve for List {
         // `spacing` blank rows between items.
         let mut rows: Vec<Vec<char>> = Vec::new();
         for (i, item) in items.iter().enumerate() {
+            if rows.len() >= cap {
+                break;
+            }
             if i > 0 {
-                for _ in 0..self.spacing {
-                    rows.push(Vec::new());
-                }
+                let gap = self.spacing.min(cap - rows.len());
+                rows.resize(rows.len() + gap, Vec::new());
             }
             let marker = self.marker(i);
             let indent = marker.chars().count();
@@ -103,27 +109,25 @@ impl Resolve for List {
             }
         }
 
-        // Clip / pad to an explicit height.
+        // Clip to the visible rows; pad to an explicit height (as far as visible).
+        rows.truncate(cap);
         if h > 0 {
-            rows.truncate(h);
-            while rows.len() < h {
-                rows.push(Vec::new());
-            }
+            rows.resize(cap, Vec::new());
         }
 
         for (r, row_chars) in rows.iter().enumerate() {
             // With a background, fill the whole wrap width so the block is solid;
             // otherwise emit exactly the produced cells.
             let emit_w = if has_bg && w > 0 { w } else { row_chars.len() };
-            for col in 0..emit_w {
+            for col in 0..emit_w.min(vis_w) {
                 let ch = row_chars.get(col).copied().unwrap_or(' ');
-                ops.push(DrawOp {
-                    x: base_x + col as u16,
-                    y: base_y + r as u16,
+                ops.extend(DrawOp::at(
+                    base_x + col,
+                    base_y + r,
                     ch,
-                    style: self.style.clone(),
-                    z_order: self.z_order,
-                });
+                    self.style.clone(),
+                    self.z_order,
+                ));
             }
         }
     }

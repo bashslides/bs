@@ -17,7 +17,9 @@
 //! - every complete JSON example in the docs parses (and, for full decks,
 //!   compiles) with the current serde structs;
 //! - the copy-paste build commands are identical across the agent docs;
-//! - `CLAUDE.md`'s module map covers every core module file.
+//! - `CLAUDE.md`'s module map covers every core module file;
+//! - every `§N` and `#anchor` reference in `PRESENTATION_FORMAT.md` names an
+//!   existing heading.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -383,6 +385,37 @@ fn object_type_docs_match_the_scene_object_enum() {
              src/engine/objects/ row"
         );
     }
+
+    // The packaged skill restates the catalog: a §3 row, a field-table section
+    // headed by the tag, and the exhaustive tag list in §14 self-check item 3.
+    let skill = ".claude/skills/bs-deck/SKILL.md";
+    let skill_md = read_repo_file(skill);
+    // Only §3 counts as the catalog: field tables elsewhere also have `| `tag` |` rows.
+    let catalog = skill_md
+        .split_once("## 3. Object catalog")
+        .and_then(|(_, rest)| rest.split_once("\n## 4."))
+        .map(|(cat, _)| cat)
+        .unwrap_or_else(|| panic!("{skill}: §3 object catalog not found"));
+    let self_check = skill_md
+        .split_once("Every `type` tag spelled exactly:")
+        .and_then(|(_, rest)| rest.split_once("\n4. "))
+        .map(|(list, _)| list)
+        .unwrap_or_else(|| panic!("{skill}: §14 self-check item 3 (the type-tag list) not found"));
+    for tag in &tags {
+        let code = format!("`{tag}`");
+        assert!(
+            catalog.contains(&format!("| {code} |")),
+            "{skill}'s object catalog (§3) has no row for {code} — add it there"
+        );
+        assert!(
+            skill_md.lines().any(|l| l.starts_with('#') && l.contains(&code)),
+            "{skill} has no section headed {code} — add its field table"
+        );
+        assert!(
+            self_check.contains(&code),
+            "{skill}'s §14 self-check item 3 does not list {code} — add it to the tag list"
+        );
+    }
 }
 
 #[test]
@@ -489,5 +522,61 @@ fn claude_md_module_map_covers_every_core_module() {
         "these modules are absent from CLAUDE.md (add a Module Map row or mention the \
          path where the module is described):\n  {}",
         missing.join("\n  ")
+    );
+}
+
+/// GitHub's heading anchor: lowercase, spaces to `-`, other punctuation dropped.
+fn heading_slug(heading: &str) -> String {
+    heading
+        .to_lowercase()
+        .chars()
+        .filter_map(|c| match c {
+            ' ' => Some('-'),
+            c if c.is_alphanumeric() || c == '-' || c == '_' => Some(c),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn presentation_format_section_references_resolve() {
+    let doc = read_repo_file("PRESENTATION_FORMAT.md");
+    let mut numbers = BTreeSet::new();
+    let mut slugs = BTreeSet::new();
+    let mut in_code = false;
+    for line in doc.lines() {
+        if line.starts_with("```") {
+            in_code = !in_code;
+        }
+        if in_code || !line.starts_with('#') {
+            continue; // a `#` comment inside a code block is not a heading
+        }
+        let heading = line.trim_start_matches('#').trim();
+        slugs.insert(heading_slug(heading));
+        let first = heading.split(' ').next().unwrap_or("").trim_end_matches('.');
+        if !first.is_empty() && first.chars().all(|c| c.is_ascii_digit() || c == '.') {
+            numbers.insert(first.to_string());
+        }
+    }
+    let mut broken = Vec::new();
+    for (i, line) in doc.lines().enumerate() {
+        for part in line.split('§').skip(1) {
+            let num: String = part.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+            let num = num.trim_end_matches('.');
+            if !numbers.contains(num) {
+                broken.push(format!("line {}: §{num}", i + 1));
+            }
+        }
+        for part in line.split("](#").skip(1) {
+            let anchor = part.split(')').next().unwrap_or("");
+            if !slugs.contains(anchor) {
+                broken.push(format!("line {}: #{anchor}", i + 1));
+            }
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "PRESENTATION_FORMAT.md references sections that do not exist (fix the number or anchor):\n  {}",
+        broken.join("\n  ")
     );
 }

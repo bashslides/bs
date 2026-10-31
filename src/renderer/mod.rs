@@ -7,6 +7,8 @@
 //! produces the same output. It knows nothing about time, animation,
 //! or presentation semantics.
 
+use std::borrow::Borrow;
+
 use crate::types::{Cell, CellChange, Frame, PlayablePresentation, ResolvedScene, TerminalContract};
 
 pub struct Renderer;
@@ -17,24 +19,50 @@ impl Renderer {
     /// The first frame is always a full frame. Subsequent frames are diffs
     /// against the previous frame.
     pub fn render(scenes: &[ResolvedScene], contract: TerminalContract) -> PlayablePresentation {
-        let mut frames = Vec::with_capacity(scenes.len());
+        match Self::render_bounded(scenes, contract, u64::MAX) {
+            Ok(presentation) => presentation,
+            Err(_) => unreachable!("an unbounded render cannot exceed its budget"),
+        }
+    }
+
+    /// [`render`](Self::render), but give up with an error as soon as the
+    /// frames would store more than `max_cells` cells (the full first frame
+    /// plus every diff change) — checked frame by frame, so an oversized deck
+    /// fails before its frames are all held in memory.
+    pub fn render_bounded<S: Borrow<ResolvedScene>>(
+        scenes: impl IntoIterator<Item = S>,
+        contract: TerminalContract,
+        max_cells: u64,
+    ) -> Result<PlayablePresentation, String> {
+        let mut frames = Vec::new();
         let mut prev_grid: Option<Vec<Vec<Cell>>> = None;
+        let mut stored: u64 = 0;
 
         for scene in scenes {
-            let grid = Self::rasterize(scene, &contract);
-            let frame = match &prev_grid {
-                None => Frame::Full {
-                    cells: grid.clone(),
-                },
-                Some(prev) => Frame::Diff {
-                    changes: Self::diff(prev, &grid),
-                },
+            let grid = Self::rasterize(scene.borrow(), &contract);
+            let (frame, cells) = match &prev_grid {
+                None => {
+                    let cells = u64::from(contract.width) * u64::from(contract.height);
+                    (Frame::Full { cells: grid.clone() }, cells)
+                }
+                Some(prev) => {
+                    let changes = Self::diff(prev, &grid);
+                    let cells = changes.len() as u64;
+                    (Frame::Diff { changes }, cells)
+                }
             };
+            stored = stored.saturating_add(cells);
+            if stored > max_cells {
+                return Err(format!(
+                    "the compiled frames would store over {max_cells} cells (the first \
+                     frame plus every changed cell); change less per frame or split the deck"
+                ));
+            }
             frames.push(frame);
             prev_grid = Some(grid);
         }
 
-        PlayablePresentation {
+        Ok(PlayablePresentation {
             contract,
             frames,
             markers: Vec::new(),
@@ -42,7 +70,7 @@ impl Renderer {
             loops: Vec::new(),
             animations: Vec::new(),
             auto_advances: Vec::new(),
-        }
+        })
     }
 
     /// Rasterize a resolved scene onto a fixed-size cell grid.

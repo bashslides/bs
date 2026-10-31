@@ -97,3 +97,27 @@ fn a_loop_starting_inside_an_animation_is_rejected() {
     let s = deck(12, &[(2, 8)], &[(5, 12)]);
     assert!(s.validate_loops().is_err());
 }
+
+#[test]
+fn explicit_group_range_does_not_move_an_animation_member() {
+    // Animation 2..4 inside loop 1..5; the group's 3..9 must not retime it (a
+    // retimed span would be bisected by the loop).
+    let mut s = deck(10, &[(2, 4)], &[(1, 5)]);
+    s.objects.push(
+        serde_json::from_str(r#"{"type":"group","members":[1],"frames":{"start":3,"end":9}}"#).unwrap(),
+    );
+    assert!(s.validate_loops().is_ok());
+    let r = &s.animation_regions()[0];
+    assert_eq!((r.start_frame, r.end_frame), (2, 4));
+}
+
+#[test]
+fn compile_rejects_two_animations_sharing_an_id() {
+    // Distinct ids compile; giving the second animation id 1 as well is an error.
+    let ok = deck(10, &[(0, 2), (5, 10)], &[]);
+    assert!(bs::compile::compile(&ok).is_ok());
+    let mut dup = ok;
+    dup.objects[2] = serde_json::from_str(r#"{"type":"animation","id":1,"frames":{"start":5,"end":10}}"#).unwrap();
+    let err = bs::compile::compile(&dup).unwrap_err().to_string();
+    assert!(err.contains("animation id 1 is used by more than one animation"), "got: {err}");
+}

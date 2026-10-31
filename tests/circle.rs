@@ -87,3 +87,20 @@ fn circle_is_hidden_outside_its_frame_range() {
     assert!(frame_lines(&pres, 0).iter().any(|l| l.contains('@')), "shown on frame 0");
     assert!(frame_lines(&pres, 1).iter().all(|l| !l.contains('@')), "gone on frame 1");
 }
+
+#[test]
+fn huge_diameter_only_visits_the_canvas() {
+    // Diameter 40000 used to iterate 40000 × 65535 cells per frame; the canvas
+    // shows only the empty corner of its bounding box.
+    let p = render_json(
+        r#"{
+            "width": 8, "height": 3, "frame_count": 1,
+            "objects": [
+                { "type": "circle", "diameter": 40000,
+                  "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+                  "frames": { "start": 0, "end": 1 } }
+            ]
+        }"#,
+    );
+    assert!(frame_lines(&p, 0).iter().all(|l| l.trim().is_empty()));
+}

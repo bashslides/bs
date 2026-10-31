@@ -32,7 +32,7 @@ Typical loop: an assistant writes/edits `source.json` → the human opens it wit
 
 **The editor runs the full engine live**, so what `bs edit` shows is exactly what
 will compile and play. Only four object types have play-time-only behavior that
-the editor shows as a placeholder (see §8).
+the editor shows as a placeholder (see §9).
 
 ---
 
@@ -51,13 +51,25 @@ the editor shows as a placeholder (see §8).
 |-------|------|----------|---------|
 | `width` | integer | **yes** | Canvas width in terminal cells |
 | `height` | integer | **yes** | Canvas height in terminal cells |
-| `frame_count` | integer | **yes** | Number of frames (slides) in the deck |
+| `frame_count` | integer | **yes** | Number of frames (slides) in the deck, at least 1 |
 | `objects` | array | **yes** | The scene objects (may be empty `[]`) |
 | `links` | array of arrays of ints | no | Editor-only "linked paste" families; omit when authoring by hand. The engine ignores it. |
 
 There is **no** top-level title, theme, or per-slide metadata. A "slide" is just
 a frame index; an object decides which frames it appears on via its `frames`
 range. The whole deck is one flat list of objects, each gated to a frame range.
+
+**Size limits.** `bs compile` rejects a deck whose canvas exceeds 1,000,000
+cells (`width × height`), whose `frame_count` exceeds 100,000, whose
+`frame_count × width × height` exceeds 50,000,000, or whose compiled frames
+would store over 2,000,000 cells (the first frame plus every cell that changes
+from one frame to the next), or one of whose frames draws over 8,000,000 cells
+counting overlapping objects (each object's cells, summed), or whose frames
+together draw over 200,000,000 such cells. The editor refuses
+such a frame size and shows the reason instead of a preview (the draw and
+stored-cell limits from the first slide that passes them, since the preview
+renders only up to the current slide); `bs play` and the web viewer refuse a
+canvas over 1,000,000 cells.
 
 > **Mental model:** think of the deck as a fixed-size grid of cells (`width × height`)
 > and a timeline of `frame_count` frames. Each object paints some cells on some
@@ -94,7 +106,7 @@ Positions and sizes are **coordinates**, which can be either fixed or animated.
 { "animated": { "from": 2, "to": 20, "anim": 1 } }
 ```
 - `from` / `to` are the start and end values (the *motion*).
-- `anim` references an [`Animation` object](#810-animation) by its `id` — that
+- `anim` references an [`Animation` object](#94-animation) by its `id` — that
   animation owns the *span* (which frames the motion plays over). The motion
   reaches `to` on the animation's **last** frame (`end - 1`) and holds `from`
   before the span and `to` after it.
@@ -148,10 +160,19 @@ foreground, no background, not bold).
   three named keys, **not** an `{"rgb": [...]}` array — the latter is rejected by
   the deserializer.
 
-> **Background = opacity.** Many text/art objects treat spaces as *transparent*
-> unless a `bg` is set. Setting a `bg` fills the object's whole bounding box with
-> that background (a solid block); leaving it unset lets underlying objects show
-> through the gaps. This is the main lever for layering.
+> **Background = opacity.** `art`, `morph`, `header` and table cell text treat
+> spaces as *transparent* unless a `bg` is set, so underlying objects show
+> through the gaps. `label` and `list` always paint their spaces — between words
+> and, with a `width`, to the end of each text row — so they erase whatever lies
+> beneath their text even without a `bg`. A `bg` colours every cell the object
+> draws, spaces included. Only a `label` or `list` with a `width` also adds
+> cells: it fills a solid rectangle `width` wide, down to its `height` when set.
+> Everything else stays ragged: `art` fills each row only as far as that row's
+> text, `morph` as far as the longer of that row in `from` and `to`, `header`
+> only its glyph rows, and a `label`/`list` without a `width` only its
+> characters, so shorter rows leave holes. For a solid panel, pad art lines to equal length or
+> put a `label` with `width`, `height` and `bg` behind it. This is the main lever
+> for layering.
 
 ### 3.5 `z_order`
 
@@ -183,7 +204,7 @@ exact** (snake_case) — note `h_line` and `auto_advance` in particular:
 | `animation` | nothing* | Owns an animation span + auto-play |
 | `auto_advance` | nothing* | Auto-advance a frame range on a timer |
 
-`*` = play-time behavior; see §8.
+`*` = play-time behavior; see §9.
 
 Fields common to all **drawable** objects: `style` (optional), `frames`
 (required, except auto `group`), `z_order` (optional, default 0).
@@ -191,6 +212,15 @@ Fields common to all **drawable** objects: `style` (optional), `frames`
 ---
 
 ## 5. Text objects
+
+Every character of deck text (labels, lists, tables, art, morphs, arrow and
+fill chars) takes one grid cell. The terminal player, editor and web viewer therefore show
+only characters known to be one column wide (Latin, Greek, Cyrillic, common
+punctuation and symbols such as `★ ✓ ▶`, box drawing, braille); a wide character
+(CJK, emoji) shows as `?` and a zero-width one (combining accent, variation
+selector) as a blank cell. Use precomposed letters (`é`, not `e` + U+0301).
+A terminal set to draw ambiguous-width characters wide (some CJK setups) also
+widens box drawing and symbols like `★`.
 
 ### 5.1 `label`
 
@@ -464,6 +494,7 @@ baked into static frames, so the editor preview shows it.
 | `to` | string | **required** | reached on the last frame of the range |
 | `name` | string | `""` | display-only |
 | `mode` | enum | `"dissolve"` | transition style (below) |
+| `blend` | `{ "offset": int, "length": int }` | absent | written by the editor when a frame or object copy takes part of a morph's blend: the range shows the blend from `offset` frames into one `length` frames long. Leave it out when authoring |
 | `style`, `frames`, `z_order` | | | common fields |
 
 `mode` is one of: `"dissolve"` (default), `"wipe-right"`, `"wipe-left"`,
@@ -540,8 +571,14 @@ their frame range).
 - **Auto** (`frames` omitted/`null`): the group has no range of its own; members
   render on their own ranges. The group's effective span is the union of its
   members'. This is the normal case.
-- **Explicit** (`frames` set): the range **overrides every member** — each member
-  is gated on the group's range instead of its own (can widen or narrow it).
+- **Explicit** (`frames` set): the range **overrides every direct member** — each
+  member is gated on the group's range instead of its own (can widen or narrow it),
+  including where a `command`, `loop` or `auto_advance` member acts at play time.
+  An `animation` member keeps its own span, and a `morph` member blends over its
+  own range (the group only decides where it shows). The override reaches
+  **direct** members only: a member that is itself a group is not overridden,
+  and its own members keep their own ranges (or that inner group's explicit
+  range).
 
 > `members` are array **indices**, so they are fragile if you reorder/insert
 > objects. When hand-authoring, prefer the explicit-range form only when you need
@@ -583,7 +620,27 @@ bordered placeholder box.
 At play time the player runs it with piped stdio (it can't touch the terminal),
 paints the tail of the output into the box interior, and marks the top edge with
 a green `✓` (exit 0) or red `✗` (non-zero/timeout/spawn failure). Navigation
-never branches on exit status — arrow keys always work.
+never branches on exit status — arrow keys always work. The command runs in its
+own session with no controlling terminal: anything it starts in the background is
+killed when it exits (or times out, or playback leaves its frames, or the player quits —
+also when the terminal is closed or `bs` gets SIGTERM/SIGINT), output written
+after that is not shown, and a program that opens `/dev/tty` to prompt (git or
+ssh asking for a password) fails at once, so its error lands in the box with a `✗`.
+Only a `bs` killed with SIGKILL cannot clean up; then, on Linux, the command
+itself is still killed but anything it started in the background survives.
+A command the player is not allowed to signal (`sudo …`) cannot be stopped:
+the player moves on anyway (on a timeout its box says `[could not stop the
+command]`) and the command keeps running until it exits on its own — entering
+the slide again starts another copy.
+A slide may hold several `command` boxes; each runs on its own and gets its own
+`✓`/`✗`. A command spanning several frames runs once each time playback enters them:
+stepping between its frames (by key, loop or auto-play) keeps it running, or
+keeps its finished output, and re-entering after leaving runs it again; a change
+of its box's position or size counts as leaving.
+Each output character fills one cell, so only characters known to be one column
+wide are shown (Latin, Greek, Cyrillic, common punctuation and symbols, box
+drawing, braille); any other character (CJK, emoji, other scripts) shows as `?`
+and zero-width marks are dropped.
 
 ### 9.3 `loop`
 
@@ -605,7 +662,9 @@ auto-advances across it on a timer.
 **Rules (validated at compile time and live in the editor):** loops must be
 non-empty, fit within the deck, and may **not overlap or nest**, and may **not
 bisect an `animation`** (a loop must contain each animation span wholly or not at
-all). The presenter breaks out with the arrow keys.
+all). The presenter breaks out with the arrow keys (or Home/End/Shift+arrows);
+a loop left that way, or finished, is not re-entered until playback leaves its
+range — so one covering the whole deck does not restart.
 
 ### 9.4 `animation`
 
@@ -621,7 +680,7 @@ motion plays.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `id` | integer | **required** | unique; referenced by `{"animated":{…,"anim":<id>}}` |
+| `id` | integer | **required** | unique (a duplicate fails compilation); referenced by `{"animated":{…,"anim":<id>}}` |
 | `frames` | FrameRange | **required** | the span the motion interpolates over |
 | `auto_play` | bool | `true` | auto-advance across the span at play time |
 | `delay_ms` | integer | `500` | delay between auto-advanced frames |
@@ -680,8 +739,10 @@ of the two. The presenter can still navigate manually at any time.
   `arrow`, `table`, `art`, `circle`, `morph`, `group`, `command`, `loop`,
   `animation`.
 - **Only 8 named colors** exist; anything else must be `{ "r":…, "g":…, "b":… }`.
-- **Spaces are transparent** in `art`/`morph`/`label` (no `bg`). Set a `bg` to
-  make an object an opaque block for layering.
+- **Spaces are transparent** in `art`/`morph`/`header` (no `bg`), but **not** in
+  `label`/`list`: a label laid over art blanks the art across its text rows. For
+  an opaque block, use a `label` with `width`, `height` and a `bg`; on other
+  objects a `bg` only makes their drawn cells opaque (see §3.4).
 - **`group.members` and `links` are array indices** — fragile under reordering.
   Hand-edit with care; the editor manages them automatically.
 - **Animations need both halves**: the `animation` object *and* the
@@ -691,6 +752,9 @@ of the two. The presenter can still navigate manually at any time.
 - **Don't hand-edit the compiled `out.json`** — it's regenerated from source.
 - **Optional fields can be omitted** entirely; the engine fills defaults. Keep
   hand-written files terse by omitting `style`, `z_order: 0`, default flags, etc.
+- **Unknown keys are ignored, then lost.** A key the format does not define (a
+  `"_comment"` note, a misspelt `"styel"`) is silently ignored by the compiler,
+  and `bs edit` drops it on save — it warns on open and on that first save.
 - **Review visually before trusting layout.** Open with `bs edit source.json`;
   the preview is the same engine that compiles and plays, so geometry you eyeball
   there is authoritative. Hand-deriving exact column math is error-prone.

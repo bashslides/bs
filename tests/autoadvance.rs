@@ -52,3 +52,14 @@ fn auto_advance_draws_nothing_into_the_frames() {
     // Nothing else painted anywhere on the canvas.
     assert!(grid[1..].iter().all(|line| line.trim().is_empty()));
 }
+
+#[test]
+fn auto_advance_region_follows_an_explicit_group_range() {
+    let s = source(
+        r#"{ "width": 10, "height": 2, "frame_count": 6, "objects": [
+            { "type": "auto_advance", "frames": { "start": 0, "end": 1 } },
+            { "type": "group", "members": [0], "frames": { "start": 2, "end": 5 } } ] }"#,
+    );
+    let r = &s.auto_advance_regions()[0];
+    assert_eq!((r.start_frame, r.end_frame), (2, 5));
+}

@@ -59,15 +59,15 @@ impl Command {
 
         let (x, y, w, h, status_x, status_y) = if self.border {
             (
-                bx + 1,
-                by + 1,
+                bx.saturating_add(1),
+                by.saturating_add(1),
                 bw.saturating_sub(2),
                 bh.saturating_sub(2),
-                bx + bw.saturating_sub(2),
+                bx.saturating_add(bw.saturating_sub(2)),
                 by,
             )
         } else {
-            (bx, by, bw, bh, bx + bw.saturating_sub(1), by)
+            (bx, by, bw, bh, bx.saturating_add(bw.saturating_sub(1)), by)
         };
 
         CommandRegion {
@@ -95,15 +95,16 @@ impl Resolve for Command {
             return;
         }
 
-        let x = self.position.x.evaluate(frame, ctx.anims);
-        let y = self.position.y.evaluate(frame, ctx.anims);
-        let w = self.width.evaluate(frame, ctx.anims);
-        let h = self.height.evaluate(frame, ctx.anims);
+        let x = usize::from(self.position.x.evaluate(frame, ctx.anims));
+        let y = usize::from(self.position.y.evaluate(frame, ctx.anims));
+        let w = usize::from(self.width.evaluate(frame, ctx.anims));
+        let h = usize::from(self.height.evaluate(frame, ctx.anims));
         let s = &self.style;
         let z = self.z_order;
 
-        let mut push = |x: u16, y: u16, ch: char, z: i32| {
-            ops.push(DrawOp { x, y, ch, style: s.clone(), z_order: z });
+        // Positions in usize; cells past u16::MAX are dropped by `DrawOp::at`.
+        let mut push = |x: usize, y: usize, ch: char, z: i32| {
+            ops.extend(DrawOp::at(x, y, ch, s.clone(), z));
         };
 
         // Top edge

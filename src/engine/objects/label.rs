@@ -103,34 +103,49 @@ fn align_row(row: Vec<char>, w: usize, align: TextAlign) -> Vec<char> {
     out
 }
 
-fn draw_frame(ops: &mut Vec<DrawOp>, fx: u16, fy: u16, fw: usize, fh: usize, style: &Style, z_order: i32) {
+/// Draw a `fw`×`fh` border at (`fx`, `fy`); positions are `usize` and cells
+/// past `u16::MAX` are dropped by `DrawOp::at`.
+fn draw_frame(ops: &mut Vec<DrawOp>, fx: usize, fy: usize, fw: usize, fh: usize, style: &Style, z_order: i32) {
     if fw < 2 || fh < 2 {
         return;
     }
-    let fw = fw as u16;
-    let fh = fh as u16;
-    let z = z_order;
+    let mut put = |x: usize, y: usize, ch: char| ops.extend(DrawOp::at(x, y, ch, style.clone(), z_order));
+    let (right, bottom) = (fx + fw - 1, fy + fh - 1);
 
-    ops.push(DrawOp { x: fx,          y: fy,          ch: '┌', style: style.clone(), z_order: z });
-    ops.push(DrawOp { x: fx + fw - 1, y: fy,          ch: '┐', style: style.clone(), z_order: z });
-    ops.push(DrawOp { x: fx,          y: fy + fh - 1, ch: '└', style: style.clone(), z_order: z });
-    ops.push(DrawOp { x: fx + fw - 1, y: fy + fh - 1, ch: '┘', style: style.clone(), z_order: z });
+    put(fx, fy, '┌');
+    put(right, fy, '┐');
+    put(fx, bottom, '└');
+    put(right, bottom, '┘');
     for i in 1..fw - 1 {
-        ops.push(DrawOp { x: fx + i, y: fy,          ch: '─', style: style.clone(), z_order: z });
-        ops.push(DrawOp { x: fx + i, y: fy + fh - 1, ch: '─', style: style.clone(), z_order: z });
+        put(fx + i, fy, '─');
+        put(fx + i, bottom, '─');
     }
     for j in 1..fh - 1 {
-        ops.push(DrawOp { x: fx,          y: fy + j, ch: '│', style: style.clone(), z_order: z });
-        ops.push(DrawOp { x: fx + fw - 1, y: fy + j, ch: '│', style: style.clone(), z_order: z });
+        put(fx, fy + j, '│');
+        put(right, fy + j, '│');
     }
 }
 
 /// Returns the number of spaces to insert at the start of wrapped continuation
 /// lines for list items:
 /// - `"- text"` → 2 (aligns with the text after the bullet)
-/// - `"1. text"` → 3 (aligns with the text after the number and dot)
+/// - `"1. text"` → 3, `"100. text"` → 5 (aligns with the text after the
+///   number and dot)
 /// - anything else → 0
+///
+/// A marker after leading spaces (a nested `"  - text"`) counts too, with the
+/// spaces added, so its continuation lines up under its text.
 fn list_continuation_indent(line: &str) -> usize {
+    let trimmed = line.trim_start_matches(' ');
+    match marker_indent(trimmed) {
+        0 => 0,
+        n => line.len() - trimmed.len() + n,
+    }
+}
+
+/// The marker part of [`list_continuation_indent`], for a line starting at its
+/// marker.
+fn marker_indent(line: &str) -> usize {
     if line.starts_with("- ") {
         return 2;
     }
@@ -138,7 +153,7 @@ fn list_continuation_indent(line: &str) -> usize {
     let after_digits = line.trim_start_matches(|c: char| c.is_ascii_digit());
     let digit_count = line.len() - after_digits.len(); // bytes == chars (ASCII digits)
     if digit_count > 0 && after_digits.starts_with(". ") {
-        return 3;
+        return digit_count + 2;
     }
     0
 }
@@ -199,8 +214,9 @@ impl Resolve for Label {
         if !self.frames.contains(frame) {
             return;
         }
-        let base_x = self.position.x.evaluate(frame, ctx.anims);
-        let base_y = self.position.y.evaluate(frame, ctx.anims);
+        // Positions in usize; cells past u16::MAX are dropped by `DrawOp::at`.
+        let base_x = usize::from(self.position.x.evaluate(frame, ctx.anims));
+        let base_y = usize::from(self.position.y.evaluate(frame, ctx.anims));
         let w = self.width.evaluate(frame, ctx.anims) as usize;
         let h = self.height.evaluate(frame, ctx.anims) as usize;
 
@@ -246,21 +262,23 @@ impl Resolve for Label {
                 }
                 rows = padded;
             }
-            // Emit DrawOps for all cells
-            for (r, row_chars) in rows.iter().enumerate() {
+            // Emit DrawOps for the cells on the canvas (a huge bg-filled box
+            // would otherwise cost w × h ops for cells that are clipped anyway).
+            let (vis_w, vis_h) = ctx.visible(draw_x, draw_y);
+            for (r, row_chars) in rows.iter().enumerate().take(vis_h) {
                 let emit_w = if has_bg { w } else { row_chars.len() };
-                for col in 0..emit_w {
+                for col in 0..emit_w.min(vis_w) {
                     let ch = row_chars.get(col).copied().unwrap_or(' ');
                     if !has_bg && ch == ' ' && col >= row_chars.len() {
                         continue;
                     }
-                    ops.push(DrawOp {
-                        x: draw_x + col as u16,
-                        y: draw_y + r as u16,
+                    ops.extend(DrawOp::at(
+                        draw_x + col,
+                        draw_y + r,
                         ch,
-                        style: self.style.clone(),
-                        z_order: self.z_order,
-                    });
+                        self.style.clone(),
+                        self.z_order,
+                    ));
                 }
             }
             if self.framed {
@@ -289,13 +307,13 @@ impl Resolve for Label {
                     max_len = line_len;
                 }
                 for (col, ch) in line.chars().enumerate() {
-                    ops.push(DrawOp {
-                        x: draw_x + col as u16,
-                        y: draw_y + (pad_top + row) as u16,
+                    ops.extend(DrawOp::at(
+                        draw_x + col,
+                        draw_y + pad_top + row,
                         ch,
-                        style: self.style.clone(),
-                        z_order: self.z_order,
-                    });
+                        self.style.clone(),
+                        self.z_order,
+                    ));
                 }
             }
             if self.framed {

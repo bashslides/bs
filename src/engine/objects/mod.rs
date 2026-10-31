@@ -32,11 +32,14 @@
 //! 8. **Docs + tests** — add the type to `PRESENTATION_FORMAT.md` (the §4
 //!    catalog row, its own field-table section, and the §10 tag list), the
 //!    object-type list in `AGENTS.md`, the `src/engine/objects/` row of
-//!    `CLAUDE.md`'s module map, and `README.md`'s catalog if the user-facing
-//!    list changes; write a `tests/<type>.rs` behaviour test and list it in
-//!    `TESTS.md`. `tests/docs.rs` fails the build on a missing catalog row, a
-//!    stale type count, or an unlisted test — but it cannot judge prose, so
-//!    still describe the type properly.
+//!    `CLAUDE.md`'s module map, the packaged skill
+//!    `.claude/skills/bs-deck/SKILL.md` (the §3 catalog row, a field-table
+//!    section headed by the tag, and the §14 self-check tag list), and
+//!    `README.md`'s catalog if the user-facing list changes; write a
+//!    `tests/<type>.rs` behaviour test and list it in `TESTS.md`.
+//!    `tests/docs.rs` fails the build on a missing catalog row, skill section or
+//!    self-check tag, a stale type count, or an unlisted test — but it cannot
+//!    judge prose, so still describe the type properly.
 //!
 //! `panel.rs`, `menubar.rs`, and `preview.rs` are driven by `OBJECT_TYPES` and
 //! the generic `Editable` dispatch, so they usually need no changes.
@@ -92,15 +95,30 @@ use super::source::{AnimSpans, SceneObject};
 
 /// Everything an object needs to resolve itself for one frame.
 ///
-/// `frame` is the frame being rendered; `canvas_width` is the width (in cells)
-/// of the output frame (most objects ignore it — `Header` uses it to word-wrap
-/// its large glyphs); `anims` maps each animation id to its span, so an
+/// `frame` is the frame being rendered; `canvas_width`/`canvas_height` are the
+/// output frame's size in cells (`Header` word-wraps to the width; objects with
+/// an unbounded extent stop generating cells past the canvas, see
+/// [`ResolveCtx::visible`]); `anims` maps each animation id to its span, so an
 /// animated `Coordinate` can look up its timing (the span lives on the
 /// `Animation` object, not on the coordinate).
 pub struct ResolveCtx<'a> {
     pub frame: usize,
     pub canvas_width: u16,
+    pub canvas_height: u16,
     pub anims: &'a AnimSpans,
+}
+
+impl ResolveCtx<'_> {
+    /// How many columns and rows from (`x`, `y`) rightward/downward lie on the
+    /// canvas. Renderers cap their loops with it so a huge declared size (a
+    /// bg-filled 20000×20000 label, a 1e13 list spacing) costs only the visible
+    /// cells — everything past the edge would be clipped anyway.
+    pub fn visible(&self, x: usize, y: usize) -> (usize, usize) {
+        (
+            usize::from(self.canvas_width).saturating_sub(x),
+            usize::from(self.canvas_height).saturating_sub(y),
+        )
+    }
 }
 
 /// Resolve an object for a given frame into concrete `DrawOp`s.

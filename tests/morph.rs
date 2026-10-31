@@ -101,3 +101,75 @@ fn morph_is_hidden_outside_its_range() {
     assert_eq!(char_at(&p, 1, 0, 0), 'A'); // only frame in range → progress 0
     assert_eq!(char_at(&p, 2, 0, 0), ' '); // after the range
 }
+
+/// The horizontal wipes move one straight front across ragged art: a column
+/// flips on the same frame in every row, short rows included (thresholds use
+/// the grid's width, not each row's own).
+#[test]
+fn morph_horizontal_wipes_flip_a_column_together_in_ragged_rows() {
+    for mode in ["wipe-right", "wipe-left"] {
+        let p = render_json(&format!(
+            r#"{{
+                "width": 10, "height": 2, "frame_count": 11,
+                "objects": [
+                    {{ "type": "morph",
+                       "position": {{ "x": {{ "fixed": 0 }}, "y": {{ "fixed": 0 }} }},
+                       "from": "AAAAAAAAAA\nAA",
+                       "to": "BBBBBBBBBB\nBB",
+                       "mode": "{mode}",
+                       "frames": {{ "start": 0, "end": 11 }} }}
+                ]
+            }}"#
+        ));
+        for frame in 0..11 {
+            for col in 0..2 {
+                assert_eq!(
+                    char_at(&p, frame, col, 1) == 'B',
+                    char_at(&p, frame, col, 0) == 'B',
+                    "{mode}: column {col} on frame {frame}"
+                );
+            }
+        }
+    }
+}
+
+/// A 10-wide wipe-right morph over `own`, alone or in an explicit group `group`.
+fn morph_deck(own: (usize, usize), group: Option<(usize, usize)>) -> String {
+    let group = group
+        .map(|(s, e)| format!(r#", {{ "type": "group", "members": [0], "frames": {{ "start": {s}, "end": {e} }} }}"#))
+        .unwrap_or_default();
+    format!(
+        r#"{{ "width": 10, "height": 1, "frame_count": 10, "objects": [
+            {{ "type": "morph", "position": {{ "x": {{ "fixed": 0 }}, "y": {{ "fixed": 0 }} }},
+               "from": "AAAAAAAAAA", "to": "BBBBBBBBBB", "mode": "wipe-right",
+               "frames": {{ "start": {}, "end": {} }} }}{group} ] }}"#,
+        own.0, own.1
+    )
+}
+
+#[test]
+fn an_explicit_group_range_gates_a_morph_without_retiming_it() {
+    let row = |p: &bs::types::PlayablePresentation, f: usize| -> String {
+        (0..10).map(|x| char_at(p, f, x, 0)).collect()
+    };
+    // Narrowed to frames 2..5: those frames show the morph's own progress over
+    // 0..10 (not a full blend squeezed into 3 frames); the rest show nothing.
+    let alone = render_json(&morph_deck((0, 10), None));
+    let grouped = render_json(&morph_deck((0, 10), Some((2, 5))));
+    for f in 0..10 {
+        let want = if (2..5).contains(&f) { row(&alone, f) } else { " ".repeat(10) };
+        assert_eq!(row(&grouped, f), want, "narrowed, frame {f}");
+    }
+    // Widened from 5..8 to 0..10: `from` before the morph's range, its own blend
+    // inside it, `to` after it.
+    let alone = render_json(&morph_deck((5, 8), None));
+    let grouped = render_json(&morph_deck((5, 8), Some((0, 10))));
+    for f in 0..10 {
+        let want = match f {
+            0..=4 => "A".repeat(10),
+            5..=7 => row(&alone, f),
+            _ => "B".repeat(10),
+        };
+        assert_eq!(row(&grouped, f), want, "widened, frame {f}");
+    }
+}

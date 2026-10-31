@@ -32,8 +32,8 @@ impl Resolve for Art {
         if !self.frames.contains(frame) {
             return;
         }
-        let base_x = self.position.x.evaluate(frame, ctx.anims);
-        let base_y = self.position.y.evaluate(frame, ctx.anims);
+        let base_x = usize::from(self.position.x.evaluate(frame, ctx.anims));
+        let base_y = usize::from(self.position.y.evaluate(frame, ctx.anims));
         let has_bg = self.style.bg.is_some();
 
         for (row, line) in self.art.split('\n').enumerate() {
@@ -41,13 +41,13 @@ impl Resolve for Art {
                 if ch == ' ' && !has_bg {
                     continue; // transparent
                 }
-                ops.push(DrawOp {
-                    x: base_x + col as u16,
-                    y: base_y + row as u16,
+                ops.extend(DrawOp::at(
+                    base_x + col,
+                    base_y + row,
                     ch,
-                    style: self.style.clone(),
-                    z_order: self.z_order,
-                });
+                    self.style.clone(),
+                    self.z_order,
+                ));
             }
         }
     }

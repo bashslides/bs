@@ -7,6 +7,7 @@ use super::object_defaults;
 use super::properties::{self, PropertyKind};
 use super::state::{scene_object_summary, ArtPick, EditorState, Mode, MultiSelectPurpose, TableCellSubState};
 use super::ui::Layout;
+use crate::types::printable_text;
 
 /// If `value` names a concrete colour (named or `#rrggbb`), paint a two-cell
 /// swatch in that colour at `(x, y)`. No-op for `none`/`auto`/sentinels.
@@ -51,10 +52,9 @@ pub(crate) fn draw_caret_line(
     reverse: bool,
     width: usize,
 ) -> anyhow::Result<()> {
-    let chars: Vec<char> = display.chars().collect();
+    let chars = caret_line_chars(display, width);
     queue!(stdout, cursor::MoveTo(x, y))?;
-    for col in 0..width {
-        let ch = chars.get(col).copied().unwrap_or(' ');
+    for (col, &ch) in chars.iter().enumerate() {
         let is_caret = caret == Some(col);
         if reverse {
             queue!(stdout, style::SetAttribute(style::Attribute::Reverse))?;
@@ -68,6 +68,14 @@ pub(crate) fn draw_caret_line(
         }
     }
     Ok(())
+}
+
+/// The `width` chars [`draw_caret_line`] prints for `display`: made printable
+/// one char per column (so the caret column is unchanged), padded with spaces.
+fn caret_line_chars(display: &str, width: usize) -> Vec<char> {
+    let mut chars: Vec<char> = printable_text(display).chars().take(width).collect();
+    chars.resize(width, ' ');
+    chars
 }
 
 pub fn render_right_panel(
@@ -93,7 +101,7 @@ pub fn render_right_panel(
             stdout,
             cursor::MoveTo(panel_x + 2, cy),
             style::SetAttribute(style::Attribute::Bold),
-            style::Print(title),
+            style::Print(printable_text(&title)),
             style::SetAttribute(style::Attribute::Reset),
         )?;
         queue!(stdout, cursor::MoveTo(panel_x, cy + 1), style::Print("\u{253c}"))?;
@@ -120,13 +128,13 @@ pub fn render_right_panel(
                 queue!(
                     stdout,
                     style::SetAttribute(style::Attribute::Reverse),
-                    style::Print(format!("> {:<width$}", label, width = max_width.saturating_sub(2))),
+                    style::Print(printable_text(&format!("> {:<width$}", label, width = max_width.saturating_sub(2)))),
                     style::SetAttribute(style::Attribute::Reset),
                 )?;
             } else {
                 queue!(
                     stdout,
-                    style::Print(format!("  {:<width$}", label, width = max_width.saturating_sub(2))),
+                    style::Print(printable_text(&format!("  {:<width$}", label, width = max_width.saturating_sub(2)))),
                 )?;
             }
         }
@@ -156,13 +164,13 @@ pub fn render_right_panel(
                 queue!(
                     stdout,
                     style::SetAttribute(style::Attribute::Reverse),
-                    style::Print(format!("> {:<width$}", text, width = max_width.saturating_sub(2))),
+                    style::Print(printable_text(&format!("> {:<width$}", text, width = max_width.saturating_sub(2)))),
                     style::SetAttribute(style::Attribute::Reset),
                 )?;
             } else {
                 queue!(
                     stdout,
-                    style::Print(format!("  {:<width$}", text, width = max_width.saturating_sub(2))),
+                    style::Print(printable_text(&format!("  {:<width$}", text, width = max_width.saturating_sub(2)))),
                 )?;
             }
         }
@@ -177,7 +185,7 @@ pub fn render_right_panel(
             let instr: String = "Path to art file:".chars().take(max_width).collect();
             queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 2),
                 style::SetAttribute(style::Attribute::Dim),
-                style::Print(instr),
+                style::Print(printable_text(&instr)),
                 style::SetAttribute(style::Attribute::Reset))?;
         }
         if cy + 3 < cy + layout.canvas_height {
@@ -188,7 +196,7 @@ pub fn render_right_panel(
             let hint: String = "Enter = load   Esc = back".chars().take(max_width).collect();
             queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 5),
                 style::SetAttribute(style::Attribute::Dim),
-                style::Print(hint),
+                style::Print(printable_text(&hint)),
                 style::SetAttribute(style::Attribute::Reset))?;
         }
         return Ok(());
@@ -201,7 +209,7 @@ pub fn render_right_panel(
             let instr: String = "Output size (cells):".chars().take(max_width).collect();
             queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 2),
                 style::SetAttribute(style::Attribute::Dim),
-                style::Print(instr),
+                style::Print(printable_text(&instr)),
                 style::SetAttribute(style::Attribute::Reset))?;
         }
 
@@ -214,7 +222,7 @@ pub fn render_right_panel(
             let selected = *selected_field == i;
             let marker = if selected { "\u{203a} " } else { "  " };
             let prefix = format!("{marker}{name:>6}: ");
-            queue!(stdout, cursor::MoveTo(panel_x + 2, y), style::Print(&prefix))?;
+            queue!(stdout, cursor::MoveTo(panel_x + 2, y), style::Print(printable_text(&prefix)))?;
 
             let vx = panel_x + 2 + prefix.chars().count() as u16;
             if selected {
@@ -224,7 +232,7 @@ pub fn render_right_panel(
                 draw_caret_line(stdout, vx, y, buf, Some(cur), false, field_w)?;
             } else {
                 let val: String = buf.chars().take(max_width).collect();
-                queue!(stdout, cursor::MoveTo(vx, y), style::Print(val))?;
+                queue!(stdout, cursor::MoveTo(vx, y), style::Print(printable_text(&val)))?;
             }
         }
 
@@ -232,7 +240,7 @@ pub fn render_right_panel(
             let hint: String = "Enter = apply   Esc = cancel".chars().take(max_width).collect();
             queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 7),
                 style::SetAttribute(style::Attribute::Dim),
-                style::Print(hint),
+                style::Print(printable_text(&hint)),
                 style::SetAttribute(style::Attribute::Reset))?;
         }
         return Ok(());
@@ -254,13 +262,13 @@ pub fn render_right_panel(
                 queue!(
                     stdout,
                     style::SetAttribute(style::Attribute::Reverse),
-                    style::Print(format!("{:<width$}", label, width = max_width)),
+                    style::Print(printable_text(&format!("{:<width$}", label, width = max_width))),
                     style::SetAttribute(style::Attribute::Reset),
                 )?;
             } else {
                 queue!(
                     stdout,
-                    style::Print(format!("{:<width$}", label, width = max_width)),
+                    style::Print(printable_text(&format!("{:<width$}", label, width = max_width))),
                 )?;
             }
         }
@@ -286,13 +294,13 @@ pub fn render_right_panel(
                 queue!(
                     stdout,
                     style::SetAttribute(style::Attribute::Reverse),
-                    style::Print(format!("> {:<width$}", label, width = max_width.saturating_sub(2))),
+                    style::Print(printable_text(&format!("> {:<width$}", label, width = max_width.saturating_sub(2)))),
                     style::SetAttribute(style::Attribute::Reset),
                 )?;
             } else {
                 queue!(
                     stdout,
-                    style::Print(format!("  {:<width$}", label, width = max_width.saturating_sub(2))),
+                    style::Print(printable_text(&format!("  {:<width$}", label, width = max_width.saturating_sub(2)))),
                 )?;
             }
         }
@@ -307,7 +315,7 @@ pub fn render_right_panel(
             let instr: String = "Path to .json:".chars().take(max_width).collect();
             queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 2),
                 style::SetAttribute(style::Attribute::Dim),
-                style::Print(instr),
+                style::Print(printable_text(&instr)),
                 style::SetAttribute(style::Attribute::Reset))?;
         }
         if cy + 3 < cy + layout.canvas_height {
@@ -318,7 +326,7 @@ pub fn render_right_panel(
             let hint: String = "Enter = open   Esc = back".chars().take(max_width).collect();
             queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 5),
                 style::SetAttribute(style::Attribute::Dim),
-                style::Print(hint),
+                style::Print(printable_text(&hint)),
                 style::SetAttribute(style::Attribute::Reset))?;
         }
         return Ok(());
@@ -398,12 +406,12 @@ pub fn render_right_panel(
                 queue!(
                     stdout,
                     style::SetAttribute(style::Attribute::Reverse),
-                    style::Print(format!("{:<width$}", display, width = max_width)),
+                    style::Print(printable_text(&format!("{:<width$}", display, width = max_width))),
                     style::SetAttribute(style::Attribute::Reset),
                 )?;
                 selected_screen_y = Some(screen_y);
             } else {
-                queue!(stdout, style::Print(display))?;
+                queue!(stdout, style::Print(printable_text(&display)))?;
             }
 
             // Colour rows get a swatch at the right edge (unless their dropdown
@@ -437,11 +445,11 @@ pub fn render_right_panel(
                     queue!(
                         stdout,
                         style::SetAttribute(style::Attribute::Reverse),
-                        style::Print(line),
+                        style::Print(printable_text(&line)),
                         style::SetAttribute(style::Attribute::Reset),
                     )?;
                 } else {
-                    queue!(stdout, style::Print(line))?;
+                    queue!(stdout, style::Print(printable_text(&line)))?;
                 }
                 draw_color_swatch(stdout, panel_x + 2 + (max_width as u16).saturating_sub(2), y, opt)?;
             }
@@ -462,7 +470,7 @@ pub fn render_right_panel(
                 stdout,
                 cursor::MoveTo(panel_x + 2, cy + 2),
                 style::SetAttribute(style::Attribute::Dim),
-                style::Print(msg),
+                style::Print(printable_text(&msg)),
                 style::SetAttribute(style::Attribute::Reset),
             )?;
         }
@@ -478,13 +486,13 @@ pub fn render_right_panel(
                 queue!(
                     stdout,
                     style::SetAttribute(style::Attribute::Reverse),
-                    style::Print(format!("{:<width$}", label, width = max_width)),
+                    style::Print(printable_text(&format!("{:<width$}", label, width = max_width))),
                     style::SetAttribute(style::Attribute::Reset),
                 )?;
             } else {
                 queue!(
                     stdout,
-                    style::Print(format!("{:<width$}", label, width = max_width)),
+                    style::Print(printable_text(&format!("{:<width$}", label, width = max_width))),
                 )?;
             }
         }
@@ -519,11 +527,11 @@ pub fn render_right_panel(
                 queue!(
                     stdout,
                     style::SetAttribute(style::Attribute::Reverse),
-                    style::Print(format!("{:<width$}", text, width = max_width)),
+                    style::Print(printable_text(&format!("{:<width$}", text, width = max_width))),
                     style::SetAttribute(style::Attribute::Reset),
                 )?;
             } else {
-                queue!(stdout, style::Print(format!("{:<width$}", text, width = max_width)))?;
+                queue!(stdout, style::Print(printable_text(&format!("{:<width$}", text, width = max_width))))?;
             }
         }
         return Ok(());
@@ -579,7 +587,7 @@ pub fn render_right_panel(
             if i == selected_field {
                 draw_caret_line(stdout, panel_x + 2, y, &display, caret, true, max_width)?;
             } else {
-                queue!(stdout, cursor::MoveTo(panel_x + 2, y), style::Print(display))?;
+                queue!(stdout, cursor::MoveTo(panel_x + 2, y), style::Print(printable_text(&display)))?;
             }
         }
 
@@ -594,7 +602,7 @@ pub fn render_right_panel(
             queue!(
                 stdout,
                 style::SetAttribute(style::Attribute::Dim),
-                style::Print(hint),
+                style::Print(printable_text(&hint)),
                 style::SetAttribute(style::Attribute::Reset),
             )?;
         }
@@ -643,7 +651,7 @@ pub fn render_right_panel(
             if i == selected_field {
                 draw_caret_line(stdout, panel_x + 2, y, &display, caret, true, max_width)?;
             } else {
-                queue!(stdout, cursor::MoveTo(panel_x + 2, y), style::Print(display))?;
+                queue!(stdout, cursor::MoveTo(panel_x + 2, y), style::Print(printable_text(&display)))?;
             }
         }
 
@@ -657,7 +665,7 @@ pub fn render_right_panel(
             queue!(
                 stdout,
                 style::SetAttribute(style::Attribute::Dim),
-                style::Print(hint),
+                style::Print(printable_text(&hint)),
                 style::SetAttribute(style::Attribute::Reset),
             )?;
         }
@@ -683,7 +691,7 @@ pub fn render_right_panel(
             let instr: String = instr.chars().take(max_width).collect();
             queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 2),
                 style::SetAttribute(style::Attribute::Dim),
-                style::Print(instr),
+                style::Print(printable_text(&instr)),
                 style::SetAttribute(style::Attribute::Reset))?;
         }
         // Value field
@@ -699,7 +707,7 @@ pub fn render_right_panel(
                 let marker = if i + 1 == col_num { ">" } else { " " };
                 let line = format!("{} col {}: {:.1}%", marker, i + 1, w * 100.0);
                 let line: String = line.chars().take(max_width).collect();
-                queue!(stdout, cursor::MoveTo(panel_x + 2, y), style::Print(line))?;
+                queue!(stdout, cursor::MoveTo(panel_x + 2, y), style::Print(printable_text(&line)))?;
             }
         }
         return Ok(());
@@ -720,7 +728,7 @@ pub fn render_right_panel(
             let instr: String = instr.chars().take(max_width).collect();
             queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 2),
                 style::SetAttribute(style::Attribute::Dim),
-                style::Print(instr),
+                style::Print(printable_text(&instr)),
                 style::SetAttribute(style::Attribute::Reset))?;
         }
         if cy + 3 < cy + layout.canvas_height {
@@ -739,10 +747,10 @@ pub fn render_right_panel(
                 if highlighted {
                     queue!(stdout,
                         style::SetAttribute(style::Attribute::Reverse),
-                        style::Print(format!("{:<width$}", line, width = max_width)),
+                        style::Print(printable_text(&format!("{:<width$}", line, width = max_width))),
                         style::SetAttribute(style::Attribute::Reset))?;
                 } else {
-                    queue!(stdout, style::Print(line))?;
+                    queue!(stdout, style::Print(printable_text(&line)))?;
                 }
             }
         }
@@ -759,7 +767,7 @@ pub fn render_right_panel(
                 if cy + 2 < cy + layout.canvas_height {
                     let hint = format!("Cur: ({},{})", cursor_row + 1, cursor_col + 1);
                     queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 2),
-                        style::Print(hint.chars().take(max_width).collect::<String>()))?;
+                        style::Print(printable_text(&hint.chars().take(max_width).collect::<String>())))?;
                 }
                 if cy + 3 < cy + layout.canvas_height {
                     let sel_str = if selected_cells.is_empty() {
@@ -769,7 +777,7 @@ pub fn render_right_panel(
                     };
                     queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 3),
                         style::SetAttribute(style::Attribute::Dim),
-                        style::Print(sel_str.chars().take(max_width).collect::<String>()),
+                        style::Print(printable_text(&sel_str.chars().take(max_width).collect::<String>())),
                         style::SetAttribute(style::Attribute::Reset))?;
                 }
                 // Hints
@@ -786,7 +794,7 @@ pub fn render_right_panel(
                     if y >= cy + layout.canvas_height { break; }
                     queue!(stdout, cursor::MoveTo(panel_x + 2, y),
                         style::SetAttribute(style::Attribute::Dim),
-                        style::Print(hint.chars().take(max_width).collect::<String>()),
+                        style::Print(printable_text(&hint.chars().take(max_width).collect::<String>())),
                         style::SetAttribute(style::Attribute::Reset))?;
                 }
             }
@@ -798,7 +806,7 @@ pub fn render_right_panel(
                         .chars().take(max_width).collect();
                     queue!(stdout, cursor::MoveTo(panel_x + 2, cy + 2),
                         style::SetAttribute(style::Attribute::Dim),
-                        style::Print(hint),
+                        style::Print(printable_text(&hint)),
                         style::SetAttribute(style::Attribute::Reset))?;
                 }
                 // Show content with the underline insertion caret on the line
@@ -884,7 +892,7 @@ pub fn render_right_panel(
                         draw_caret_line(stdout, panel_x + 2, y, &display, caret, true, max_width)?;
                         sel_screen_y = Some(y);
                     } else {
-                        queue!(stdout, style::Print(display))?;
+                        queue!(stdout, style::Print(printable_text(&display)))?;
                     }
                     // Swatch for the fg/bg colour rows (not while editing the hex).
                     if (name == "fg_color" || name == "bg_color")
@@ -909,10 +917,10 @@ pub fn render_right_panel(
                         if i == *dd_sel {
                             queue!(stdout,
                                 style::SetAttribute(style::Attribute::Reverse),
-                                style::Print(line),
+                                style::Print(printable_text(&line)),
                                 style::SetAttribute(style::Attribute::Reset))?;
                         } else {
-                            queue!(stdout, style::Print(line))?;
+                            queue!(stdout, style::Print(printable_text(&line)))?;
                         }
                         draw_color_swatch(stdout, panel_x + 2 + (max_width as u16).saturating_sub(2), y, opt)?;
                     }
@@ -1046,7 +1054,7 @@ pub fn render_right_panel(
                         stdout,
                         style::SetAttribute(style::Attribute::Reverse),
                         style::SetAttribute(style::Attribute::Dim),
-                        style::Print(format!("{:<width$}", display, width = max_width)),
+                        style::Print(printable_text(&format!("{:<width$}", display, width = max_width))),
                         style::SetAttribute(style::Attribute::Reset),
                     )?;
                 } else {
@@ -1059,7 +1067,7 @@ pub fn render_right_panel(
                     queue!(
                         stdout,
                         style::SetAttribute(style::Attribute::Reverse),
-                        style::Print(format!("{:<width$}", display, width = max_width)),
+                        style::Print(printable_text(&format!("{:<width$}", display, width = max_width))),
                         style::SetAttribute(style::Attribute::Reset),
                     )?;
                 }
@@ -1070,12 +1078,12 @@ pub fn render_right_panel(
                 queue!(
                     stdout,
                     style::SetAttribute(style::Attribute::Dim),
-                    style::Print(display),
+                    style::Print(printable_text(&display)),
                     style::SetAttribute(style::Attribute::Reset),
                 )?;
             } else {
                 let display = fmt_prop_display(prop);
-                queue!(stdout, style::Print(display))?;
+                queue!(stdout, style::Print(printable_text(&display)))?;
             }
 
             // Colour rows get a swatch at the right edge (skip while its dropdown
@@ -1114,11 +1122,11 @@ pub fn render_right_panel(
                 queue!(
                     stdout,
                     style::SetAttribute(style::Attribute::Reverse),
-                    style::Print(line),
+                    style::Print(printable_text(&line)),
                     style::SetAttribute(style::Attribute::Reset),
                 )?;
             } else {
-                queue!(stdout, style::Print(line))?;
+                queue!(stdout, style::Print(printable_text(&line)))?;
             }
             draw_color_swatch(stdout, panel_x + 2 + (max_width as u16).saturating_sub(2), y, opt)?;
         }
@@ -1188,8 +1196,8 @@ pub fn render_text_overlay(
         .chain(std::iter::once('\u{2518}'))
         .collect();
 
-    queue!(stdout, cursor::MoveTo(bx, by), style::Print(top))?;
-    queue!(stdout, cursor::MoveTo(bx, by + bh - 1), style::Print(bottom))?;
+    queue!(stdout, cursor::MoveTo(bx, by), style::Print(printable_text(&top)))?;
+    queue!(stdout, cursor::MoveTo(bx, by + bh - 1), style::Print(printable_text(&bottom)))?;
 
     for row in 0..inner_h {
         let y = by + 1 + row as u16;
@@ -1244,12 +1252,32 @@ pub fn render_save_as_overlay(
         .chain(std::iter::once('\u{2518}'))
         .collect();
 
-    queue!(stdout, cursor::MoveTo(bx, by), style::Print(top))?;
+    queue!(stdout, cursor::MoveTo(bx, by), style::Print(printable_text(&top)))?;
     queue!(stdout, cursor::MoveTo(bx, by + 1), style::Print("\u{2502}"))?;
     draw_caret_line(stdout, bx + 1, by + 1, &window, Some(caret), false, inner_w)?;
     queue!(stdout, cursor::MoveTo(bx + 1 + inner_w as u16, by + 1), style::Print("\u{2502}"))?;
-    queue!(stdout, cursor::MoveTo(bx, by + 2), style::Print(bottom))?;
+    queue!(stdout, cursor::MoveTo(bx, by + 2), style::Print(printable_text(&bottom)))?;
 
     Ok(())
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_fields_and_object_rows_print_no_control_chars() {
+        let evil = "\u{1b}]52;c;eA==\u{7}Hi\u{1b}c";
+        let line = caret_line_chars(evil, 20);
+        assert_eq!(line.len(), 20);
+        assert!(!line.iter().any(|c| c.is_control()));
+        // One char per column, so a caret after "Hi" stays on it.
+        assert_eq!(line[12..14], ['H', 'i']);
+        let mut label = object_defaults::create_default(0, 0);
+        if let SceneObject::Label(l) = &mut label {
+            l.text = evil.into();
+        }
+        assert!(!scene_object_summary(&label).chars().any(|c| c.is_control()));
+    }
+}

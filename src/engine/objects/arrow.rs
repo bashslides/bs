@@ -116,10 +116,10 @@ impl Resolve for Arrow {
         let s = &self.style;
         let z = self.z_order;
 
-        // Emit one cell, skipping off-screen coordinates.
+        // Emit one cell, skipping coordinates off any canvas (negative or past u16).
         let emit = |ops: &mut Vec<DrawOp>, x: i32, y: i32, ch: char| {
-            if x >= 0 && y >= 0 {
-                ops.push(DrawOp { x: x as u16, y: y as u16, ch, style: s.clone(), z_order: z });
+            if let (Ok(x), Ok(y)) = (usize::try_from(x), usize::try_from(y)) {
+                ops.extend(DrawOp::at(x, y, ch, s.clone(), z));
             }
         };
 

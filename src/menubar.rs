@@ -2,6 +2,8 @@ use std::io;
 
 use crossterm::{queue, style};
 
+use crate::types::printable_text;
+
 /// Print a menu item string, bolding any text inside `[...]` brackets.
 /// Text outside brackets is printed dim.
 pub fn print_menu_item(stdout: &mut io::Stdout, item: &str) -> anyhow::Result<()> {
@@ -12,7 +14,7 @@ pub fn print_menu_item(stdout: &mut io::Stdout, item: &str) -> anyhow::Result<()
                 queue!(
                     stdout,
                     style::SetAttribute(style::Attribute::Dim),
-                    style::Print(&rest[..open]),
+                    style::Print(printable_text(&rest[..open])),
                     style::SetAttribute(style::Attribute::Reset),
                 )?;
             }
@@ -21,19 +23,19 @@ pub fn print_menu_item(stdout: &mut io::Stdout, item: &str) -> anyhow::Result<()
                 queue!(
                     stdout,
                     style::SetAttribute(style::Attribute::Bold),
-                    style::Print(&rest[..=close]),
+                    style::Print(printable_text(&rest[..=close])),
                     style::SetAttribute(style::Attribute::Reset),
                 )?;
                 rest = &rest[close + 1..];
             } else {
-                queue!(stdout, style::Print(rest))?;
+                queue!(stdout, style::Print(printable_text(rest)))?;
                 break;
             }
         } else {
             queue!(
                 stdout,
                 style::SetAttribute(style::Attribute::Dim),
-                style::Print(rest),
+                style::Print(printable_text(rest)),
                 style::SetAttribute(style::Attribute::Reset),
             )?;
             break;

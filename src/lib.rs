@@ -15,3 +15,16 @@ pub mod editor;
 pub mod menubar;
 #[cfg(feature = "tui")]
 pub mod player;
+#[cfg(feature = "tui")]
+pub mod term;
+
+/// Test helper: a path in the system temp dir unique to this test process
+/// (`<pid>_<name>`), so concurrent `cargo test` runs on one host never share
+/// (or race on) a test file. A leftover *file* there is removed; a directory
+/// is left to the caller.
+#[cfg(test)]
+pub(crate) fn test_tmp(name: &str) -> String {
+    let p = std::env::temp_dir().join(format!("{}_{name}", std::process::id()));
+    let _ = std::fs::remove_file(&p);
+    p.to_string_lossy().into_owned()
+}

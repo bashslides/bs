@@ -110,12 +110,20 @@ pub fn all_items() -> Vec<ArtItem> {
     items
 }
 
+/// Tab stop used when expanding tabs in an art file.
+const TAB_STOP: usize = 8;
+
 /// Load a single art file. The item name is the file stem (e.g. `cat.txt` →
-/// `cat`). A single trailing newline is trimmed so it doesn't add a blank row.
+/// `cat`). Line endings are normalised (CRLF and lone CR become `\n`), tabs are
+/// expanded to spaces at every [`TAB_STOP`] columns, and a single trailing
+/// newline is trimmed so it doesn't add a blank row.
 pub fn load_file(path: &Path) -> Result<ArtItem> {
     let raw = fs::read_to_string(path)
         .with_context(|| format!("Failed to read art file {}", path.display()))?;
-    let art = raw.strip_suffix('\n').unwrap_or(&raw).to_string();
+    let unix = raw.replace("\r\n", "\n").replace('\r', "\n");
+    let lines: Vec<String> = unix.split('\n').map(expand_tabs).collect();
+    let joined = lines.join("\n");
+    let art = joined.strip_suffix('\n').unwrap_or(&joined).to_string();
     let name = path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -124,9 +132,35 @@ pub fn load_file(path: &Path) -> Result<ArtItem> {
     Ok(ArtItem { name, art })
 }
 
+/// Replace each tab with spaces up to the next multiple of [`TAB_STOP`].
+fn expand_tabs(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut col = 0;
+    for c in line.chars() {
+        if c == '\t' {
+            let n = TAB_STOP - col % TAB_STOP;
+            out.extend(std::iter::repeat_n(' ', n));
+            col += n;
+        } else {
+            out.push(c);
+            col += 1;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn load_file_normalises_crlf_and_expands_tabs() {
+        let path = std::path::PathBuf::from(crate::test_tmp("bs_art_crlf.txt"));
+        fs::write(&path, "ab\r\n\tc\rx\ty\r\n").unwrap();
+        let item = load_file(&path).unwrap();
+        let _ = fs::remove_file(&path);
+        assert_eq!(item.art, "ab\n        c\nx       y");
+    }
 
     #[test]
     fn builtins_are_present_and_named() {

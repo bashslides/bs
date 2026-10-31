@@ -9,11 +9,9 @@ use bs::{
             Animation, Coordinate, FrameRange, HLine, Header, Label, Position, Rect, SceneObject,
             SourcePresentation, TextAlign, VerticalAlign,
         },
-        Engine,
     },
     player::Player,
-    renderer::Renderer,
-    types::{Color, NamedColor, Style, TerminalContract},
+    types::{Color, NamedColor, Style},
 };
 
 fn main() -> anyhow::Result<()> {
@@ -216,19 +214,15 @@ fn main() -> anyhow::Result<()> {
         links: Vec::new(),
     };
 
-    // ── Pipeline: Source → Engine → Renderer → Player ──
+    // ── Pipeline: Source → compile → Player ──
 
-    // 1. Compile: evaluate the source over all frames
-    let scenes = Engine::compile(&source);
+    // 1. Compile: validate, resolve + rasterize every frame, and attach the
+    //    play-time sidecars (here the auto-play Animation) — the same path as
+    //    `bs compile`. Engine::compile + Renderer::render alone would give only
+    //    the static frames, so the animation would never auto-play.
+    let presentation = bs::compile::compile(&source)?;
 
-    // 2. Render: rasterize resolved scenes into a playable presentation
-    let contract = TerminalContract {
-        width: source.width,
-        height: source.height,
-    };
-    let presentation = Renderer::render(&scenes, contract);
-
-    // 3. Play: drive the presentation to the terminal
+    // 2. Play: drive the presentation to the terminal
     let mut player = Player::new(presentation);
     player.play()?;
 

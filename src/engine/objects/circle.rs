@@ -79,18 +79,22 @@ impl Resolve for Circle {
         let rx = cols as f64 / 2.0;
         let ry = rows as f64 / 2.0;
 
-        for r in 0..rows {
-            for c in 0..cols {
+        // Only the part on the canvas: a huge diameter would otherwise cost
+        // rows × cols iterations for cells that are clipped anyway.
+        // (`visible` is at most the canvas size, so the casts are lossless.)
+        let (vis_w, vis_h) = ctx.visible(usize::from(x0), usize::from(y0));
+        for r in 0..rows.min(vis_h as u16) {
+            for c in 0..cols.min(vis_w as u16) {
                 let dx = (c as f64 - cx) / rx;
                 let dy = (r as f64 - cy) / ry;
                 if dx * dx + dy * dy <= 1.0 {
-                    ops.push(DrawOp {
-                        x: x0 + c,
-                        y: y0 + r,
-                        ch: self.ch,
-                        style: self.style.clone(),
-                        z_order: self.z_order,
-                    });
+                    ops.extend(DrawOp::at(
+                        usize::from(x0) + usize::from(c),
+                        usize::from(y0) + usize::from(r),
+                        self.ch,
+                        self.style.clone(),
+                        self.z_order,
+                    ));
                 }
             }
         }

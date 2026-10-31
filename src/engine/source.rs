@@ -3,6 +3,8 @@
 //! These types define *what exists* and *how it behaves*, not how it is drawn.
 //! The engine reads these and resolves them into concrete `DrawOp`s per frame.
 
+use std::borrow::Cow;
+
 use serde::{Deserialize, Serialize};
 
 // Re-export object types so they remain accessible via `engine::source::*`.
@@ -11,7 +13,14 @@ pub use super::objects::{
     Morph, MorphMode, Rect, Table, TextAlign, VerticalAlign,
 };
 
-use crate::types::{AnimationRegion, AutoAdvanceRegion, CommandRegion, LoopRegion};
+use crate::types::{
+    AnimationRegion, AutoAdvanceRegion, CommandRegion, LoopRegion, TerminalContract,
+};
+
+/// Most frames a deck may declare (see `SourcePresentation::validate_contract`).
+pub const MAX_FRAME_COUNT: usize = 100_000;
+/// Most cells a deck may rasterize in total: `frame_count × width × height`.
+pub const MAX_DECK_CELLS: u64 = 50_000_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourcePresentation {
@@ -158,13 +167,15 @@ impl SourcePresentation {
     /// range is explicit, so it must render on `range` instead of its own.
     /// `None` means the object keeps its own range. Auto groups impose nothing.
     /// If an object belongs to several explicit groups, the last one wins.
+    /// An `Animation` member is never overridden: its own `frames` stay the
+    /// single source of truth for its span ([`AnimSpans`]).
     pub fn member_overrides(&self) -> Vec<Option<FrameRange>> {
         let mut out = vec![None; self.objects.len()];
         for obj in &self.objects {
             if let SceneObject::Group(g) = obj {
                 if let Some(range) = &g.frames {
                     for &m in &g.members {
-                        if m < out.len() {
+                        if m < out.len() && !matches!(self.objects[m], SceneObject::Animation(_)) {
                             out[m] = Some(range.clone());
                         }
                     }
@@ -174,18 +185,58 @@ impl SourcePresentation {
         out
     }
 
-    /// Collect the runtime command specs from all `Command` objects, evaluated
-    /// at each command's first active frame. These travel as a sidecar on the
-    /// `PlayablePresentation` because they cannot be baked into static frames.
-    pub fn command_regions(&self) -> Vec<CommandRegion> {
-        let anims = AnimSpans::of(self);
+    /// Every object as compiled: a member of an explicit-range group is a clone
+    /// carrying the group's range ([`member_overrides`](Self::member_overrides)),
+    /// everything else is borrowed as-is. The engine and every play-time sidecar
+    /// read objects through this, so a member's drawn frames and its runtime
+    /// region can never disagree.
+    pub fn effective_objects(&self) -> Vec<Cow<'_, SceneObject>> {
         self.objects
             .iter()
-            .filter_map(|obj| match obj {
-                SceneObject::Command(c) => Some(c.region(c.frames.start, &anims)),
-                _ => None,
+            .zip(self.member_overrides())
+            .map(|(obj, ov)| match ov {
+                Some(range) => {
+                    let mut member = obj.clone();
+                    // A morph's range is also its blend timing: the group
+                    // only gates it, so keep its own range as the timing.
+                    if let SceneObject::Morph(m) = &mut member {
+                        if m.timing.is_none() {
+                            m.timing = Some(m.frames.clone());
+                        }
+                    }
+                    member.set_frame_range(range);
+                    Cow::Owned(member)
+                }
+                None => Cow::Borrowed(obj),
             })
             .collect()
+    }
+
+    /// Collect the runtime command specs from all `Command` objects. These
+    /// travel as a sidecar on the `PlayablePresentation` because they cannot be
+    /// baked into static frames. The geometry is evaluated per frame, and a
+    /// command whose box moves or resizes (animated coordinates) yields one
+    /// region per run of frames with the same geometry, so play-time output
+    /// always lands in the box drawn on that frame. A static command is a
+    /// single region over its whole range.
+    pub fn command_regions(&self) -> Vec<CommandRegion> {
+        let anims = AnimSpans::of(self);
+        let geometry = |r: &CommandRegion| (r.x, r.y, r.w, r.h, r.status_x, r.status_y);
+        let mut out = Vec::new();
+        for obj in self.effective_objects() {
+            let SceneObject::Command(c) = obj.as_ref() else { continue };
+            // Frames past the deck never play; the last run keeps the range end.
+            let mut cur = c.region(c.frames.start, &anims);
+            for f in c.frames.start.saturating_add(1)..c.frames.end.min(self.frame_count) {
+                let next = c.region(f, &anims);
+                if geometry(&next) != geometry(&cur) {
+                    cur.end_frame = f;
+                    out.push(std::mem::replace(&mut cur, CommandRegion { start_frame: f, ..next }));
+                }
+            }
+            out.push(cur);
+        }
+        out
     }
 
     /// Collect the runtime loop specs from all `Loop` objects. Like the command
@@ -193,9 +244,9 @@ impl SourcePresentation {
     /// loop is a play-time navigation behavior, not something bakeable into the
     /// static frames.
     pub fn loop_regions(&self) -> Vec<LoopRegion> {
-        self.objects
+        self.effective_objects()
             .iter()
-            .filter_map(|obj| match obj {
+            .filter_map(|obj| match obj.as_ref() {
                 SceneObject::Loop(l) => Some(l.region()),
                 _ => None,
             })
@@ -203,13 +254,52 @@ impl SourcePresentation {
     }
 
     /// Other objects linked to object `index` (its link family minus itself).
-    /// Empty when the object is in no link group.
+    /// Empty when the object is in no link group. Only valid object indices,
+    /// each once: `links` comes from the file unchecked.
     pub fn link_siblings(&self, index: usize) -> Vec<usize> {
+        let mut seen = std::collections::HashSet::new();
         self.links
             .iter()
             .find(|fam| fam.contains(&index))
-            .map(|fam| fam.iter().copied().filter(|&i| i != index).collect())
+            .map(|fam| {
+                fam.iter()
+                    .copied()
+                    .filter(|&i| i != index && i < self.objects.len() && seen.insert(i))
+                    .collect()
+            })
             .unwrap_or_default()
+    }
+
+    /// Drop `Group.members` entries that name no object (or repeat within a
+    /// group). Returns whether anything was dropped. Like [`Self::sanitize_links`],
+    /// the editor runs it on open, so a stale member is never used or saved back.
+    pub fn sanitize_group_members(&mut self) -> bool {
+        let n = self.objects.len();
+        let mut changed = false;
+        for obj in &mut self.objects {
+            if let SceneObject::Group(g) = obj {
+                let mut seen = std::collections::HashSet::new();
+                let before = g.members.len();
+                g.members.retain(|&m| m < n && seen.insert(m));
+                changed |= g.members.len() != before;
+            }
+        }
+        changed
+    }
+
+    /// Drop `links` entries that name no object (or repeat within a family),
+    /// then families left with fewer than two members. Returns whether anything
+    /// was dropped. The editor runs it on open, so a hand-edited file's stale
+    /// entry is never used or saved back.
+    pub fn sanitize_links(&mut self) -> bool {
+        let n = self.objects.len();
+        let before = self.links.clone();
+        for fam in &mut self.links {
+            let mut seen = std::collections::HashSet::new();
+            fam.retain(|&i| i < n && seen.insert(i));
+        }
+        self.links.retain(|fam| fam.len() >= 2);
+        self.links != before
     }
 
     /// Collect the runtime animation specs from all `Animation` objects. Like
@@ -231,37 +321,77 @@ impl SourcePresentation {
     /// `PlayablePresentation` — auto-advance is a play-time navigation behavior
     /// that draws nothing into the static frames.
     pub fn auto_advance_regions(&self) -> Vec<AutoAdvanceRegion> {
-        self.objects
+        self.effective_objects()
             .iter()
-            .filter_map(|obj| match obj {
+            .filter_map(|obj| match obj.as_ref() {
                 SceneObject::AutoAdvance(a) => Some(a.region()),
                 _ => None,
             })
             .collect()
     }
 
+    /// Check the deck-level contract before anything is materialised: at least
+    /// one frame, at most [`MAX_FRAME_COUNT`] frames, a canvas within
+    /// [`MAX_CANVAS_CELLS`](crate::types::MAX_CANVAS_CELLS), and
+    /// `frame_count × width × height` within [`MAX_DECK_CELLS`] (compile
+    /// rasterizes every cell of every frame). The
+    /// one place these limits live: `compile` rejects a deck that fails, the
+    /// editor refuses such a frame size and skips the preview of such a deck.
+    pub fn validate_contract(&self) -> Result<(), String> {
+        if self.frame_count == 0 {
+            return Err("deck has no frames (frame_count is 0)".into());
+        }
+        if self.frame_count > MAX_FRAME_COUNT {
+            return Err(format!(
+                "frame_count {} exceeds the limit of {MAX_FRAME_COUNT}",
+                self.frame_count
+            ));
+        }
+        TerminalContract { width: self.width, height: self.height }.validate()?;
+        let total = u64::from(self.width) * u64::from(self.height) * self.frame_count as u64;
+        if total > MAX_DECK_CELLS {
+            return Err(format!(
+                "{} frames of {}×{} is {total} cells; the limit is {MAX_DECK_CELLS}",
+                self.frame_count, self.width, self.height
+            ));
+        }
+        Ok(())
+    }
+
     /// Validate every `Loop` object's range: each must be non-empty, fit within
     /// the deck, **disjoint** from every other loop (loops may neither overlap
     /// nor nest), and must not **bisect an animation** — a loop replays whole
     /// animations, so every `Animation` span must be either fully inside the
-    /// loop or fully outside it (never half-in). Returns an error describing the
-    /// first problem found.
+    /// loop or fully outside it (never half-in). It also rejects two `Animation`
+    /// objects sharing an `id` (coordinates would follow one span while both
+    /// auto-play). Returns an error describing the first problem found.
     ///
     /// Run both in the editor (to surface mistakes live) and at compile time (a
     /// hard gate before a playable is written).
     pub fn validate_loops(&self) -> Result<(), String> {
-        let animations: Vec<(usize, usize)> = self
-            .objects
+        let mut ids = std::collections::HashSet::new();
+        for obj in &self.objects {
+            if let SceneObject::Animation(a) = obj {
+                if !ids.insert(a.id) {
+                    return Err(format!(
+                        "animation id {} is used by more than one animation",
+                        a.id
+                    ));
+                }
+            }
+        }
+        let objects = self.effective_objects();
+        let animations: Vec<(usize, usize)> = objects
             .iter()
-            .filter_map(|o| match o {
+            .filter_map(|o| match o.as_ref() {
                 SceneObject::Animation(a) => Some((a.frames.start, a.frames.end)),
                 _ => None,
             })
             .collect();
 
         let mut seen: Vec<(usize, usize)> = Vec::new();
-        for obj in &self.objects {
-            let SceneObject::Loop(l) = obj else { continue };
+        for obj in &objects {
+            let SceneObject::Loop(l) = obj.as_ref() else { continue };
             let (s, e) = (l.frames.start, l.frames.end);
             if s >= e {
                 return Err(format!("a loop has an empty range (frames {s}..{e})"));

@@ -63,16 +63,16 @@ pub fn glyph(ch: char) -> Option<[&'static str; 5]> {
 }
 
 /// Compute the rendered width of `text` in glyph columns, including 1-column
-/// spacing between characters.
+/// spacing between characters. Saturates at `u16::MAX` (wider than any canvas).
 pub fn text_width(text: &str) -> u16 {
     let mut width: u16 = 0;
     let mut first = true;
     for ch in text.chars() {
         if let Some(g) = glyph(ch.to_ascii_uppercase()) {
             if !first {
-                width += 1; // inter-character spacing
+                width = width.saturating_add(1); // inter-character spacing
             }
-            width += g[0].len() as u16;
+            width = width.saturating_add(g[0].len() as u16);
             first = false;
         }
     }

@@ -28,54 +28,51 @@ impl Resolve for Rect {
             return;
         }
 
-        let x = self.position.x.evaluate(frame, ctx.anims);
-        let y = self.position.y.evaluate(frame, ctx.anims);
-        let w = self.width.evaluate(frame, ctx.anims);
-        let h = self.height.evaluate(frame, ctx.anims);
+        let x = usize::from(self.position.x.evaluate(frame, ctx.anims));
+        let y = usize::from(self.position.y.evaluate(frame, ctx.anims));
+        let w = usize::from(self.width.evaluate(frame, ctx.anims));
+        let h = usize::from(self.height.evaluate(frame, ctx.anims));
         let s = &self.style;
         let z = self.z_order;
+        // Positions in usize; cells past u16::MAX are dropped by `DrawOp::at`.
+        let mut put =
+            |x: usize, y: usize, ch: char, z: i32| ops.extend(DrawOp::at(x, y, ch, s.clone(), z));
 
         // Top edge
-        ops.push(DrawOp { x, y, ch: '┌', style: s.clone(), z_order: z });
+        put(x, y, '┌', z);
         for i in 1..w.saturating_sub(1) {
-            ops.push(DrawOp { x: x + i, y, ch: '─', style: s.clone(), z_order: z });
+            put(x + i, y, '─', z);
         }
         if w > 1 {
-            ops.push(DrawOp { x: x + w - 1, y, ch: '┐', style: s.clone(), z_order: z });
+            put(x + w - 1, y, '┐', z);
         }
 
         // Side edges
         for j in 1..h.saturating_sub(1) {
-            ops.push(DrawOp { x, y: y + j, ch: '│', style: s.clone(), z_order: z });
+            put(x, y + j, '│', z);
             if w > 1 {
-                ops.push(DrawOp { x: x + w - 1, y: y + j, ch: '│', style: s.clone(), z_order: z });
+                put(x + w - 1, y + j, '│', z);
             }
         }
 
         // Bottom edge
         if h > 1 {
-            ops.push(DrawOp { x, y: y + h - 1, ch: '└', style: s.clone(), z_order: z });
+            put(x, y + h - 1, '└', z);
             for i in 1..w.saturating_sub(1) {
-                ops.push(DrawOp { x: x + i, y: y + h - 1, ch: '─', style: s.clone(), z_order: z });
+                put(x + i, y + h - 1, '─', z);
             }
             if w > 1 {
-                ops.push(DrawOp { x: x + w - 1, y: y + h - 1, ch: '┘', style: s.clone(), z_order: z });
+                put(x + w - 1, y + h - 1, '┘', z);
             }
         }
 
-        // Title (rendered on top edge, one z-level above the rect)
+        // Title (rendered on top edge, one z-level above the rect; at i32::MAX it
+        // ties and wins by being drawn after the border)
+        // from x + 2, clipped before the right corner: at most w - 3 chars (none
+        // for a rect narrower than 4, without underflowing at width 0).
         if let Some(title) = &self.title {
-            for (i, ch) in title.chars().enumerate() {
-                let tx = x + 2 + i as u16;
-                if tx < x + w - 1 {
-                    ops.push(DrawOp {
-                        x: tx,
-                        y,
-                        ch,
-                        style: s.clone(),
-                        z_order: z + 1,
-                    });
-                }
+            for (i, ch) in title.chars().take(w.saturating_sub(3)).enumerate() {
+                put(x + 2 + i, y, ch, z.saturating_add(1));
             }
         }
     }

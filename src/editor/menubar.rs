@@ -299,10 +299,10 @@ fn mode_items(state: &EditorState) -> Vec<&'static str> {
                 "[Esc] back",
             ],
             TableCellSubState::EditingContent { .. } => vec![
-                "[←→] move cursor",
-                "[type] insert after",
+                "[←→↑↓ Home End] move cursor",
+                "[type] insert",
                 "[Alt+Enter] newline",
-                "[Backspace] delete",
+                "[Backspace/Del] delete",
                 "[Enter] save",
                 "[Esc] cancel",
             ],

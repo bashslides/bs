@@ -50,8 +50,9 @@ impl Header {
         lines
     }
 
-    /// Render a single line of glyphs starting at `(base_x, base_y)`.
-    fn render_line(&self, text: &str, base_x: u16, base_y: u16, ops: &mut Vec<DrawOp>) {
+    /// Render a single line of glyphs starting at `(base_x, base_y)`. Positions
+    /// are `usize`; cells past `u16::MAX` are dropped by `DrawOp::at`.
+    fn render_line(&self, text: &str, base_x: usize, base_y: usize, ops: &mut Vec<DrawOp>) {
         let has_bg = self.style.bg.is_some();
         let bg_style = if has_bg {
             Style {
@@ -70,39 +71,23 @@ impl Header {
             if let Some(glyph) = font::glyph(upper) {
                 for (row, line) in glyph.iter().enumerate() {
                     for (col, c) in line.chars().enumerate() {
+                        let (x, y) = (cursor_x + col, base_y + row);
                         if c != ' ' {
-                            ops.push(DrawOp {
-                                x: cursor_x + col as u16,
-                                y: base_y + row as u16,
-                                ch: self.ch,
-                                style: self.style.clone(),
-                                z_order: self.z_order,
-                            });
+                            ops.extend(DrawOp::at(x, y, self.ch, self.style.clone(), self.z_order));
                         } else if has_bg {
-                            ops.push(DrawOp {
-                                x: cursor_x + col as u16,
-                                y: base_y + row as u16,
-                                ch: ' ',
-                                style: bg_style.clone(),
-                                z_order: self.z_order,
-                            });
+                            ops.extend(DrawOp::at(x, y, ' ', bg_style.clone(), self.z_order));
                         }
                     }
                 }
                 // Fill the inter-character gap column with bg spaces
                 if has_bg {
-                    let gap_x = cursor_x + glyph[0].len() as u16;
-                    for row in 0..font::GLYPH_HEIGHT {
-                        ops.push(DrawOp {
-                            x: gap_x,
-                            y: base_y + row,
-                            ch: ' ',
-                            style: bg_style.clone(),
-                            z_order: self.z_order,
-                        });
+                    let gap_x = cursor_x + glyph[0].len();
+                    for row in 0..usize::from(font::GLYPH_HEIGHT) {
+                        let y = base_y + row;
+                        ops.extend(DrawOp::at(gap_x, y, ' ', bg_style.clone(), self.z_order));
                     }
                 }
-                cursor_x += glyph[0].len() as u16 + 1; // +1 inter-character gap
+                cursor_x += glyph[0].len() + 1; // +1 inter-character gap
             }
         }
     }
@@ -121,10 +106,10 @@ impl Resolve for Header {
         // edge of the canvas. Each wrapped line restarts at `base_x`, so the
         // next line drops one glyph height plus a one-row gap below.
         let avail = canvas_width.saturating_sub(base_x);
-        let stride = font::GLYPH_HEIGHT + LINE_GAP;
+        let stride = usize::from(font::GLYPH_HEIGHT + LINE_GAP);
         for (line_idx, line) in self.wrap_lines(avail).iter().enumerate() {
-            let line_y = base_y + line_idx as u16 * stride;
-            self.render_line(line, base_x, line_y, ops);
+            let line_y = usize::from(base_y) + line_idx * stride;
+            self.render_line(line, usize::from(base_x), line_y, ops);
         }
     }
 }

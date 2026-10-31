@@ -91,3 +91,27 @@ fn a_deck_with_no_loops_validates_and_emits_nothing() {
     assert!(s.validate_loops().is_ok());
     assert!(s.loop_regions().is_empty());
 }
+
+/// Loops at `own` (indices 1..) with an explicit group `[members]` at `group`.
+fn grouped(own: &[(usize, usize)], members: &str, group: (usize, usize)) -> SourcePresentation {
+    let mut s = deck_with_loops(10, own);
+    let g = format!(
+        r#"{{"type":"group","members":{members},"frames":{{"start":{},"end":{}}}}}"#,
+        group.0, group.1
+    );
+    s.objects.push(serde_json::from_str(&g).unwrap());
+    s
+}
+
+#[test]
+fn loop_region_follows_an_explicit_group_range() {
+    let s = grouped(&[(0, 2)], "[1]", (4, 8));
+    let r = &s.loop_regions()[0];
+    assert_eq!((r.start_frame, r.end_frame), (4, 8));
+}
+
+#[test]
+fn validate_loops_checks_the_explicit_group_range() {
+    // Own ranges 0..2 and 5..7 are disjoint, but the group moves the first to 4..8.
+    assert!(grouped(&[(0, 2), (5, 7)], "[1]", (4, 8)).validate_loops().is_err());
+}

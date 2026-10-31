@@ -1,7 +1,7 @@
 # `web/` — the browser tools
 
-A dependency-free static site: no framework, no bundler, no npm. Four pages,
-plain HTML/CSS/JS, plus the engine compiled to WebAssembly.
+A dependency-free static site: no framework, no bundler, no npm. One page
+with four views, plain HTML/CSS/JS, plus the engine compiled to WebAssembly.
 
 **One page, four views** — a title page plus instructions → compile → present,
 in that order — so the WebAssembly engine, the loaded deck and the saved-deck
@@ -28,7 +28,6 @@ web/
   sw.js                 service worker: offline + installable
   manifest.webmanifest  PWA metadata
   icon-*.png            app icons (generated, checked in)
-  presentation.json     the deck present loads by default
 ```
 
 ## Installing it
@@ -42,14 +41,31 @@ been served over HTTPS (GitHub Pages qualifies) or from `localhost`.
 relative path, so it installs correctly under a project subpath (`…/bs/`) as
 well as at a domain root. `scripts/build-web.sh` stamps `sw.js` with a hash of
 the built files, so each deploy installs a fresh cache and evicts the old one —
-no manual version bumping, and no stale app after an update.
+no manual version bumping, and once a new version is active it never serves an
+old build's files. A new version
+waits until every open bs tab of the old one is closed (a reload alone keeps
+the old one) and then takes over on the next visit, so a running page never
+mixes its engine with a newer build's sample, docs or `bs.wasm`. If any file the
+app needs to start or compile fails to download, the update's install fails and
+the previous version stays in place; only the sample, docs and icons may be missing.
 
 ## The deck library
 
 Compiled and imported decks are kept in `localStorage` (`store.js`) so they
 survive a reload, a restart and being offline. It is a *recents* list, not an
-archive: the 20 newest are kept, a save that runs out of quota evicts the oldest
-and retries, and same-name saves replace rather than accumulate. The **library**
+archive: the 20 newest are kept, within a budget of 1.5 million characters of
+compiled JSON in total (the sizes the library lists; stored escaped, typically
+about 2.1 MB — every GitHub Pages project site of a user shares one origin and
+its ~5 MB quota) — older decks are evicted to stay under it, a deck over the
+budget on its own still plays but is not kept, a save that still runs out of
+quota evicts the oldest and retries, and same-name saves replace rather than
+accumulate. The library's `localStorage` key is scoped to the deployment's path
+(`bs:decks:/bs/`), so two bs copies on one origin keep separate libraries, each
+with its own budget. A deployment with no library yet adopts one saved under
+the old unscoped `bs:decks` key (trimmed to the budget) and frees that key, so
+an old library that filled the quota cannot block the new one. A deck keeps its file's
+name only while the source is that file's unedited text; pasted or edited
+source is saved as `pasted-<time>`. The **library**
 button in the present view lists them with their frame count, size and age, and
 offers per-deck delete plus delete-all. Storage being unavailable (private mode,
 `file://`) is reported in the panel rather than failing silently.
@@ -93,8 +109,12 @@ installs it.
 This drives a real browser against the built site and checks the claim that
 justifies the WebAssembly approach: **the browser compiler and `bs compile`
 produce byte-identical output.** It also verifies the deck shape, that malformed
-input yields a message rather than a wasm trap, and that the module stays usable
-after an error. The verdict travels out of the browser as a request to a magic
+input yields a message rather than a wasm trap, that the module stays usable
+after an error and is replaced by a fresh one after a trap, that library-panel
+clicks never step the present view, that cells paint the same one-column
+chars as `bs play` (wide chars as `?`), and
+that a playable missing a field the viewer relies on (a cell, a delay) is
+rejected with a message instead of being saved to the library. The verdict travels out of the browser as a request to a magic
 URL that lands in the static server's log, so the script has a real exit code —
 no screenshots to eyeball. `KEEP=1` preserves the browser/server logs.
 
@@ -104,6 +124,13 @@ no screenshots to eyeball. `KEEP=1` preserves the browser/server logs.
 the same function the CLI calls — deliberately raw pointers over linear memory
 instead of wasm-bindgen, so the build is a plain `cargo build` with no
 `wasm-pack`, Node or npm anywhere. About 110 KB gzipped.
+
+Opened and dropped files (source decks and compiled ones) are read as strict
+UTF-8, exactly as `bs compile`/`bs play` read them: a file saved in another
+encoding (e.g. Windows-1252) is refused with a message instead of being
+compiled with its accented characters turned into `?`, and a file starting
+with a byte-order mark is refused too (the CLI fails to parse one), with a
+message saying to save it without one.
 
 Browser support is universal in practice: WebAssembly has shipped everywhere
 since 2017, and on iOS every browser is WebKit, so Safari's support covers the
@@ -125,18 +152,24 @@ layout independent of whatever font the device picks (verified by forcing a
 proportional serif and checking the grid still lands on the lattice). Characters
 in the box-drawing block are stretched to the cell width so long runs of `─` or
 `█` tile without gaps, and the canvas is sized in device pixels so it stays
-crisp on high-DPI screens.
+crisp on high-DPI screens. The cell size is whatever makes the whole grid fit
+the stage, with no minimum: a deck larger than the screen gets small cells
+(rotate or go fullscreen for more room) rather than losing its edge columns
+or rows.
 
-`app.js` is also a port of the terminal player's *pure* parts, so playback matches:
+`viewer.js` is also a port of the terminal player's *pure* parts, so playback matches:
 
 | Rust | JS |
 |------|----|
 | `PlayablePresentation::grid_at` | `gridAt` (replays `full` + `diff` frames) |
 | `player::loop_next` | `loopNext` (bounce / restart / `count`) |
+| `player::loop_step` | `loopTick`'s pass counting |
+| `Player::loop_wait` | `loopWait` |
 | `Player::auto_advance_delay` | `autoAdvanceDelay` (min over auto-play animations) |
 | `Player::animation_cluster` | `animationCluster` (overlap-merged skip target) |
 | `Player::frame_auto_advance_delay` | `frameAutoAdvanceDelay` |
 | `Player::effective_auto_delay` | `effectiveAutoDelay` |
+| `Cell::printable` / `narrow_char` (`src/types.rs`) | `printable` / `narrowChar` (the char a cell paints) |
 
 Being a port, it *can* drift — change the player and mirror it here.
 
@@ -150,7 +183,7 @@ round-trip, no navigation — and saves a copy to the library on the way past.
 
 | Key | Action |
 |-----|--------|
-| <kbd>→</kbd> / <kbd>Space</kbd> / <kbd>Enter</kbd> | next frame (skips a whole loop or auto-play animation) |
+| <kbd>→</kbd> / <kbd>Space</kbd> / <kbd>Enter</kbd> | next frame (skips a whole loop or auto-play animation); with keyboard focus on a button, link or the library panel, Space/Enter (and PageUp/PageDown) are that control's instead |
 | <kbd>←</kbd> | previous frame (same skipping) |
 | <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd> | jump ±10 frames |
 | <kbd>Home</kbd> / <kbd>End</kbd> | first / last frame |
@@ -196,6 +229,7 @@ the command in the status bar instead of executing it.
 ## Deployment
 
 `.github/workflows/pages.yml` runs `scripts/build-web.sh` and uploads `_site/`
-on every push to `main` touching the engine, `web/`, `wasm/`, the format
-reference or the workflow. The wasm build runs *before* the upload, so a broken
+on every push to `main` touching the engine, `web/`, `wasm/`, a file the build
+copies in (format reference, packaged skill, sample deck), the build script or
+the workflow. The wasm build runs *before* the upload, so a broken
 build fails the deploy and Pages keeps serving the previous version.

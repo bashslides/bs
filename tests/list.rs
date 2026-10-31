@@ -154,3 +154,33 @@ fn background_fills_the_wrap_width() {
     let blue = Some(Color::Named(NamedColor::Blue));
     assert_eq!(cell_bg(&p, 3, 0), blue, "trailing cell is background-filled");
 }
+
+#[test]
+fn huge_spacing_only_builds_the_visible_rows() {
+    // A 1e13 spacing used to push that many empty rows before the height clip.
+    let json = list_json(r#", "text": "a\nb", "spacing": 10000000000000, "height": 3"#, 10, 4);
+    let lines = frame_lines(&render_json(&json), 0);
+    assert!(lines[0].starts_with("- a"), "row 0 = {:?}", lines[0]);
+    assert!(lines[1..].iter().all(|l| l.trim().is_empty()), "b is past the height: {lines:?}");
+}
+
+#[test]
+fn a_long_first_word_stays_on_the_marker_row() {
+    // The word doesn't fit after the marker: it hard-breaks there instead of
+    // soft-breaking at the marker's space and stranding the bullet alone.
+    for (ordered, first, second) in [(false, "- averylon", "  gword"), (true, "1. averylo", "   ngword")] {
+        let json = list_json(&format!(r#", "text": "averylongword", "width": 10, "ordered": {ordered}"#), 10, 3);
+        let lines = frame_lines(&render_json(&json), 0);
+        assert_eq!(lines[0].trim_end(), first, "ordered={ordered}");
+        assert_eq!(lines[1].trim_end(), second, "ordered={ordered}");
+    }
+}
+
+#[test]
+fn an_indented_item_keeps_its_first_word_on_the_marker_row() {
+    // Spaces after the marker (faked nesting) are protected like the marker.
+    let json = list_json(r#", "text": "  averylongword", "width": 10"#, 10, 3);
+    let lines = frame_lines(&render_json(&json), 0);
+    assert_eq!(lines[0].trim_end(), "-   averyl");
+    assert_eq!(lines[1].trim_end(), "  ongword");
+}

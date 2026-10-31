@@ -81,8 +81,17 @@ function say(text, cls = 'dim') {
 
 // ------------------------------------------------------------------ compiling
 
-let lastName = 'deck';
-const nameFor = () => lastName;
+// A name belongs to the exact text it came with (an opened file, the sample,
+// an earlier paste): edited or pasted text gets a fresh `pasted-<time>` name,
+// so it never silently replaces an unrelated deck in the library.
+let named = null;   // { name, text }
+function nameFor(text = el.source.value) {
+  if (named?.text !== text) {
+    const t = new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-');
+    named = { name: `pasted-${t}`, text };
+  }
+  return named.name;
+}
 
 /**
  * Compile whatever is in the textarea.
@@ -100,7 +109,6 @@ async function run(name, sourceText = el.source.value) {
   try {
     const out = await compile(src);
     compiled = { json: out, name };
-    lastName = name;
     el.present.disabled = false;
     el.download.disabled = false;
 
@@ -109,14 +117,14 @@ async function run(name, sourceText = el.source.value) {
       deck.loops?.length && `${deck.loops.length} loop`,
       deck.animations?.length && `${deck.animations.length} animation`,
       deck.auto_advances?.length && `${deck.auto_advances.length} auto-advance`,
-      deck.commands?.length && `${deck.commands.length} command`,
+      commandCount(deck.commands) && `${commandCount(deck.commands)} command`,
     ].filter(Boolean);
     el.stats.textContent = `${deck.frames.length} frames · ${deck.contract.width}×${deck.contract.height}`
       + ` · ${store.fmtBytes(out.length)}` + (extras.length ? ` · ${extras.join(', ')}` : '');
 
     const saved = store.save(name, out, 'compiled');
     say(saved ? `compiled — saved to your library as “${name}”`
-              : 'compiled (could not save to the library: storage is unavailable)',
+              : 'compiled (not saved to the library: storage is unavailable or the deck is over its 1.5 MB budget)',
         saved ? 'ok' : 'dim');
     return true;
   } catch (err) {
@@ -132,10 +140,32 @@ async function run(name, sourceText = el.source.value) {
   }
 }
 
+/**
+ * A file's text, accepted only where `bs compile`/`bs play` accept it (Rust's
+ * `read_to_string` + serde_json): bytes that are not valid UTF-8 are an error
+ * rather than silently becoming U+FFFD, and so is a leading byte-order mark
+ * (the CLI fails to parse it; here it is refused up front, because `run`'s
+ * trim() would otherwise strip it). Rejects with a message for the user.
+ */
+export async function readUtf8(file) {
+  let bytes;
+  try { bytes = await file.arrayBuffer(); } catch { throw new Error(`Could not read ${file.name}`); }
+  let text;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new Error(`${file.name} is not valid UTF-8 — save it as UTF-8 (bs compile rejects it too)`);
+  }
+  if (text.startsWith('\uFEFF')) {
+    throw new Error(`${file.name} starts with a byte-order mark — save it as UTF-8 without one (bs compile rejects it too)`);
+  }
+  return text;
+}
+
 /** Opening a file compiles it straight away; only a failure needs the editor. */
 async function openFile(file) {
-  const text = await file.text().catch(() => null);
-  if (text === null) { say(`Could not read ${file.name}`, 'bad'); return; }
+  let text;
+  try { text = await readUtf8(file); } catch (err) { say(err.message, 'bad'); return; }
 
   const name = file.name.replace(/\.json$/i, '');
   say(`compiling ${file.name}…`);
@@ -144,12 +174,24 @@ async function openFile(file) {
     el.source.value = '';           // nothing worth showing
   } else {
     el.source.value = text;         // show it so the error can be fixed
+    named = { name, text: el.source.value };  // as the textarea normalised it
     el.source.focus();
   }
 }
 
+/** Commands in a compiled deck. A command whose box is animated compiles to
+ *  several consecutive regions with the same spec; count those once. */
+function commandCount(regions = []) {
+  const spec = (r) => JSON.stringify([r.command, r.args, r.cwd, r.timeout_secs, r.style]);
+  return regions.filter((r, i) => {
+    const p = regions[i - 1];
+    return !(p && p.end_frame === r.start_frame && spec(p) === spec(r));
+  }).length;
+}
+
 function clear() {
   el.source.value = '';
+  named = null;
   el.stats.textContent = '';
   compiled = null;
   el.present.disabled = el.download.disabled = true;
@@ -163,7 +205,7 @@ async function sample() {
     const res = await fetch('demo.json', { cache: 'no-cache' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     el.source.value = await res.text();
-    lastName = 'demo';
+    named = { name: 'demo', text: el.source.value };
     say('sample loaded — press compile');
   } catch (err) {
     say(`Could not load the sample: ${err.message}`, 'bad');

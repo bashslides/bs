@@ -129,8 +129,8 @@ function present(json, name) {
 
 /** A compiled deck picked from disk in the present view. */
 async function importDeck(file) {
-  const text = await file.text().catch(() => null);
-  if (text === null) { viewer.message([`  could not read ${viewer.esc(file.name)}`]); return; }
+  let text;
+  try { text = await compileView.readUtf8(file); } catch (err) { viewer.message([`  ${viewer.esc(err.message)}`]); return; }
   const name = file.name.replace(/\.json$/i, '');
   try {
     const data = JSON.parse(text);
@@ -187,13 +187,24 @@ function boot() {
   });
   store.onChange(() => { if (!id('library').hidden) renderLibrary(); });
 
+  // A mouse/touch click (detail > 0; a keyboard press reports 0) leaves the
+  // button focused in most browsers. Drop that focus, so Space/Enter afterwards
+  // step the deck instead of pressing the button again (see the keydown below).
+  document.addEventListener('click', (e) => {
+    if (e.detail > 0) e.target.closest?.('button')?.blur();
+  });
+
   // Keys reach whichever view is showing; text fields keep their own.
   document.addEventListener('keydown', (e) => {
     const tag = e.target.tagName;
     if (tag === 'TEXTAREA' || tag === 'INPUT') return;
     if (current === 'present') {
       if (e.key === 'o' || e.key === 'O') { id('p-file').click(); e.preventDefault(); return; }
-      viewer.handleKey(e);
+      // A focused control (or anything in the library) keeps its own
+      // Enter/Space activation and Page keys; on the page they step the deck.
+      const own = [' ', 'Enter', 'PageUp', 'PageDown'].includes(e.key) &&
+        e.target.closest?.('button, a, select, summary, [contenteditable], #library');
+      if (!own) viewer.handleKey(e);
     }
   });
 
@@ -206,7 +217,8 @@ function boot() {
     e.preventDefault(); depth = 0; document.body.classList.remove('dragging');
     const f = e.dataTransfer?.files?.[0];
     if (!f) return;
-    const text = await f.text().catch(() => '');
+    // Undecodable text sniffs as a source deck; the compile view then reports it.
+    const text = await compileView.readUtf8(f).catch(() => '');
     // A playable deck has a `contract`; a source deck has `frame_count`.
     let looksCompiled = false;
     try { looksCompiled = !!JSON.parse(text)?.contract; } catch { /* let the view report it */ }

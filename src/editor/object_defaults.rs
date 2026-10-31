@@ -81,6 +81,8 @@ pub fn create_morph(
         style: Style::default(),
         frames: FrameRange { start: current_frame, end: current_frame + 1 },
         z_order: 0,
+        timing: None,
+        blend: None,
     })
 }
 
@@ -352,7 +354,7 @@ mod tests {
             SceneObject::Morph(Morph {
                 position: pos(), from: "A".into(), to: "B".into(), name: "m".into(),
                 mode: MorphMode::default(), style: Style::default(),
-                frames: fr.clone(), z_order: 0,
+                frames: fr.clone(), z_order: 0, timing: None, blend: None,
             }),
             SceneObject::Circle(Circle {
                 position: pos(), diameter: 6, ch: '@', style: Style::default(),

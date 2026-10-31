@@ -2,7 +2,8 @@ use std::io;
 
 use crossterm::{cursor, queue, style, terminal};
 
-use crate::engine::source::SceneObject;
+use crate::engine::source::{SceneObject, MAX_FRAME_COUNT};
+use crate::types::printable_text;
 
 use super::state::{EditorState, Mode};
 use super::ui::Layout;
@@ -25,8 +26,8 @@ pub fn render_timeline(
         terminal::Clear(terminal::ClearType::CurrentLine),
     )?;
 
-    if frame_count == 0 {
-        queue!(stdout, style::Print(" (no frames)"))?;
+    if let Some(note) = frame_bar_note(frame_count) {
+        queue!(stdout, style::Print(clip_cols(&printable_text(&note), width)))?;
     } else {
         let segs = build_segments(state);
         // Frames highlighted alongside the current (scroll-cursor) frame: an
@@ -131,18 +132,28 @@ pub fn render_timeline(
     // Replace newlines so a multi-line label value doesn't scroll the terminal.
     let status: String = state.status_message.as_deref().unwrap_or("")
         .chars().map(|c| if c == '\n' { '↵' } else { c }).collect();
+    // A status may quote deck strings or file names: never print their controls.
+    let status = printable_text(&status);
 
+    // The status row is the terminal's last line: never print into its last
+    // cell, or a long status autowraps and scrolls the whole UI up.
+    let line = format!(" {mode_str} | Frame {}/{frame_count}{dirty_str} {status}", current + 1);
     queue!(
         stdout,
         style::SetAttribute(style::Attribute::Dim),
-        style::Print(format!(
-            " {mode_str} | Frame {}/{frame_count}{dirty_str} {status}",
-            current + 1,
-        )),
+        style::Print(clip_cols(&line, width.saturating_sub(1))),
         style::SetAttribute(style::Attribute::Reset),
     )?;
 
     Ok(())
+}
+
+/// `s` cut to at most `cols` columns (one per char, the measure the editor UI
+/// uses throughout), so a line can never run past the terminal's edge. A wide
+/// (e.g. CJK) char counts as one, so such text can still overrun; autowrap is
+/// off (`TerminalGuard`), so the terminal cuts it rather than scrolling.
+fn clip_cols(s: &str, cols: usize) -> String {
+    s.chars().take(cols).collect()
 }
 
 /// One cell in the frame bar: a single frame, or a collapsed auto-play range
@@ -196,6 +207,19 @@ fn merged_autoplay_ranges(state: &EditorState) -> Vec<(usize, usize)> {
         }
     }
     merged
+}
+
+/// A placeholder instead of the frame bar for a deck with no frames, or with
+/// more than [`MAX_FRAME_COUNT`] (a hand-edited deck): the bar builds one
+/// segment per frame on every redraw, so that must stay bounded.
+fn frame_bar_note(frame_count: usize) -> Option<String> {
+    if frame_count == 0 {
+        Some(" (no frames)".into())
+    } else if frame_count > MAX_FRAME_COUNT {
+        Some(format!(" ({frame_count} frames — over the limit of {MAX_FRAME_COUNT})"))
+    } else {
+        None
+    }
 }
 
 /// Build the frame-bar segments: each collapsed auto-play range as one cell,
@@ -307,6 +331,9 @@ fn shown_width(segs: &[Seg], to_show: &[usize]) -> usize {
 
 /// Indices for the abbreviated frame bar, preferring 3 segments at each edge but
 /// shrinking the edge groups (3 → 2 → 1) when the row is too narrow to fit them.
+/// If even that overflows (a tiny terminal), segments farthest from the current
+/// one are dropped until it fits, so the bar never runs past the row and the
+/// current segment always stays (alone, it is cut at the edge — autowrap is off).
 fn abbreviated_indices(segs: &[Seg], cur: usize, width: usize) -> Vec<usize> {
     for edge in [3usize, 2, 1] {
         let idx = pick_indices(segs.len(), cur, edge);
@@ -314,8 +341,12 @@ fn abbreviated_indices(segs: &[Seg], cur: usize, width: usize) -> Vec<usize> {
             return idx;
         }
     }
-    // Even the narrowest grouping overflows a tiny terminal — show it anyway.
-    pick_indices(segs.len(), cur, 1)
+    let mut idx = pick_indices(segs.len(), cur, 1);
+    while idx.len() > 1 && shown_width(segs, &idx) > width {
+        let far = (0..idx.len()).max_by_key(|&k| idx[k].abs_diff(cur)).unwrap();
+        idx.remove(far);
+    }
+    idx
 }
 
 fn render_seg(stdout: &mut io::Stdout, seg: &Seg, current: usize, selected: &[usize]) -> anyhow::Result<()> {
@@ -338,6 +369,22 @@ fn render_seg(stdout: &mut io::Stdout, seg: &Seg, current: usize, selected: &[us
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clip_cols_cuts_a_line_to_the_row() {
+        assert_eq!(clip_cols("abcdef", 4), "abcd");
+        assert_eq!(clip_cols("ab—c", 3), "ab—"); // counts chars, not bytes
+        assert_eq!(clip_cols("ab", 10), "ab");
+        assert_eq!(clip_cols("ab", 0), "");
+    }
+
+    #[test]
+    fn frame_bar_note_replaces_the_bar_for_an_empty_or_oversized_deck() {
+        // usize::MAX must not build a segment per frame: the note is O(1).
+        assert!(frame_bar_note(usize::MAX).unwrap().contains("over the limit"));
+        assert!(frame_bar_note(0).is_some());
+        assert!(frame_bar_note(MAX_FRAME_COUNT).is_none()); // the normal bar
+    }
 
     fn singles(n: usize) -> Vec<Seg> {
         (0..n).map(Seg::Single).collect()
@@ -377,5 +424,15 @@ mod tests {
         assert!(narrow < wide, "narrow row should drop segments: {narrow} < {wide}");
         // The current frame is always retained.
         assert!(abbreviated_indices(&segs, 15, 18).contains(&15));
+    }
+
+    #[test]
+    fn abbreviated_indices_never_overflow_a_tiny_row_and_keep_the_current() {
+        let segs = singles(100);
+        for width in [6, 10, 15, 20] {
+            let idx = abbreviated_indices(&segs, 50, width);
+            assert!(idx.contains(&50), "width {width}: {idx:?}");
+            assert!(shown_width(&segs, &idx) <= width, "width {width}: {idx:?}");
+        }
     }
 }

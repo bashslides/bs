@@ -1,5 +1,6 @@
 //! Shared text-editing buffer used by every in-editor text field — object
-//! property values, the multi-line text overlay, and table cell-style values.
+//! property values, the multi-line text overlay, table cell content, and table
+//! cell-style values.
 //!
 //! It owns a string plus a char-index cursor and turns key events into edits, so
 //! the individual mode handlers no longer each re-implement cursor motion,
@@ -87,6 +88,25 @@ impl TextEdit {
             }
         }
         self.len()
+    }
+
+    /// Insert pasted text at the cursor, which ends up after it. Line breaks
+    /// (`\r\n`, `\r`, `\n`) become `\n` when `multiline`, else are dropped; a
+    /// tab becomes a space and any other control char is dropped.
+    pub fn insert_str(&mut self, s: &str, multiline: bool) {
+        let text = s.replace("\r\n", "\n").replace('\r', "\n");
+        let clean: String = text
+            .chars()
+            .filter_map(|c| match c {
+                '\n' => multiline.then_some('\n'),
+                '\t' => Some(' '),
+                c if c.is_control() => None,
+                c => Some(c),
+            })
+            .collect();
+        let bi = self.byte_idx(self.cursor);
+        self.buf.insert_str(bi, &clean);
+        self.cursor += clean.chars().count();
     }
 
     fn insert_char(&mut self, c: char) {
@@ -206,6 +226,16 @@ mod tests {
         t.backspace();
         assert_eq!(t.buf, "ac");
         assert_eq!(t.cursor, 1);
+    }
+
+    #[test]
+    fn insert_str_normalises_line_breaks_and_drops_them_when_single_line() {
+        let mut t = TextEdit::new("<>".into(), 1);
+        t.insert_str("a\r\nb\rc\nd\te\u{1b}", true);
+        assert_eq!((t.buf.as_str(), t.cursor), ("<a\nb\nc\nd e>", 10));
+        let mut t = TextEdit::new(String::new(), 0);
+        t.insert_str("12\r\n3\n", false);
+        assert_eq!((t.buf.as_str(), t.cursor), ("123", 3));
     }
 
     #[test]

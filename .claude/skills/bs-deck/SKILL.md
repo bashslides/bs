@@ -54,9 +54,16 @@ work on the source instead.
 |-------|------|----------|---------|
 | `width` | int | yes | canvas width in terminal cells |
 | `height` | int | yes | canvas height in terminal cells |
-| `frame_count` | int | yes | number of frames in the deck |
+| `frame_count` | int | yes | number of frames in the deck, at least 1 |
 | `objects` | array | yes | scene objects, may be `[]` |
 | `links` | array of int arrays | no | editor-only linked-paste families. Omit when authoring; the engine ignores it. |
+
+Compile rejects a canvas over 1,000,000 cells (`width x height`), a
+`frame_count` over 100,000, `frame_count x width x height` over 50,000,000, or
+frames that would store over 2,000,000 cells (the first frame plus every cell
+that changes between frames), or a frame whose objects draw over 8,000,000
+cells in total, counting overlaps, or frames that together draw over
+200,000,000 such cells.
 
 Default to `80 x 24` unless the user states a terminal size. Larger canvases
 (for example `100 x 30`) are fine but only if the user says their terminal is
@@ -132,9 +139,16 @@ A color is either a named string or an RGB object.
 - RGB: `{ "r": 20, "g": 20, "b": 40 }`, channels 0 to 255. The shape is three
   named keys. `{"rgb": [...]}` is rejected by the deserializer.
 
-Background doubles as opacity. Text and art objects treat spaces as transparent
-unless `bg` is set; setting `bg` fills the object's whole bounding box. That is
-the main lever for layering.
+Background doubles as opacity. `art`, `morph`, `header` and table cell text
+treat spaces as transparent unless `bg` is set. `label` and `list` always paint
+their spaces (with a `width`, to the end of each text row), so they erase what
+lies beneath their text even without `bg`. A `bg` colours every cell the object
+draws, spaces included. Only `label` or `list` with a `width` also adds cells:
+it fills a solid rectangle `width` wide, down to `height` when set. `art`,
+`morph`, `header` and a `label`/`list` without `width` fill each row only as far
+as its text, so shorter rows leave holes. For a solid panel, pad art lines to equal
+length or put a `label` with `width`, `height` and `bg` behind it. That is the
+main lever for layering.
 
 ### z_order
 
@@ -168,6 +182,14 @@ Every drawable object takes `style` (optional), `frames` (required, except an
 auto `group`) and `z_order` (optional).
 
 ## 4. Text objects
+
+Each character of deck text takes one grid cell, and the player (terminal or
+web viewer) shows only
+characters known to be one column wide (Latin, Greek, Cyrillic, common
+punctuation and symbols such as `★ ✓ ▶`, box drawing, braille). Avoid emoji and
+CJK: they show as `?`, and zero-width marks (combining accents, variation
+selectors) as a blank cell. A terminal set to draw ambiguous-width
+characters wide (some CJK setups) also widens box drawing and `★`.
 
 ### `label`
 
@@ -318,6 +340,7 @@ into static frames.
 | `to` | string | required | reached on the last frame |
 | `name` | string | `""` | display-only |
 | `mode` | enum | `"dissolve"` | see below |
+| `blend` | object | absent | editor-written when a frame or object copy takes part of a morph's blend; don't author it |
 
 `mode` is one of `dissolve`, `wipe-right`, `wipe-left`, `wipe-down`, `wipe-up`.
 Note the kebab-case. A single-frame range stays at `from`. Give the two grids
@@ -373,8 +396,10 @@ Bundles other objects **by index** into the top-level `objects` array.
 
 - Auto form (`frames` omitted or `null`): members keep their own ranges. This is
   the normal case.
-- Explicit form (`frames` set): the group's range overrides every member's,
-  widening or narrowing it.
+- Explicit form (`frames` set): the group's range overrides every direct
+  member's, widening or narrowing it (an `animation` member keeps its own span,
+  and a `morph` member blends over its own range). It does not reach through a
+  nested group to that group's members.
 
 Indices are fragile under insertion and reordering. Prefer not to emit groups at
 all when hand-authoring; when the user asks for one, re-verify every index after
@@ -396,7 +421,16 @@ never run while editing or compiling.
 
 The player pipes stdio, paints the tail of the output into the box interior, and
 marks the top edge with a green check on exit 0 or a red cross on failure or
-timeout. Navigation never branches on exit status.
+timeout. Several `command` boxes on one slide each run and get their own mark.
+Navigation never branches on exit status. Anything the command starts
+in the background is killed when it exits, so it cannot launch a server for a
+later slide, and it gets no terminal: a program that prompts on `/dev/tty` (git or
+ssh asking for a password) fails at once. It runs once per entry into its frames:
+stepping between them (by key, loop or auto-play) does not re-run it. Output is
+shown one character per cell:
+Latin, Greek, Cyrillic, common punctuation and symbols, box drawing and braille
+pass; any other character (CJK, emoji, other scripts) shows as `?`, and
+zero-width marks are dropped.
 
 Only emit a `command` object when the user asks for a live command. Give it a
 `timeout_secs` so a hanging binary does not stall the talk, and keep the box tall
@@ -419,7 +453,9 @@ enough for the expected output.
 Validated at compile time: loops must be non-empty, fit the deck, must not
 overlap or nest, and must not bisect an `animation` (a loop contains an
 animation span wholly or not at all). A bad loop fails compilation. The
-presenter breaks out with the arrow keys.
+presenter breaks out with the arrow keys; a loop left (or finished) is not
+re-entered until playback leaves its range, so a whole-deck loop does not
+restart.
 
 ### `animation`
 
@@ -433,7 +469,7 @@ other objects' animated coordinates, joined by `id`.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| `id` | int | required | unique; referenced by `{"animated": {"anim": id}}` |
+| `id` | int | required | unique (a duplicate fails compilation); referenced by `{"animated": {"anim": id}}` |
 | `frames` | FrameRange | required | the interpolation span |
 | `auto_play` | bool | `true` | auto-advance across the span at play time |
 | `delay_ms` | int | `500` | delay between auto-advanced frames |
@@ -596,6 +632,8 @@ Re-read the JSON against this list. These are the failure modes that either
 break compilation or waste the user's review pass.
 
 1. Valid JSON. No trailing commas, no comments, `\n` escaped inside strings.
+   No extra keys either (`"_comment"`, notes): the compiler ignores them and
+   `bs edit` drops them on save; a misspelt field is silently ignored too.
 2. `width`, `height`, `frame_count`, `objects` all present at the top level.
 3. Every `type` tag spelled exactly: `label`, `list`, `header`, `h_line`,
    `rect`, `arrow`, `table`, `art`, `circle`, `morph`, `group`, `command`,

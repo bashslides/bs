@@ -220,3 +220,81 @@ fn width_wraps_text_across_multiple_rows() {
     assert_eq!(char_at(&p, 0, 2, 1), 'o', "end of 'two'");
     assert_eq!(char_at(&p, 0, 4, 2), 'e', "end of 'three'");
 }
+
+#[test]
+fn label_spaces_erase_lower_objects_even_without_bg() {
+    // A bg-less label over art: interior and width-padding spaces still paint.
+    let p = render_json(
+        r#"{
+            "width": 5, "height": 1, "frame_count": 1,
+            "objects": [
+                { "type": "art", "art": "XXXXX",
+                  "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+                  "frames": { "start": 0, "end": 1 } },
+                { "type": "label", "text": "A B", "width": 5, "z_order": 1,
+                  "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+                  "frames": { "start": 0, "end": 1 } }
+            ]
+        }"#,
+    );
+    assert_eq!(char_at(&p, 0, 1, 0), ' ', "interior space is opaque");
+    assert_eq!(char_at(&p, 0, 4, 0), ' ', "width padding is opaque");
+}
+
+#[test]
+fn huge_bg_label_fills_only_the_canvas() {
+    // 20000×20000 with a bg used to emit 4e8 ops; only the 8×3 on canvas matter.
+    let p = render_json(
+        r#"{
+            "width": 8, "height": 3, "frame_count": 1,
+            "objects": [
+                { "type": "label", "text": "Hi", "width": 20000, "height": 20000,
+                  "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+                  "style": { "bg": "red" },
+                  "frames": { "start": 0, "end": 1 } }
+            ]
+        }"#,
+    );
+    assert_eq!((char_at(&p, 0, 0, 0), char_at(&p, 0, 1, 0)), ('H', 'i'));
+    let grid = p.grid_at(0);
+    assert!(grid.iter().flatten().all(|c| c.style.bg.is_some()), "the whole canvas is filled");
+}
+
+#[test]
+fn multi_digit_numbered_line_wraps_under_its_text() {
+    // "100. " is 5 cells: the long first word stays on the number's row and the
+    // continuation aligns under the text, not 3 cells in.
+    let p = render_json(
+        r#"{
+            "width": 10, "height": 2, "frame_count": 1,
+            "objects": [
+                { "type": "label", "text": "100. averylongword", "width": 10,
+                  "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+                  "frames": { "start": 0, "end": 1 } }
+            ]
+        }"#,
+    );
+    let row = |y| (0..10).map(|x| char_at(&p, 0, x, y)).collect::<String>();
+    assert_eq!(row(0), "100. avery");
+    assert_eq!(row(1), "     longw");
+}
+
+#[test]
+fn nested_bullet_keeps_its_first_word_and_wraps_under_its_text() {
+    // A marker after leading spaces is protected too, spaces included, and the
+    // continuation hangs under the item text instead of starting at column 0.
+    let p = render_json(
+        r#"{
+            "width": 10, "height": 3, "frame_count": 1,
+            "objects": [
+                { "type": "label", "text": "  - averylongword", "width": 10,
+                  "position": { "x": { "fixed": 0 }, "y": { "fixed": 0 } },
+                  "frames": { "start": 0, "end": 1 } }
+            ]
+        }"#,
+    );
+    let row = |y| (0..10).map(|x| char_at(&p, 0, x, y)).collect::<String>();
+    assert_eq!(row(0), "  - averyl");
+    assert_eq!(row(1), "    ongwor");
+    assert_eq!(row(2), "    d     ");
+}
