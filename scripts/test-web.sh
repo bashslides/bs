@@ -340,7 +340,32 @@ const report = (ok, detail) =>
     if (at() !== a.start_frame + 4) throw new Error(`stepping into a manual animation reached ${at()}`);
     key('ArrowLeft');
     if (at() !== a.start_frame) throw new Error(`← inside a manual animation went to ${at()}, not slide ${a.start_frame}`);
-    log('an animation is one frame-bar tick; ← inside it goes to the slide before');
+    // A run of quick auto-advances (generated decks animate this way) is one
+    // animation too: one tick, → lands on the frame it stops on, ← leaves it.
+    // A slow marker (a timed slide) is not.
+    const aa = JSON.parse(got);
+    delete aa.animations;
+    aa.auto_advances = [{ start_frame: 5, end_frame: 10, delay_ms: 150 },
+      { start_frame: 12, end_frame: 14, delay_ms: 5000 }];
+    viewerMod.load(aa, 'auto-advance');
+    await new Promise((r) => setTimeout(r, 50));
+    if (q('#framebar').children.length !== 10) throw new Error(`a quick auto-advance run is not one tick: ${q('#framebar').children.length} ticks`);
+    for (let i = 0; i < 5; i++) key('ArrowRight');
+    if (at() !== 6) throw new Error(`stepping onto the run reached ${at()}, not 6`);
+    key('ArrowRight');
+    if (at() !== 11) throw new Error(`→ inside a quick auto-advance run went to ${at()}, not its last slide 11`);
+    key('ArrowLeft');
+    if (at() !== 5) throw new Error(`← on a quick auto-advance run went to ${at()}, not slide 5 before it`);
+    // ← while the run is playing (its 150 ms timer has moved it on) leaves it
+    // for good: slide 5 does not auto-advance back into the run.
+    viewerMod.load(aa, 'auto-advance');
+    for (let i = 0; i < 5; i++) key('ArrowRight');
+    await new Promise((r) => setTimeout(r, 400));
+    if (at() <= 6) throw new Error(`the quick auto-advance run did not play: at ${at()}`);
+    key('ArrowLeft');
+    await new Promise((r) => setTimeout(r, 400));
+    if (at() !== 5) throw new Error(`← while the run plays went to ${at()} (after 400 ms), not slide 5`);
+    log('an animation or a quick auto-advance run is one tick; ← inside it goes to the slide before');
 
     // (n) The footer: ←/→ at the right edge, first/last at the left, and at a
     // 320px phone width every control on one row at 48px (20% over 40px).

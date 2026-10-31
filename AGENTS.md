@@ -767,9 +767,11 @@ without gaps. The empty/error state is a separate `#msg` layer, since a canvas
 cannot show text on its own.
 
 **The frame bar has one tick per step, and buckets past the width it can
-draw.** A step (`barSteps`) is a frame, or a whole animation range — every
-animation, auto-play or not, overlap-merged by `animationCluster(f, false)` — so
-an animation is one marker, not one per frame. One `<i>` per step only works
+draw.** A step (`motionRuns`) is a frame, or a whole motion run — every
+animation range, auto-play or not, overlap-merged, joined with runs of quick
+auto-advances (markers of at most `MOTION_DELAY_MS` = 1 s, how generated decks
+animate; slower markers are timed slides and stay separate) — so an animation
+is one marker, not one per frame. One `<i>` per step only works
 while each tick has a pixel to occupy; beyond that the bar overflows, widens the
 page, and the resulting horizontal scrollbar shrinks `#stage` — so a long deck
 rendered *smaller* than a short one. `renderFrameBar` therefore caps the tick
@@ -796,9 +798,11 @@ real browser fullscreen as separate concerns and always leaves a way back.
 its finished state, rather than the first frame past the span; already there, it
 falls through to a normal step so the span cannot trap the deck. This is a
 deliberate divergence from `src/player/mod.rs`, which still jumps to
-`hi.min(last)`. **`←` inside any animation** — auto-play or stepped by hand —
-goes to the slide right before it (`animationCluster(f, false)`); the terminal
-player does that only for auto-play animations.
+`hi.min(last)`. The same `→` rule covers a quick auto-advance run (`movesOn`).
+**`←` inside any motion run** — an animation, auto-play or stepped by hand, or
+a quick auto-advance run — goes to the slide right before it (`runAt`); the
+terminal player does that only for auto-play animations, and has no notion of
+a quick auto-advance run.
 
 **The present tool *is* a port, so it can drift.** `web/viewer.js` re-implements
 the player's *pure* logic in JS — `PlayablePresentation::grid_at` → `gridAt`,

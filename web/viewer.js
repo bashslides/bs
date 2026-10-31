@@ -336,9 +336,8 @@ function statusNote() {
   return bits.join('  ·  ');
 }
 
-// The frame bar has one tick per *step*: a frame, or a whole animation range
-// (overlapping animations merged), which reads as one slide that moves rather
-// than as many slides. A tick cannot render below ~1px, so a long deck's ticks
+// The frame bar has one tick per *step*: a frame, or a whole motion run (see
+// motionRuns), which reads as one slide that moves rather than as many slides. A tick cannot render below ~1px, so a long deck's ticks
 // would otherwise overflow the bar, widen the page, and — because the
 // horizontal scrollbar steals width from the stage — shrink the deck itself.
 // Past the limit, each tick stands for a contiguous run of steps instead, so
@@ -348,27 +347,13 @@ const TICK_GAP = 1;   // px, must match the `gap` on #framebar in style.css
 
 /** The half-open frame range of each tick. Length is the tick count. */
 let ticks = [];
-/** The deck's steps, [lo, hi) each, computed once per deck. */
+/** The deck's steps, [lo, hi) each, computed once per deck (motionRuns). */
 let steps = null;
-
-/** Split the deck into steps: every animation range is one, every other frame
- *  is one. Ranges are clipped to the deck. */
-function barSteps() {
-  const total = deck.frames.length;
-  const out = [];
-  for (let f = 0; f < total; ) {
-    const c = animationCluster(f, false);
-    const hi = c ? Math.min(c[1], total) : f + 1;
-    out.push([f, hi]);
-    f = hi;
-  }
-  return out;
-}
 
 /** The tick ranges for the bar's current width: one per step while they fit,
  *  else runs of consecutive steps. */
 function frameBarBuckets() {
-  steps ??= barSteps();
+  steps ??= motionRuns();
   const n = steps.length;
   const w = el.framebar.clientWidth;
   // Before the first layout clientWidth is 0; one tick per step is the right
@@ -438,10 +423,9 @@ function autoAdvanceDelay(from, forward) {
   );
 }
 
-/** Merged span [lo, hi) of auto-play animations connected by overlap to `f`
- *  (of every animation, auto-play or not, when `autoOnly` is false). */
-function animationCluster(f, autoOnly = true) {
-  const auto = (deck.animations || []).filter((a) => a.auto_play || !autoOnly);
+/** Merged span [lo, hi) of auto-play animations connected by overlap to `f`. */
+function animationCluster(f) {
+  const auto = (deck.animations || []).filter((a) => a.auto_play);
   let lo = Infinity;
   let hi = 0;
   for (const a of auto) {
@@ -471,6 +455,59 @@ function frameAutoAdvanceDelay(f) {
 
 function effectiveAutoDelay(f) {
   return min([autoAdvanceDelay(f, true), frameAutoAdvanceDelay(f)].filter((d) => d != null));
+}
+
+// What a presenter sees as one animation is not only an `Animation` span: a
+// run of slides that auto-advance in quick succession (an AutoAdvance marker
+// of a second or less — generated decks animate this way) plays the same.
+// Longer markers are timed slides (the default is 5 s) and stay separate, so
+// a deck that runs as a slideshow is not one long "animation". Web-only: the
+// terminal player has no such notion.
+const MOTION_DELAY_MS = 1000;
+
+/** Whether `f` advances to `f + 1` on its own, as part of an animation. */
+function movesOn(f) {
+  if (autoAdvanceDelay(f, true) != null) return true;
+  const d = frameAutoAdvanceDelay(f);
+  return d != null && d <= MOTION_DELAY_MS;
+}
+
+/**
+ * The deck split into motion runs, [lo, hi) each, in order and covering every
+ * frame: a frame on its own, or a maximal run joined by animation spans (any
+ * animation, auto-play or stepped by hand; overlapping ones merge) and quick
+ * auto-advances — including the frame such a run stops on, its finished state.
+ */
+function motionRuns() {
+  const total = deck.frames.length;
+  // joined[f] > 0 ⇔ the f → f+1 boundary is inside a run (a difference array,
+  // so a long span costs O(1) to mark).
+  const joined = new Int32Array(total + 1);
+  const mark = (lo, hi) => { if (lo < hi) { joined[lo]++; joined[hi]--; } };
+  for (const a of deck.animations || []) mark(a.start_frame, Math.min(a.end_frame, total) - 1);
+  for (const m of deck.auto_advances || []) {
+    if (m.delay_ms <= MOTION_DELAY_MS) mark(m.start_frame, Math.min(m.end_frame, total - 1));
+  }
+  const out = [];
+  let open = 0;
+  let lo = 0;
+  for (let f = 0; f < total; f++) {
+    open += joined[f];
+    if (open <= 0) { out.push([lo, f + 1]); lo = f + 1; }
+  }
+  return out;
+}
+
+/** The motion run holding frame `f`. */
+function runAt(f) {
+  steps ??= motionRuns();
+  let a = 0;
+  let b = steps.length - 1;
+  while (a < b) {
+    const m = (a + b + 1) >> 1;
+    if (steps[m][0] <= f) a = m; else b = m - 1;
+  }
+  return steps[a];
 }
 
 /** Port of player::loop_next → [next, nextForward, completedPass]. */
@@ -604,13 +641,13 @@ function forward() {
     show(clamp(r.end_frame));
     armLoop([r.start_frame, r.end_frame]);
   } else {
-    const cluster = animationCluster(frame);
-    // Land on the animation's OWN last frame — its finished state — rather than
-    // stepping past it. `end_frame` is exclusive, hence -1. Once already there,
-    // fall through to a normal step so the animation cannot trap the deck.
-    const endOfAnim = cluster ? clamp(cluster[1] - 1) : -1;
-    if (cluster && frame < endOfAnim) show(endOfAnim);
-    else show(frame + 1);
+    // While the deck is playing on its own (an auto-play animation, a quick
+    // auto-advance run), land on the frame it stops on — its finished state —
+    // rather than stepping one frame. Once already there, fall through to a
+    // normal step so the animation cannot trap the deck.
+    let end = frame;
+    while (end < deck.frames.length - 1 && movesOn(end)) end++;
+    show(end > frame ? end : frame + 1);
     armLoop(null);
   }
   reschedule();
@@ -623,10 +660,11 @@ function back() {
     show(Math.max(0, r.start_frame - 1));
     armLoop([r.start_frame, r.end_frame]);
   } else {
-    // Inside any animation — auto-play or stepped by hand — go to the slide
-    // right before it, not one step back.
-    const cluster = animationCluster(frame, false);
-    if (cluster) show(Math.max(0, cluster[0] - 1));
+    // Inside a motion run — an animation, auto-play or stepped by hand, or a
+    // quick auto-advance run — go to the slide right before it, not one step
+    // back (which a running auto-advance would undo at once).
+    const [lo, hi] = runAt(frame);
+    if (hi - lo > 1) show(Math.max(0, lo - 1));
     else show(frame - 1);
     armLoop(null);
   }

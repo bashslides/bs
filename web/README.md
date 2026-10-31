@@ -203,9 +203,12 @@ round-trip, no navigation — and saves a copy to the library on the way past.
 `→` on an auto-play animation lands on the animation's **own last frame** — its
 finished state — rather than stepping past it; pressing it again continues. (The
 terminal player still jumps one frame further, to the first slide after the
-span.) `←` anywhere inside an animation — auto-play or stepped by hand — goes to
-the slide right before it (`animationCluster(f, false)`); the terminal player
-does that only for auto-play animations and steps back one frame in the others.
+span.) A run of quick auto-advances (markers of a second or less,
+`MOTION_DELAY_MS` — how generated decks animate) counts as an animation too:
+`→` inside one lands on the frame it stops on. `←` anywhere inside an
+animation — auto-play, stepped by hand, or a quick auto-advance run — goes to
+the slide right before it (`motionRuns`/`runAt`); the terminal player does that
+only for auto-play animations and steps back one frame elsewhere.
 
 **Nothing is keyboard-only.** A phone has no keyboard, so every action also has a
 tap target: the footer carries real buttons — `⇤` `⇥` `full` at the left, the
@@ -223,8 +226,9 @@ On iPhone, `requestFullscreen` is refused for non-video elements, so `full`
 hides the bars without entering browser fullscreen. That is the useful half, and
 the exit button works the same either way.
 
-The frame bar shows one tick per *step*: a frame, or a whole animation range
-(overlapping animations merged, auto-play or not), since an animation reads as
+The frame bar shows one tick per *step*: a frame, or a whole animation — an
+animation range (overlapping ones merged, auto-play or not) or a quick
+auto-advance run, including the frame it stops on — since an animation reads as
 one slide that moves; clicking an animation's tick goes to its first frame. A
 tick cannot render below about a pixel, so past roughly 120 steps on a phone the
 ticks would overflow the bar, widen the page, and — because the horizontal
