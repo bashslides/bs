@@ -14,9 +14,12 @@
 # and that Enter on a focused button activates it instead of stepping the deck,
 # that a delay too long for setTimeout does not fire at once, and that a
 # malformed playable is rejected with a message instead of being saved, and
-# that the deck library is scoped to the deployment and kept within its budget,
-# that a deck larger than the stage (or under a long status note) is scaled
-# to fit rather than clipped, and that opened files are read as strict UTF-8.
+# that the deck library is scoped to the deployment, stored compressed,
+# adopts an old localStorage library and stays within its budget, that a deck
+# larger than the stage (or under a long status note) is scaled to fit rather
+# than clipped, that opened files are read as strict UTF-8, that an animation
+# is one frame-bar tick and ← inside one lands on the slide before it, and that
+# the footer controls keep ←/→ at the right and fit one row on a 320px phone.
 #
 # How the result gets out of the browser: the test page reports its verdict by
 # fetching a magic URL, which lands in the static server's request log. No
@@ -136,7 +139,13 @@ const report = (ok, detail) =>
 
     // (e) Library clicks bubble through #stage but must not step the deck or
     // reopen the panel. Taps land on the right, where the stage would step forward.
-    (await import('./store.js')).save('selftest', got, 'compiled');
+    // First, an old localStorage library (as earlier builds kept it) is put in
+    // place: the page's first use of the library adopts it into IndexedDB.
+    const oldDeck = { id: 'old-1', name: 'from-localstorage', savedAt: 1, frames: 15,
+      width: deck.contract.width, height: deck.contract.height, bytes: got.length, origin: 'compiled', json: got };
+    localStorage.setItem('bs:decks:/', JSON.stringify([oldDeck]));
+    const lib = await import('./store.js');
+    if (!(await lib.save('selftest', got, 'compiled'))) throw new Error('saving to the library failed');
     const ifr = document.createElement('iframe');
     ifr.style.cssText = 'width:900px;height:700px';
     ifr.src = 'index.html#present';
@@ -151,7 +160,9 @@ const report = (ok, detail) =>
     tap(q('#library-close'));
     if (!q('#library').hidden) throw new Error('library close (no deck) reopened the library');
     q('#btn-library').click();
+    await new Promise((r) => setTimeout(r, 200));   // the list is read asynchronously
     tap(q('#library .deck-open'));
+    await new Promise((r) => setTimeout(r, 200));   // so is the deck it opens
     const counter = q('#counter').textContent;
     if (counter !== '01/15') throw new Error(`deck opened from the library shows ${counter}, not 01/15`);
     log('library clicks do not reach the stage');
@@ -214,36 +225,35 @@ const report = (ok, detail) =>
       throw new Error('the previous deck stays painted over the rejection message');
     }
     const storeMod = await ifr.contentWindow.eval("import('./store.js')");
-    if (storeMod.list().some((d) => d.name === 'bad-cell')) {
+    if ((await storeMod.summaries()).some((d) => d.name === 'bad-cell')) {
       throw new Error('a malformed playable was saved to the library');
     }
     log('a malformed playable is rejected and not saved');
 
-    // (i) The library is scoped to this deployment's path and stays under its
-    // byte budget: nothing under the old origin-wide key, and a deck larger
-    // than the budget on its own is not kept (the rest of the library is).
-    const lib = await import('./store.js');
-    if (localStorage.getItem('bs:decks') !== null || localStorage.getItem('bs:decks:/') === null) {
-      throw new Error('the library is not stored under the deployment-scoped key');
-    }
-    const huge = JSON.stringify({ contract: { width: 1, height: 1 }, frames: [], pad: 'x'.repeat(1600000) });
-    if (lib.save('too-big', huge, 'compiled') !== null) throw new Error('a deck over the budget was saved');
-    if (!lib.list().some((d) => d.name === 'selftest')) throw new Error('an over-budget save evicted the library');
-    // A realistic, quote-heavy deck just under the budget (~1.38M characters,
-    // ~1.9M once escaped in storage) is kept: the budget counts its own size.
+    // (i) The library lives in an IndexedDB database named after this
+    // deployment's path, stores decks compressed, adopted the old
+    // localStorage library (and freed its key), and round-trips a deck intact.
+    const names = (await indexedDB.databases?.())?.map((d) => d.name);
+    if (names && !names.includes('bs:decks:/')) throw new Error(`no deployment-scoped database: ${names}`);
+    if (localStorage.getItem('bs:decks:/') !== null) throw new Error('the old localStorage library was not freed');
+    const all = await lib.summaries();
+    const adopted = all.find((d) => d.name === 'from-localstorage');
+    if (!adopted || (await lib.get(adopted.id))?.json !== got) throw new Error('the old localStorage library was not adopted intact');
+    const mine = all.find((d) => d.name === 'selftest');
+    if (!mine || (await lib.get(mine.id))?.json !== got) throw new Error('a saved deck does not round-trip');
+    if (!(mine.stored * 20 < got.length)) throw new Error(`the deck is not stored compressed: ${mine.stored} of ${got.length} bytes`);
+    // A deck far past the old 1.5M-character budget is kept, and costs little.
     const near = JSON.stringify({ contract: { width: 1000, height: 125 },
-      frames: [{ type: 'full', cells: Array(125).fill(Array(1000).fill({ ch: ' ' })) }] });
-    const kept = lib.save('near-limit', near, 'compiled');
-    if (!kept || near.length > 1500000) throw new Error(`a ${near.length}-character deck under the budget was not kept`);
-    lib.remove(kept.id);
-    // Migration: with only an old unscoped library, a fresh load adopts it into
-    // the scoped key and frees the old key.
-    localStorage.setItem('bs:decks', JSON.stringify(lib.list()));
-    localStorage.removeItem('bs:decks:/');
-    const migrated = await import('./store.js?migrate');
-    if (localStorage.getItem('bs:decks') !== null) throw new Error('the old library key was not freed');
-    if (!migrated.list().some((d) => d.name === 'selftest')) throw new Error('the old library was not adopted');
-    log('the library is deployment-scoped and within its budget');
+      frames: Array(4).fill({ type: 'full', cells: Array(125).fill(Array(1000).fill({ ch: ' ' })) }) });
+    const kept = await lib.save('large', near, 'compiled');
+    if (!kept || near.length < 5000000) throw new Error(`a ${near.length}-character deck was not kept`);
+    if ((await lib.get(kept.id))?.json !== near) throw new Error('a large deck does not round-trip');
+    if (!(await lib.summaries()).some((d) => d.name === 'selftest')) throw new Error('saving a large deck evicted the library');
+    await lib.remove(kept.id);
+    // Same name replaces the older entry.
+    await lib.save('selftest', got, 'compiled');
+    if ((await lib.summaries()).filter((d) => d.name === 'selftest').length !== 1) throw new Error('a same-name save duplicated the deck');
+    log(`the library is deployment-scoped and compressed (${got.length} -> ${mine.stored} bytes)`);
 
     // (j) A deck too large for the stage at a legible size still fits whole:
     // the canvas never overflows #stage (whose overflow is hidden).
@@ -305,11 +315,54 @@ const report = (ok, detail) =>
     if (!(await openSource('bom.json', bom)).includes('byte-order mark')) {
       throw new Error('a source with a byte-order mark was not rejected like the CLI does');
     }
-    const libNow = (await import('./store.js')).list();
+    const libNow = await (await import('./store.js')).summaries();
     if (libNow.some((d) => d.name === 'latin1' || d.name === 'bom')) {
       throw new Error('a rejected source was saved to the library');
     }
     log('non-UTF-8 and BOM sources are rejected like bs compile');
+
+    // (m) An animation range is one frame-bar tick, and ← inside any animation
+    // (auto-play or stepped by hand) lands on the slide right before it.
+    ifr.style.height = '700px';
+    q('#tab-present').click();
+    const anim = JSON.parse(got);   // demo: one auto-play animation over frames 3..12
+    const [a] = anim.animations;
+    viewerMod.load(anim, 'anim');
+    await new Promise((r) => setTimeout(r, 50));
+    const ticks = q('#framebar').children.length;
+    const want = anim.frames.length - (a.end_frame - a.start_frame) + 1;
+    if (ticks !== want) throw new Error(`the frame bar has ${ticks} ticks, not ${want} (one per animation)`);
+    const key = (k) => doc.body.dispatchEvent(new ifr.contentWindow.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+    const at = () => Number(q('#counter').textContent.split('/')[0]);
+    a.auto_play = false;            // stepped by hand: → walks into it one frame at a time
+    viewerMod.load(anim, 'manual');
+    for (let i = 0; i < a.start_frame + 3; i++) key('ArrowRight');
+    if (at() !== a.start_frame + 4) throw new Error(`stepping into a manual animation reached ${at()}`);
+    key('ArrowLeft');
+    if (at() !== a.start_frame) throw new Error(`← inside a manual animation went to ${at()}, not slide ${a.start_frame}`);
+    log('an animation is one frame-bar tick; ← inside it goes to the slide before');
+
+    // (n) The footer: ←/→ at the right edge, first/last at the left, and at a
+    // 320px phone width every control on one row at 48px (20% over 40px).
+    ifr.style.width = '320px';
+    await new Promise((r) => setTimeout(r, 100));
+    const order = [...q('#controls').querySelectorAll('button')].map((b) => b.id);
+    if (order.join() !== 'btn-first,btn-last,btn-full,btn-prev,btn-next') throw new Error(`control order is ${order}`);
+    const rects = order.map((n) => q(`#${n}`).getBoundingClientRect());
+    if (rects.some((r) => Math.round(r.height) < 48)) throw new Error(`phone buttons are not 48px tall: ${rects.map((r) => r.height)}`);
+    if (new Set(rects.map((r) => Math.round(r.top))).size !== 1) throw new Error(`the footer controls wrap onto two rows at 320px: ${JSON.stringify(rects.map((r) => [Math.round(r.left), Math.round(r.top), Math.round(r.width)]))} counter ${q('#counter').getBoundingClientRect().width} foot ${q('#foot').getBoundingClientRect().width}`);
+    const footRight = q('#foot').getBoundingClientRect().right;
+    if (rects[4].right > footRight || footRight - rects[4].right > 12) throw new Error('→ is not at the right edge');
+    if (doc.documentElement.scrollWidth > 320) throw new Error(`the page scrolls sideways at 320px (${doc.documentElement.scrollWidth})`);
+    // A three-digit counter still fits the row.
+    const long3 = { contract: { width: 4, height: 1 }, frames: [{ type: 'full', cells: [[{ ch: 'x' }]] },
+      ...Array(119).fill({ type: 'diff', changes: [] })] };
+    viewerMod.load(long3, 'long');
+    key('End');
+    if (q('#counter').textContent !== '120/120') throw new Error(`End shows ${q('#counter').textContent}`);
+    const tops = order.map((n) => Math.round(q(`#${n}`).getBoundingClientRect().top));
+    if (new Set(tops).size !== 1) throw new Error(`a three-digit counter wraps the footer at 320px: ${JSON.stringify(order.map((n) => q(`#${n}`).getBoundingClientRect().width))} counter ${q('#counter').getBoundingClientRect().width}`);
+    log('footer: steps at the right, first/last at the left, one row at 320px');
 
     log('\nALL CHECKS PASSED');
     report(true, 'all checks passed');

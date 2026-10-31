@@ -336,46 +336,66 @@ function statusNote() {
   return bits.join('  ·  ');
 }
 
-// The frame bar shows one tick per frame only while that actually fits. A tick
-// cannot render below ~1px, so a long deck's ticks would otherwise overflow the
-// bar, widen the page, and — because the horizontal scrollbar steals width from
-// the stage — shrink the deck itself. Past the limit, each tick stands for a
-// contiguous *range* of frames instead, so the bar always fits exactly.
+// The frame bar has one tick per *step*: a frame, or a whole animation range
+// (overlapping animations merged), which reads as one slide that moves rather
+// than as many slides. A tick cannot render below ~1px, so a long deck's ticks
+// would otherwise overflow the bar, widen the page, and — because the
+// horizontal scrollbar steals width from the stage — shrink the deck itself.
+// Past the limit, each tick stands for a contiguous run of steps instead, so
+// the bar always fits exactly.
 const TICK_MIN = 2;   // px, smallest tick that still reads as a mark
 const TICK_GAP = 1;   // px, must match the `gap` on #framebar in style.css
 
-/** First frame of each tick. Length is the tick count. */
-let tickStarts = [];
-let barTotal = -1;
+/** The half-open frame range of each tick. Length is the tick count. */
+let ticks = [];
+/** The deck's steps, [lo, hi) each, computed once per deck. */
+let steps = null;
 
-/** Frame index each tick starts at, for a bar `total` frames long. */
-function frameBarBuckets(total) {
-  const w = el.framebar.clientWidth;
-  // Before the first layout clientWidth is 0; one tick per frame is the right
-  // guess then, and the next render (after layout) corrects it.
-  const fits = w > 0 ? Math.max(1, Math.floor((w + TICK_GAP) / (TICK_MIN + TICK_GAP))) : total;
-  const ticks = Math.max(1, Math.min(total, fits));
-  const starts = new Array(ticks);
-  for (let i = 0; i < ticks; i++) starts[i] = Math.floor((i * total) / ticks);
-  return starts;
+/** Split the deck into steps: every animation range is one, every other frame
+ *  is one. Ranges are clipped to the deck. */
+function barSteps() {
+  const total = deck.frames.length;
+  const out = [];
+  for (let f = 0; f < total; ) {
+    const c = animationCluster(f, false);
+    const hi = c ? Math.min(c[1], total) : f + 1;
+    out.push([f, hi]);
+    f = hi;
+  }
+  return out;
 }
 
-/** The half-open frame range tick `i` stands for. */
-const tickRange = (i, total) => [tickStarts[i], i + 1 < tickStarts.length ? tickStarts[i + 1] : total];
+/** The tick ranges for the bar's current width: one per step while they fit,
+ *  else runs of consecutive steps. */
+function frameBarBuckets() {
+  steps ??= barSteps();
+  const n = steps.length;
+  const w = el.framebar.clientWidth;
+  // Before the first layout clientWidth is 0; one tick per step is the right
+  // guess then, and the next render (after layout) corrects it.
+  const fits = w > 0 ? Math.max(1, Math.floor((w + TICK_GAP) / (TICK_MIN + TICK_GAP))) : n;
+  const count = Math.max(1, Math.min(n, fits));
+  const out = new Array(count);
+  for (let i = 0; i < count; i++) {
+    const a = Math.floor((i * n) / count);
+    const b = Math.floor(((i + 1) * n) / count);
+    out[i] = [steps[a][0], steps[b - 1][1]];
+  }
+  return out;
+}
 
 function renderFrameBar() {
-  const total = deck.frames.length;
-  const starts = frameBarBuckets(total);
+  const next = frameBarBuckets();
 
-  if (starts.length !== tickStarts.length || total !== barTotal) {
-    tickStarts = starts;
-    barTotal = total;
+  const same = next.length === ticks.length && next.every((r, i) => r[0] === ticks[i][0] && r[1] === ticks[i][1]);
+  if (!same) {
+    ticks = next;
     el.framebar.innerHTML = '';
-    for (let i = 0; i < tickStarts.length; i++) {
+    for (let i = 0; i < ticks.length; i++) {
       const tick = document.createElement('i');
       tick.addEventListener('click', () => {
         const left = leaveLoop();
-        show(tickRange(i, barTotal)[0]);
+        show(ticks[i][0]);
         armLoop(left);
         reschedule();
       });
@@ -385,8 +405,8 @@ function renderFrameBar() {
 
   const kids = el.framebar.children;
   const overlaps = (rs, lo, hi) => rs.some((r) => r.start_frame < hi && lo < r.end_frame);
-  for (let i = 0; i < tickStarts.length; i++) {
-    const [lo, hi] = tickRange(i, total);
+  for (let i = 0; i < ticks.length; i++) {
+    const [lo, hi] = ticks[i];
     const inRegion =
       overlaps(deck.loops || [], lo, hi) ||
       overlaps(deck.animations || [], lo, hi) ||
@@ -418,9 +438,10 @@ function autoAdvanceDelay(from, forward) {
   );
 }
 
-/** Merged span [lo, hi) of auto-play animations connected by overlap to `f`. */
-function animationCluster(f) {
-  const auto = (deck.animations || []).filter((a) => a.auto_play);
+/** Merged span [lo, hi) of auto-play animations connected by overlap to `f`
+ *  (of every animation, auto-play or not, when `autoOnly` is false). */
+function animationCluster(f, autoOnly = true) {
+  const auto = (deck.animations || []).filter((a) => a.auto_play || !autoOnly);
   let lo = Infinity;
   let hi = 0;
   for (const a of auto) {
@@ -602,7 +623,9 @@ function back() {
     show(Math.max(0, r.start_frame - 1));
     armLoop([r.start_frame, r.end_frame]);
   } else {
-    const cluster = animationCluster(frame);
+    // Inside any animation — auto-play or stepped by hand — go to the slide
+    // right before it, not one step back.
+    const cluster = animationCluster(frame, false);
     if (cluster) show(Math.max(0, cluster[0] - 1));
     else show(frame - 1);
     armLoop(null);
@@ -780,8 +803,8 @@ export function load(data, name) {
   loopPlay = null;
   loopExclude = null;
   cache = { frame: -1, grid: null };
-  tickStarts = [];
-  barTotal = -1;
+  ticks = [];
+  steps = null;
   // No on-screen deck title — the user asked for that bar gone. The document
   // title still carries it, which is what a browser tab and an installed app's
   // switcher entry show.
@@ -808,8 +831,8 @@ export function message(lines) {
   el.counter.textContent = '--/--';
   el.note.textContent = '';
   el.framebar.innerHTML = '';
-  tickStarts = [];
-  barTotal = -1;
+  ticks = [];
+  steps = null;
 }
 
 /** True once a deck is showing. */

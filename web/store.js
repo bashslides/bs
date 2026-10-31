@@ -1,113 +1,197 @@
-// The deck library: compiled presentations kept in localStorage so they survive
+// The deck library: compiled presentations kept in IndexedDB so they survive
 // a reload, an app restart, and being offline.
 //
-// Storage is small (~5 MB) and a compiled deck is often >100 KB, so this is a
-// *recents* list, not an archive: MAX_DECKS newest are kept and a write that
-// runs out of room evicts the oldest and retries rather than failing.
+// A compiled deck is mostly the same cell records repeated frame after frame,
+// so each one is stored gzip-compressed (CompressionStream; the demo deck goes
+// from 125 KB to under 2 KB) and only inflated when it is opened. Metadata and
+// deck bodies live in separate object stores, so listing the library never
+// reads a body.
 //
-// localStorage is per *origin*, and on GitHub Pages every project site of a
-// user shares one origin and its quota. So the key is scoped to this
+// IndexedDB's quota is a share of free disk space rather than localStorage's
+// ~5 MB, but it is still per *origin*, and on GitHub Pages every project site
+// of a user shares one origin. So the database is named after this
 // deployment's path (two bs copies on one origin keep separate libraries), and
-// every write keeps the decks' compiled JSON under BUDGET characters in total,
-// evicting oldest first, so the library never takes the whole quota from
-// sibling sites. (Stored, each deck's JSON is an escaped string, typically ~1.4x longer.)
+// every write keeps the stored (compressed) bodies under BUDGET bytes in total,
+// evicting oldest first.
+//
+// Every function is async and never throws: storage that is unavailable
+// (private mode, file://, a browser without IndexedDB) reads as an empty
+// library and a save that cannot be kept resolves to null.
 
 'use strict';
 
 const SCOPE = (() => {
   try { return new URL('.', location.href).pathname; } catch { return '/'; }
 })();
-const KEY = `bs:decks:${SCOPE}`;
-/** The unscoped key used before; adopted (and freed) by a deployment's empty library. */
+const DB_NAME = `bs:decks:${SCOPE}`;
+/** Where builds before IndexedDB kept the library: per deployment, and before
+ *  that one unscoped key. Adopted once, when this deployment's database is
+ *  created, then freed. */
+const LOCAL_KEY = `bs:decks:${SCOPE}`;
 const LEGACY_KEY = 'bs:decks';
-const MAX_DECKS = 20;
-/**
- * Most characters of compiled deck JSON kept, summed over the decks (the size
- * the library lists). Stored escaped that is typically ~2.1M characters, well
- * under the ~5 MB quota an origin's sites share.
- */
-const BUDGET = 1_500_000;
+const MAX_DECKS = 100;
+/** Most stored (compressed) bytes kept, summed over the decks. */
+const BUDGET = 50 * 1024 * 1024;
 
-/** Total compiled JSON of `decks`, the quantity BUDGET bounds. */
-const used = (decks) => decks.reduce((n, d) => n + (d.json?.length ?? 0), 0);
-
-/** Newest first, at most MAX_DECKS, oldest dropped until within BUDGET. */
-function trim(decks) {
-  let kept = decks.slice(0, MAX_DECKS);
-  while (kept.length > 0 && used(kept) > BUDGET) kept = kept.slice(0, -1);
-  return kept;
-}
+const META = 'meta';   // id → { id, name, savedAt, frames, width, height, bytes, stored, origin }
+const DATA = 'data';   // id → { enc: 'gzip', body: ArrayBuffer } | { enc: 'none', body: string }
 
 /** Fired after any change so open views can refresh. */
 const listeners = new Set();
 export const onChange = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
 const emit = () => listeners.forEach((fn) => { try { fn(); } catch { /* keep going */ } });
 
-/** localStorage can throw outright (private mode, file://) — never let it break a view. */
-function raw() {
-  try {
-    return localStorage.getItem(KEY);
-  } catch {
-    return null;
+// ------------------------------------------------------------ compression
+
+const canCompress = typeof CompressionStream === 'function' && typeof DecompressionStream === 'function';
+
+/** The body to store for `json`: gzip where the browser can, else the text. */
+async function pack(json) {
+  if (canCompress) {
+    try {
+      const stream = new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'));
+      const body = await new Response(stream).arrayBuffer();
+      return { enc: 'gzip', body, size: body.byteLength };
+    } catch { /* fall back to the plain text */ }
   }
+  return { enc: 'none', body: json, size: json.length };
 }
 
-/** All saved decks, newest first. Never throws; a corrupt store reads as empty. */
-export function list() {
-  const text = raw();
-  if (!text) return [];
+/** The deck text back out of a stored body. */
+async function unpack(rec) {
+  if (rec.enc === 'none') return rec.body;
+  const stream = new Blob([rec.body]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return new Response(stream).text();
+}
+
+// --------------------------------------------------------------- database
+
+/** Newest first. */
+const newestFirst = (a, b) => b.savedAt - a.savedAt;
+
+/** The ids to keep from `metas` (newest first): at most MAX_DECKS, oldest
+ *  dropped until the stored bytes fit BUDGET. */
+function keep(metas) {
+  let kept = metas.slice(0, MAX_DECKS);
+  let used = kept.reduce((n, m) => n + (m.stored ?? 0), 0);
+  while (kept.length > 0 && used > BUDGET) used -= kept.pop().stored ?? 0;
+  return kept;
+}
+
+/** A library saved to localStorage by an earlier build, or []. */
+function localLibrary() {
   try {
-    const decks = JSON.parse(text);
-    return Array.isArray(decks) ? decks : [];
+    // A deployment's own key wins; the unscoped one is adopted only when this
+    // deployment never had a library (an older bs copy may still use it).
+    const own = localStorage.getItem(LOCAL_KEY);
+    const text = own ?? localStorage.getItem(LEGACY_KEY);
+    const decks = text ? JSON.parse(text) : [];
+    return Array.isArray(decks) ? decks.filter((d) => d && typeof d.json === 'string' && d.id) : [];
   } catch {
     return [];
   }
 }
 
-function write(decks) {
+function freeLocalLibrary() {
   try {
-    localStorage.setItem(KEY, JSON.stringify(decks));
-    return true;
+    if (localStorage.getItem(LOCAL_KEY) !== null) localStorage.removeItem(LOCAL_KEY);
+    else localStorage.removeItem(LEGACY_KEY);
+  } catch { /* nothing to free */ }
+}
+
+let opening = null;
+
+/** The open database (created, and the old localStorage library adopted, on
+ *  first use). Rejects when the browser will not store anything. */
+function db() {
+  opening ??= new Promise((resolve, reject) => {
+    let req;
+    try { req = indexedDB.open(DB_NAME, 1); } catch (err) { reject(err); return; }
+    let created = false;
+    req.onupgradeneeded = () => {
+      const d = req.result;
+      const meta = d.createObjectStore(META, { keyPath: 'id' });
+      const data = d.createObjectStore(DATA);
+      // Runs exactly once, when the database is created, inside the same
+      // transaction: the old decks are adopted as plain text (compressing is
+      // async and would end the transaction), and their key is freed only
+      // once that transaction has committed.
+      const old = localLibrary().map(({ json, ...m }) => ({ m: { ...m, stored: json.length }, json }));
+      const kept = new Set(keep(old.map((o) => o.m).sort(newestFirst)).map((m) => m.id));
+      for (const { m, json } of old) {
+        if (!kept.has(m.id)) continue;
+        meta.put(m);
+        data.put({ enc: 'none', body: json }, m.id);
+      }
+      created = true;
+    };
+    req.onsuccess = () => {
+      if (created) freeLocalLibrary();
+      const d = req.result;
+      // Another tab upgrading the schema later must not be blocked by this one.
+      d.onversionchange = () => { d.close(); opening = null; };
+      resolve(d);
+    };
+    req.onerror = () => reject(req.error);
+  });
+  return opening;
+}
+
+/** Run `body(stores)` in one transaction; resolves to its result once committed. */
+async function tx(mode, body) {
+  const d = await db();
+  return new Promise((resolve, reject) => {
+    const t = d.transaction([META, DATA], mode);
+    let result;
+    t.oncomplete = () => resolve(result);
+    t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error || new Error('transaction aborted'));
+    try {
+      result = body({ meta: t.objectStore(META), data: t.objectStore(DATA) }, (v) => { result = v; });
+    } catch (err) {
+      try { t.abort(); } catch { /* already finished */ }
+      reject(err);
+    }
+  });
+}
+
+/** An IDB request's result, set into the transaction's result via `set`. */
+const into = (request, set, map = (v) => v) => { request.onsuccess = () => set(map(request.result)); };
+
+// -------------------------------------------------------------------- API
+
+/** Metadata of every saved deck, newest first — enough for the library list. */
+export async function summaries() {
+  try {
+    return await tx('readonly', ({ meta }, set) => into(meta.getAll(), set, (all) => all.sort(newestFirst)));
   } catch {
-    return false;
+    return [];
   }
 }
 
-// Migration: a deployment with no library yet adopts one saved under the old
-// unscoped key, trimmed to the budget. The old key is freed first — that old
-// library may fill the whole origin quota, so the copy could not be written
-// beside it — and the copy then drops its oldest decks until it fits. Once
-// this deployment has its own key the old one is never touched again (an
-// older bs copy on the origin may still be using it).
-try {
-  const legacy = localStorage.getItem(LEGACY_KEY);
-  if (legacy !== null && localStorage.getItem(KEY) === null) {
-    let decks = [];
-    try { decks = JSON.parse(legacy); } catch { /* corrupt: start empty */ }
-    localStorage.removeItem(LEGACY_KEY);
-    decks = Array.isArray(decks) ? trim(decks) : [];
-    while (!write(decks) && decks.length > 0) decks = decks.slice(0, -1);
+/** A saved deck with its text (`json`), or null. */
+export async function get(id) {
+  try {
+    const found = await tx('readonly', ({ meta, data }, set) => {
+      const m = meta.get(id);
+      const b = data.get(id);
+      b.onsuccess = () => set(m.result && b.result ? { m: m.result, b: b.result } : null);
+    });
+    if (!found) return null;
+    return { ...found.m, json: await unpack(found.b) };
+  } catch {
+    return null;
   }
-} catch { /* storage unavailable: list() reads as empty */ }
-
-/** Metadata only — enough for the library list, without the deck body. */
-export function summaries() {
-  return list().map(({ id, name, savedAt, frames, width, height, bytes, origin }) =>
-    ({ id, name, savedAt, frames, width, height, bytes, origin }));
-}
-
-export function get(id) {
-  return list().find((d) => d.id === id) || null;
 }
 
 /**
  * Save a compiled deck, newest first, de-duplicated by name.
  *
- * `json` is the compiled text exactly as the compiler produced it. Returns the
- * stored record, or null if storage is unavailable even after evicting, or the
- * deck's compiled JSON alone is over the library's budget.
+ * `json` is the compiled text exactly as the compiler produced it. Resolves to
+ * the stored record's metadata, or null if storage is unavailable even after
+ * evicting, or the deck alone is over the library's budget.
  */
-export function save(name, json, origin = 'compiled') {
+export async function save(name, json, origin = 'compiled') {
   let deck;
   try {
     const parsed = JSON.parse(json);
@@ -120,50 +204,73 @@ export function save(name, json, origin = 'compiled') {
       height: parsed.contract?.height ?? 0,
       bytes: json.length,
       origin,
-      json,
     };
   } catch {
     return null;
   }
 
+  // Compress before the transaction: awaiting anything but IndexedDB inside
+  // one would let it commit early.
+  const packed = await pack(json);
+  deck.stored = packed.size;
   // A deck over the budget on its own is not kept (it still plays).
-  if (json.length > BUDGET) return null;
-  // Same name replaces the older entry rather than piling up duplicates.
-  const decks = trim([deck, ...list().filter((d) => d.name !== name)]);
+  if (deck.stored > BUDGET) return null;
 
-  // Out of quota: drop the oldest and try again, down to just this deck.
-  while (decks.length > 0) {
-    if (write(decks)) {
+  // Out of quota: keep fewer of the older decks and try again, down to just
+  // this one. `limit` caps how many older decks stay.
+  for (let limit = MAX_DECKS - 1; limit >= 0; ) {
+    try {
+      await tx('readwrite', ({ meta, data }) => {
+        meta.getAll().onsuccess = (e) => {
+          // Same name replaces the older entry rather than piling up duplicates.
+          const others = e.target.result.filter((m) => m.name !== name).sort(newestFirst);
+          const kept = keep([deck, ...others.slice(0, limit)]);
+          const ids = new Set(kept.map((m) => m.id));
+          for (const m of e.target.result) {
+            if (ids.has(m.id)) continue;
+            meta.delete(m.id);
+            data.delete(m.id);
+          }
+          meta.put(deck);
+          data.put({ enc: packed.enc, body: packed.body }, deck.id);
+        };
+      });
       emit();
       return deck;
+    } catch (err) {
+      if (err?.name !== 'QuotaExceededError' || limit === 0) return null;
+      // Halve what is kept, so a nearly full origin needs a few tries, not 100.
+      const have = (await summaries()).filter((m) => m.name !== name).length;
+      limit = Math.min(limit, have) >> 1;
     }
-    if (decks.length === 1) break;
-    decks.pop();
   }
   return null;
 }
 
-export function remove(id) {
-  const kept = list().filter((d) => d.id !== id);
-  const ok = write(kept);
-  if (ok) emit();
-  return ok;
+export async function remove(id) {
+  try {
+    await tx('readwrite', ({ meta, data }) => { meta.delete(id); data.delete(id); });
+    emit();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-export function clear() {
-  // An empty list, not a removed key: a missing key would re-copy the old
-  // unscoped library on the next load.
-  const ok = write([]);
-  if (ok) emit();
-  return ok;
+export async function clear() {
+  try {
+    await tx('readwrite', ({ meta, data }) => { meta.clear(); data.clear(); });
+    emit();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** True when the browser lets this page store anything at all. */
-export function available() {
+export async function available() {
   try {
-    const probe = '__bs_probe__';
-    localStorage.setItem(probe, '1');
-    localStorage.removeItem(probe);
+    await db();
     return true;
   } catch {
     return false;

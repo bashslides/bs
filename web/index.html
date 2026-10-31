@@ -114,15 +114,16 @@
       <footer id="foot">
         <div id="framebar" aria-hidden="true"></div>
         <!-- Every control is a real button: a phone has no keyboard, so anything
-             that is only a key hint would be unreachable. -->
+             that is only a key hint would be unreachable. The single steps sit
+             at the right edge, under a right thumb; first/last on the left. -->
         <div id="controls">
-          <button id="btn-prev"  type="button" title="previous frame (←)" aria-label="previous frame">←</button>
-          <button id="btn-next"  type="button" title="next frame (→)" aria-label="next frame">→</button>
           <button id="btn-first" type="button" title="first frame (home)" aria-label="first frame">⇤</button>
           <button id="btn-last"  type="button" title="last frame (end)" aria-label="last frame">⇥</button>
-          <button id="btn-full"  type="button" title="fullscreen (f)">full</button>
+          <button id="btn-full"  type="button" title="fullscreen (f)" aria-label="fullscreen"><span class="lbl">full</span><span class="ico">⤢</span></button>
           <span id="note" class="dim ellipsis"></span>
           <span id="counter" class="dim">--/--</span>
+          <button id="btn-prev"  type="button" title="previous frame (←)" aria-label="previous frame">←</button>
+          <button id="btn-next"  type="button" title="next frame (→)" aria-label="next frame">→</button>
         </div>
       </footer>
     </section>

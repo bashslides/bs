@@ -51,14 +51,20 @@ function show(view, { replace = false } = {}) {
 
 // ------------------------------------------------------------------- library
 
-function renderLibrary() {
+/** Bumped per render, so a slower earlier read never overwrites a newer list. */
+let libraryRender = 0;
+
+async function renderLibrary() {
   const wrap = id('library-list');
-  const decks = store.summaries();
+  const ticket = ++libraryRender;
+  const decks = await store.summaries();
+  const canStore = decks.length || await store.available();
+  if (ticket !== libraryRender) return;
   id('library-count').textContent = decks.length ? `${decks.length} saved` : '';
   id('library-clear').disabled = decks.length === 0;
 
   if (!decks.length) {
-    wrap.innerHTML = store.available()
+    wrap.innerHTML = canStore
       ? '<p class="dim empty">Nothing saved yet. Compiling a deck, or opening one here, adds it.</p>'
       : '<p class="bad empty">This browser will not let the page store decks '
         + '(private mode, or opened from a file:// path).</p>';
@@ -76,7 +82,8 @@ function renderLibrary() {
     open.innerHTML = `<b></b><span class="dim"></span>`;
     open.querySelector('b').textContent = d.name;
     open.querySelector('span').textContent =
-      `${d.frames} frames · ${d.width}×${d.height} · ${store.fmtBytes(d.bytes)} · ${store.fmtAge(d.savedAt)}`;
+      `${d.frames} frames · ${d.width}×${d.height} · ${store.fmtBytes(d.bytes)}`
+      + `${d.stored ? ` (${store.fmtBytes(d.stored)} stored)` : ''} · ${store.fmtAge(d.savedAt)}`;
     open.addEventListener('click', () => openFromLibrary(d.id));
 
     const del = document.createElement('button');
@@ -85,8 +92,8 @@ function renderLibrary() {
     del.textContent = '✕';
     del.title = `delete “${d.name}”`;
     del.setAttribute('aria-label', `delete ${d.name}`);
-    del.addEventListener('click', () => {
-      store.remove(d.id);
+    del.addEventListener('click', async () => {
+      await store.remove(d.id);
       renderLibrary();
     });
 
@@ -95,8 +102,8 @@ function renderLibrary() {
   }
 }
 
-function openFromLibrary(deckId) {
-  const rec = store.get(deckId);
+async function openFromLibrary(deckId) {
+  const rec = await store.get(deckId);
   if (!rec) { renderLibrary(); return; }
   try {
     viewer.load(JSON.parse(rec.json), rec.name);
@@ -174,9 +181,9 @@ function boot() {
 
   id('btn-library').addEventListener('click', () => setLibraryOpen(id('library').hidden));
   id('library-close').addEventListener('click', () => setLibraryOpen(false));
-  id('library-clear').addEventListener('click', () => {
+  id('library-clear').addEventListener('click', async () => {
     if (!confirm('Delete every saved deck? This cannot be undone.')) return;
-    store.clear();
+    await store.clear();
     renderLibrary();
   });
   id('btn-open').addEventListener('click', () => id('p-file').click());

@@ -22,7 +22,7 @@ web/
   instructions.js       the format reference, copy-all
   compile.js            source deck → playable deck (wasm)
   viewer.js             canvas playback (a port of the player's pure logic)
-  store.js              the deck library, in localStorage
+  store.js              the deck library, gzip-compressed in IndexedDB
   wasm.js               loader/glue for the compiler module
   style.css             terminal styling, mobile-first
   sw.js                 service worker: offline + installable
@@ -51,28 +51,34 @@ the previous version stays in place; only the sample, docs and icons may be miss
 
 ## The deck library
 
-Compiled and imported decks are kept in `localStorage` (`store.js`) so they
-survive a reload, a restart and being offline. It is a *recents* list, not an
-archive: the 20 newest are kept, within a budget of 1.5 million characters of
-compiled JSON in total (the sizes the library lists; stored escaped, typically
-about 2.1 MB — every GitHub Pages project site of a user shares one origin and
-its ~5 MB quota) — older decks are evicted to stay under it, a deck over the
-budget on its own still plays but is not kept, a save that still runs out of
-quota evicts the oldest and retries, and same-name saves replace rather than
-accumulate. The library's `localStorage` key is scoped to the deployment's path
-(`bs:decks:/bs/`), so two bs copies on one origin keep separate libraries, each
-with its own budget. A deployment with no library yet adopts one saved under
-the old unscoped `bs:decks` key (trimmed to the budget) and frees that key, so
-an old library that filled the quota cannot block the new one. A deck keeps its file's
+Compiled and imported decks are kept in IndexedDB (`store.js`) so they survive
+a reload, a restart and being offline. A compiled deck is mostly the same cell
+records repeated frame after frame, so each one is stored gzip-compressed
+(`CompressionStream`; the demo deck goes from 125 KB to under 2 KB) and only
+inflated when it is opened; metadata and bodies are separate object stores, so
+listing the library never reads a body. The 100 newest decks are kept, within
+50 MB of *stored* (compressed) bytes in total — older decks are evicted to stay
+under it, a deck over the budget on its own still plays but is not kept, a save
+that runs out of quota keeps fewer older decks and retries, and same-name saves
+replace rather than accumulate. IndexedDB's quota is a share of free disk space
+rather than localStorage's ~5 MB, but it is still per origin, and every GitHub
+Pages project site of a user shares one; so the database is named after the
+deployment's path (`bs:decks:/bs/`), and two bs copies on one origin keep
+separate libraries. When that database is first created it adopts the library
+an earlier build kept in `localStorage` (the deployment's `bs:decks:/bs/` key,
+else the old unscoped `bs:decks`), uncompressed, in the same transaction, and
+then frees that key. Every library call is async and never throws. A deck keeps its file's
 name only while the source is that file's unedited text; pasted or edited
 source is saved as `pasted-<time>`. The **library**
-button in the present view lists them with their frame count, size and age, and
+button in the present view lists them with their frame count, size (and stored
+size) and age, and
 offers per-deck delete plus delete-all. Storage being unavailable (private mode,
 `file://`) is reported in the panel rather than failing silently.
 
 Every page is single-column and works on a phone: `100dvh` shells that track
 mobile browser chrome, 16px form controls (below that iOS zooms on focus),
-40px-minimum touch targets, `env(safe-area-inset-bottom)` padding, and no
+40px-minimum touch targets (the present view's footer buttons 48px on phones
+and touch screens), `env(safe-area-inset-bottom)` padding, and no
 horizontal page scroll. On `present`, tapping the left third of the canvas steps
 back and the rest steps forward.
 
@@ -114,7 +120,11 @@ after an error and is replaced by a fresh one after a trap, that library-panel
 clicks never step the present view, that cells paint the same one-column
 chars as `bs play` (wide chars as `?`), and
 that a playable missing a field the viewer relies on (a cell, a delay) is
-rejected with a message instead of being saved to the library. The verdict travels out of the browser as a request to a magic
+rejected with a message instead of being saved to the library, that the library
+is stored compressed, adopts an old `localStorage` library and keeps a deck far
+past the old 1.5M-character budget, that an animation is one frame-bar tick and
+`←` inside one lands on the slide before it, and that the footer keeps `←` `→`
+at the right edge, 48px tall, on one row at a 320px phone width. The verdict travels out of the browser as a request to a magic
 URL that lands in the static server's log, so the script has a real exit code —
 no screenshots to eyeball. `KEEP=1` preserves the browser/server logs.
 
@@ -184,7 +194,7 @@ round-trip, no navigation — and saves a copy to the library on the way past.
 | Key | Action |
 |-----|--------|
 | <kbd>→</kbd> / <kbd>Space</kbd> / <kbd>Enter</kbd> | next frame (skips a whole loop or auto-play animation); with keyboard focus on a button, link or the library panel, Space/Enter (and PageUp/PageDown) are that control's instead |
-| <kbd>←</kbd> | previous frame (same skipping) |
+| <kbd>←</kbd> | previous frame; inside a loop or any animation, the slide right before it |
 | <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd> | jump ±10 frames |
 | <kbd>Home</kbd> / <kbd>End</kbd> | first / last frame |
 | <kbd>f</kbd> | fullscreen; <kbd>Esc</kbd> leaves |
@@ -193,10 +203,13 @@ round-trip, no navigation — and saves a copy to the library on the way past.
 `→` on an auto-play animation lands on the animation's **own last frame** — its
 finished state — rather than stepping past it; pressing it again continues. (The
 terminal player still jumps one frame further, to the first slide after the
-span.)
+span.) `←` anywhere inside an animation — auto-play or stepped by hand — goes to
+the slide right before it (`animationCluster(f, false)`); the terminal player
+does that only for auto-play animations and steps back one frame in the others.
 
 **Nothing is keyboard-only.** A phone has no keyboard, so every action also has a
-tap target: the footer carries real buttons (`←` `→` `⇤` `⇥` `full`), the top
+tap target: the footer carries real buttons — `⇤` `⇥` `full` at the left, the
+single steps `←` `→` at the right edge, under a right thumb — the top
 bar carries `library` and `open`, tapping the canvas steps (left third back, the
 rest forward), and the frame bar jumps to any frame.
 
@@ -210,15 +223,17 @@ On iPhone, `requestFullscreen` is refused for non-video elements, so `full`
 hides the bars without entering browser fullscreen. That is the useful half, and
 the exit button works the same either way.
 
-The frame bar shows one tick per frame only while that fits. A tick cannot
-render below about a pixel, so past roughly 120 frames on a phone the ticks
-would overflow the bar, widen the page, and — because the horizontal scrollbar
-then steals width from the stage — shrink the deck itself. Beyond that point
-each tick stands for a contiguous *range* of frames instead, so the bar always
+The frame bar shows one tick per *step*: a frame, or a whole animation range
+(overlapping animations merged, auto-play or not), since an animation reads as
+one slide that moves; clicking an animation's tick goes to its first frame. A
+tick cannot render below about a pixel, so past roughly 120 steps on a phone the
+ticks would overflow the bar, widen the page, and — because the horizontal
+scrollbar then steals width from the stage — shrink the deck itself. Beyond that
+point each tick stands for a contiguous run of steps instead, so the bar always
 fits exactly and a 2000-frame deck renders at the same scale as a 15-frame one.
 Clicking still seeks; loops and animations are still marked.
 
-A small slide number (`12/15`) sits at the right of the footer. It disappears in
+A small slide number (`12/15`) sits just left of `←` `→`. It disappears in
 fullscreen along with the rest of the chrome, which is the point — nothing but
 the deck.
 

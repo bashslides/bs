@@ -146,7 +146,7 @@ button.primary:hover:not(:disabled) { background: #161616; }
 #bar-actions { display: flex; gap: 6px; }
 #bar-actions[hidden] { display: none; }
 #bar-actions button { padding: 6px 10px; min-height: 34px; }
-#bar-actions .ico { display: none; }
+#bar-actions .ico, #btn-full .ico { display: none; }
 
 .tab {
   border: 1px solid transparent;
@@ -386,12 +386,35 @@ body.bare #stage { padding: 15px 0 5px; }
   text-overflow: ellipsis;
 }
 
-/* The slide number: small, dim, pinned right — and gone in fullscreen, since
-   the whole footer is hidden there. */
+/* The slide number: small, dim, just left of the step buttons — and gone in
+   fullscreen, since the whole footer is hidden there. `margin-left: auto`
+   keeps ←/→ at the right edge even when the note is hidden (narrow screens). */
 #counter {
-  padding-left: 8px;
+  margin-left: auto;
+  padding: 0 4px 0 8px;
   font-size: 12px;
   font-variant-numeric: tabular-nums;   /* no width jitter as frames advance */
+}
+
+/* Phones (and any touch screen): the footer controls 20% larger than on the
+   desktop — 48px instead of 40px — so they are easy to hit with a thumb. */
+@media (max-width: 560px), (pointer: coarse) {
+  #controls button {
+    font-size: 17px;
+    padding: 10px 12px;
+    min-width: 48px;
+    min-height: 48px;
+  }
+}
+/* Measured at 320 CSS px: the five 48px buttons and a counter up to "120/120"
+   fit on one row only with tighter spacing and "full" shown as a glyph. */
+@media (max-width: 400px) {
+  #foot { padding-left: 6px; padding-right: 6px; }
+  #controls { gap: 3px; }
+  #controls button { padding: 10px 6px; }
+  #btn-full .lbl { display: none; }
+  #btn-full .ico { display: inline; }
+  #counter { padding: 0; }
 }
 
 /* The only way out of fullscreen on a device with no keyboard: a bare x in the

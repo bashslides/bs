@@ -122,9 +122,9 @@ async function run(name, sourceText = el.source.value) {
     el.stats.textContent = `${deck.frames.length} frames · ${deck.contract.width}×${deck.contract.height}`
       + ` · ${store.fmtBytes(out.length)}` + (extras.length ? ` · ${extras.join(', ')}` : '');
 
-    const saved = store.save(name, out, 'compiled');
+    const saved = await store.save(name, out, 'compiled');
     say(saved ? `compiled — saved to your library as “${name}”`
-              : 'compiled (not saved to the library: storage is unavailable or the deck is over its 1.5 MB budget)',
+              : 'compiled (not saved to the library: storage is unavailable or full)',
         saved ? 'ok' : 'dim');
     return true;
   } catch (err) {
