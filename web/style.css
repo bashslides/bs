@@ -327,6 +327,10 @@ button.primary:hover:not(:disabled) { background: #161616; }
   user-select: none;
   touch-action: manipulation;   /* no 300ms tap delay when stepping slides */
 }
+/* A faint edge shows where the deck ends. An outline takes no layout space,
+   so the fit `layout()` computes is unchanged; fullscreen drops it below. */
+#screen { outline: 1px solid var(--line); }
+body.bare #screen { outline: none; }
 /* `display` above beats the UA [hidden] rule; message() hides the canvas. */
 #screen[hidden] { display: none; }
 
