@@ -72,7 +72,16 @@ name only while the source is that file's unedited text; pasted or edited
 source is saved as `pasted-<time>`. The **library**
 button in the present view lists them with their frame count, size (and stored
 size) and age, and
-offers per-deck delete plus delete-all. Storage being unavailable (private mode,
+offers per-deck export and delete plus delete-all.
+
+A deck compiled here (pasted, opened in compile, or opened as source in the
+present view) also keeps the **source** it was compiled from, compressed in the
+same record (the list marks it `+ source`). **export** downloads that source as
+`<name>.json`, ready for `bs edit` or the compile view on another machine. A
+deck with no kept source — imported already compiled, or saved by a build
+before sources were kept — exports its compiled deck instead, as
+`<name>.playable.json`, which `bs play` and the present view can use but
+nothing can turn back into a source deck. Storage being unavailable (private mode,
 `file://`) is reported in the panel rather than failing silently.
 
 Every page is single-column and works on a phone: `100dvh` shells that track
@@ -124,7 +133,8 @@ rejected with a message instead of being saved to the library, that the library
 is stored compressed, adopts an old `localStorage` library and keeps a deck far
 past the old 1.5M-character budget, that an animation is one frame-bar tick and
 `←` inside one lands on the slide before it, that **open** compiles a source
-deck on the fly and presents it, and that the footer keeps `←` `→` at the right
+deck on the fly and presents it, that the library's **export** gives back a
+deck's kept source (else the compiled deck, as `<name>.playable.json`), and that the footer keeps `←` `→` at the right
 edge on a desktop and right after `full` on a phone, 48px tall, on one row at a
 320px phone width. The verdict travels out of the browser as a request to a magic
 URL that lands in the static server's log, so the script has a real exit code —

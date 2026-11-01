@@ -122,7 +122,7 @@ async function run(name, sourceText = el.source.value) {
     el.stats.textContent = `${deck.frames.length} frames · ${deck.contract.width}×${deck.contract.height}`
       + ` · ${store.fmtBytes(out.length)}` + (extras.length ? ` · ${extras.join(', ')}` : '');
 
-    const saved = await store.save(name, out, 'compiled');
+    const saved = await store.save(name, out, 'compiled', sourceText);
     say(saved ? `compiled — saved to your library as “${name}”`
               : 'compiled (not saved to the library: storage is unavailable or full)',
         saved ? 'ok' : 'dim');
@@ -220,11 +220,15 @@ async function sample() {
 }
 
 function download() {
-  if (!compiled) return;
-  const url = URL.createObjectURL(new Blob([compiled.json], { type: 'application/json' }));
+  if (compiled) downloadText(`${compiled.name}.json`, compiled.json);
+}
+
+/** Hand `text` to the browser as a file download named `filename`. */
+export function downloadText(filename, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${compiled.name}.json`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();

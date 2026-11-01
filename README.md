@@ -81,7 +81,9 @@ three views —
 It is a **PWA**: installable from the browser, and fully usable offline —
 including compiling, since the engine is cached as WebAssembly. Compiled and
 imported decks are kept, compressed, in a local library (IndexedDB) you can
-reopen and delete from the present view.
+reopen, export and delete from the present view. A deck compiled in the browser
+keeps its source, so **export** gives you a file to edit with `bs edit` on
+another machine.
 
 ```bash
 ./scripts/build-web.sh --serve   # engine → wasm, assemble _site/, serve :8000

@@ -20,6 +20,7 @@
 # than clipped, that opened files are read as strict UTF-8, that an animation
 # is one frame-bar tick and ← inside one lands on the slide before it, that
 # the present view's open compiles a source deck on the fly and presents it,
+# that the library exports a deck's kept source (else the compiled deck),
 # and that the footer keeps ←/→ at the right on a desktop, right after `full`
 # on a 320px phone, and fits one row there.
 #
@@ -420,6 +421,37 @@ const report = (ok, detail) =>
     if (q('#view-compile').hidden) throw new Error('a source deck that does not compile did not go to the compile view');
     if (!q('#c-status').classList.contains('bad')) throw new Error('the compile error is not shown');
     log('open compiles a source deck and presents it; a broken one goes to compile');
+
+    // (p) The library's export hands back what can be edited elsewhere: the
+    // source of a deck compiled here, else the compiled deck, named apart.
+    const exportOf = async (name) => {
+      q('#tab-present').click();
+      q('#btn-library').click();
+      await new Promise((r) => setTimeout(r, 200));
+      const row = [...ifr.contentDocument.querySelectorAll('#library .deck')]
+        .find((r) => r.querySelector('b').textContent === name);
+      if (!row) throw new Error(`no library row for ${name}`);
+      const A = ifr.contentWindow.HTMLAnchorElement.prototype;
+      const click = A.click;
+      let got = null;
+      A.click = function () { got = { file: this.download, href: this.href }; };
+      try {
+        row.querySelector('.deck-export').click();
+        for (let i = 0; i < 40 && !got; i++) await new Promise((r) => setTimeout(r, 50));
+      } finally { A.click = click; }
+      q('#library-close').click();
+      if (!got) throw new Error(`export of ${name} downloaded nothing`);
+      return { file: got.file, text: await (await fetch(got.href)).text() };
+    };
+    const srcOut = await exportOf('fresh-source');
+    if (srcOut.file !== 'fresh-source.json' || srcOut.text !== source) {
+      throw new Error(`a deck compiled here exported ${srcOut.file}, not its source`);
+    }
+    const playOut = await exportOf('selftest');
+    if (playOut.file !== 'selftest.playable.json' || playOut.text !== got) {
+      throw new Error(`a deck without a kept source exported ${playOut.file}, not the compiled deck`);
+    }
+    log('export gives the source of a deck compiled here, else the compiled deck');
 
     log('\nALL CHECKS PASSED');
     report(true, 'all checks passed');

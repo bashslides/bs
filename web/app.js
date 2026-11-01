@@ -83,8 +83,21 @@ async function renderLibrary() {
     open.querySelector('b').textContent = d.name;
     open.querySelector('span').textContent =
       `${d.frames} frames · ${d.width}×${d.height} · ${store.fmtBytes(d.bytes)}`
+      + `${d.sourceBytes ? ' + source' : ''}`
       + `${d.stored ? ` (${store.fmtBytes(d.stored)} stored)` : ''} · ${store.fmtAge(d.savedAt)}`;
     open.addEventListener('click', () => openFromLibrary(d.id));
+
+    // Exports the source when the library kept it (editable with `bs edit`),
+    // else the compiled deck, named so it is not mistaken for a source.
+    const exp = document.createElement('button');
+    exp.className = 'deck-export';
+    exp.type = 'button';
+    exp.textContent = 'export';
+    exp.title = d.sourceBytes
+      ? `download the source of “${d.name}” (edit it with bs edit)`
+      : `download “${d.name}” compiled (plays with bs play; no source was kept)`;
+    exp.setAttribute('aria-label', `export ${d.name}`);
+    exp.addEventListener('click', () => exportDeck(d.id));
 
     const del = document.createElement('button');
     del.className = 'deck-del';
@@ -97,7 +110,7 @@ async function renderLibrary() {
       renderLibrary();
     });
 
-    row.append(open, del);
+    row.append(open, exp, del);
     wrap.appendChild(row);
   }
 }
@@ -111,6 +124,12 @@ async function openFromLibrary(deckId) {
   } catch (err) {
     viewer.message([`  could not open “${viewer.esc(rec.name)}”`, '', `  ${viewer.esc(err.message)}`]);
   }
+}
+
+async function exportDeck(deckId) {
+  const out = await store.exported(deckId);
+  if (!out) { renderLibrary(); return; }
+  compileView.downloadText(`${out.name}${out.editable ? '' : '.playable'}.json`, out.text);
 }
 
 function setLibraryOpen(open) {

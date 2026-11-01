@@ -1,5 +1,6 @@
 // The deck library: compiled presentations kept in IndexedDB so they survive
-// a reload, an app restart, and being offline.
+// a reload, an app restart, and being offline. A deck compiled here also keeps
+// the source it came from, so it can be exported and edited elsewhere.
 //
 // A compiled deck is mostly the same cell records repeated frame after frame,
 // so each one is stored gzip-compressed (CompressionStream; the demo deck goes
@@ -33,8 +34,9 @@ const MAX_DECKS = 100;
 /** Most stored (compressed) bytes kept, summed over the decks. */
 const BUDGET = 50 * 1024 * 1024;
 
-const META = 'meta';   // id → { id, name, savedAt, frames, width, height, bytes, stored, origin }
-const DATA = 'data';   // id → { enc: 'gzip', body: ArrayBuffer } | { enc: 'none', body: string }
+const META = 'meta';   // id → { id, name, savedAt, frames, width, height, bytes, sourceBytes, stored, origin }
+const DATA = 'data';   // id → { enc: 'gzip', body: ArrayBuffer } | { enc: 'none', body: string },
+                       //      plus `src` (same shape) when the deck's source is kept
 
 /** Fired after any change so open views can refresh. */
 const listeners = new Set();
@@ -177,14 +179,19 @@ export async function summaries() {
   }
 }
 
+/** A saved deck's metadata and stored body, or null. */
+function read(id) {
+  return tx('readonly', ({ meta, data }, set) => {
+    const m = meta.get(id);
+    const b = data.get(id);
+    b.onsuccess = () => set(m.result && b.result ? { m: m.result, b: b.result } : null);
+  });
+}
+
 /** A saved deck with its text (`json`), or null. */
 export async function get(id) {
   try {
-    const found = await tx('readonly', ({ meta, data }, set) => {
-      const m = meta.get(id);
-      const b = data.get(id);
-      b.onsuccess = () => set(m.result && b.result ? { m: m.result, b: b.result } : null);
-    });
+    const found = await read(id);
     if (!found) return null;
     return { ...found.m, json: await unpack(found.b) };
   } catch {
@@ -193,13 +200,31 @@ export async function get(id) {
 }
 
 /**
+ * What exporting a saved deck writes: its source when the library kept it
+ * (`editable`, for `bs edit` or the compile view), else the compiled deck
+ * (only `bs play` and the present view can use it). Null if it is gone.
+ */
+export async function exported(id) {
+  try {
+    const found = await read(id);
+    if (!found) return null;
+    const editable = !!found.b.src;
+    const text = await unpack(editable ? found.b.src : found.b);
+    return { name: found.m.name, text, editable };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Save a compiled deck, newest first, de-duplicated by name.
  *
- * `json` is the compiled text exactly as the compiler produced it. Resolves to
+ * `json` is the compiled text exactly as the compiler produced it; `source`,
+ * when given, the source text it was compiled from, kept for export. Resolves to
  * the stored record's metadata, or null if storage is unavailable even after
  * evicting, or the deck alone is over the library's budget.
  */
-export async function save(name, json, origin = 'compiled') {
+export async function save(name, json, origin = 'compiled', source = null) {
   let deck;
   try {
     const parsed = JSON.parse(json);
@@ -211,6 +236,7 @@ export async function save(name, json, origin = 'compiled') {
       width: parsed.contract?.width ?? 0,
       height: parsed.contract?.height ?? 0,
       bytes: json.length,
+      sourceBytes: source == null ? 0 : source.length,
       origin,
     };
   } catch {
@@ -220,7 +246,8 @@ export async function save(name, json, origin = 'compiled') {
   // Compress before the transaction: awaiting anything but IndexedDB inside
   // one would let it commit early.
   const packed = await pack(json);
-  deck.stored = packed.size;
+  const src = source == null ? null : await pack(source);
+  deck.stored = packed.size + (src?.size ?? 0);
   // A deck over the budget on its own is not kept (it still plays).
   if (deck.stored > BUDGET) return null;
 
@@ -240,7 +267,8 @@ export async function save(name, json, origin = 'compiled') {
             data.delete(m.id);
           }
           meta.put(deck);
-          data.put({ enc: packed.enc, body: packed.body }, deck.id);
+          data.put({ enc: packed.enc, body: packed.body,
+            ...(src && { src: { enc: src.enc, body: src.body } }) }, deck.id);
         };
       });
       emit();

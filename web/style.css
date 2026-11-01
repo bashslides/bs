@@ -306,6 +306,8 @@ button.primary:hover:not(:disabled) { background: #161616; }
 }
 .deck-open b { color: var(--hi); font-weight: 700; }
 .deck-open span { font-size: 12px; }
+.deck-export { padding: 0 10px; color: var(--dim); }
+.deck-export:hover { color: var(--hi); }
 .deck-del { min-width: 44px; color: var(--dim); }
 .deck-del:hover { color: #d78787; border-color: #d78787; }
 
